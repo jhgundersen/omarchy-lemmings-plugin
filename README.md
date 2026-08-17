@@ -274,12 +274,15 @@ whatever tool would get it moving. An agent that has gone twenty seconds without
 getting closer to home stops waiting for the budget and digs. An agent stuck
 inside a single cell **hops** — three cells of lift, free, no skill, which is
 under the height of everything the level puts in the way on purpose, so it only
-ever gets an agent out of somewhere it should never have been stuck.
+ever gets an agent out of somewhere it should never have been stuck. If the hop
+and the rescue tool both fail, an ordinary agent is condemned immediately
+rather than occupying the same pixel until the general timeout.
 
 A builder also checks the space its next course will occupy. Somebody caught at
 foot height rides the new brick upward; a deeper overlap makes the builder wait,
 then abandon the bridge after three seconds rather than masonry an agent into it
-or deadlock with another builder.
+or deadlock with another builder. Once somebody starts at a ledge, the rest give
+that site eight seconds before trying their own version of the same bridge.
 
 And an agent that re-treads the same few cells five times over with no progress
 between them is condemned and handed a bomb. A bomb rather than simply deleting
@@ -291,8 +294,8 @@ None of it is a script. They don't know the route either — they just refuse to
 let you sit watching something that has stopped happening.
 
 Measured over 200 levels played the way the panel plays them, retries and all:
-**95% reach their target**, 73% of every agent released gets home, over an
-average attempt of about a minute.
+**95% reach their target**, 80% of every agent released gets home, over an
+average attempt of under a minute.
 
 ## Persistence
 

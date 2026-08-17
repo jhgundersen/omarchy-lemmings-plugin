@@ -363,6 +363,7 @@ function generate(level, attempt) {
     carved: 0,
     agents: [],
     particles: [],
+    buildSites: [],
     ticks: 0,
     nextId: 1,
 
@@ -1862,7 +1863,7 @@ function hitWall(w, ag) {
   // reaches for first is most of what its personality looks like from outside:
   // the brave and the stubborn put a shoulder into it, everyone else goes
   // round. A tinkerer would rather lay bricks than do either.
-  if (trait.bridgeAt <= 3 && h <= 6 && willBuild(ag) && take(w, "builder")) { startBuild(w, ag); return }
+  if (trait.bridgeAt <= 3 && h <= 6 && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
 
   if (bashFirst) {
     if (t <= BASH_REACH && take(w, "basher")) { ag.state = "bash"; ag.timer = 0; return }
@@ -1877,7 +1878,7 @@ function hitWall(w, ag) {
   // while climbing was free and is not now: a raised face just past it, met by
   // an agent with no climbers left, had no answer at all and simply turned the
   // whole colony back.
-  if (h <= MAX_CLIMB && willBuild(ag) && take(w, "builder")) { startBuild(w, ag); return }
+  if (h <= MAX_CLIMB && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
 
   // Some of them stop trying. A sentinel beaten by the same wall this many
   // times gives up on getting home and plants itself where it stands, which is
@@ -1911,7 +1912,7 @@ function edgeAhead(w, ag, nx) {
     // Someone should stand here. Worth a blocker while there are still others
     // on their way to walk into it — which is the whole job of the skill.
     if (countComing(w, ag) >= 2 - trait.blockBias && take(w, "blocker")) { ag.state = "block"; return }
-    if (far > 2 && willBuild(ag) && take(w, "builder")) { startBuild(w, ag); return }
+    if (far > 2 && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
     turnAround(w, ag)
     return
   }
@@ -1921,7 +1922,7 @@ function edgeAhead(w, ag, nx) {
   // personality does to an agent's behaviour: a cautious one bridges a drop a
   // brave one walks straight off, and you can watch them disagree about the
   // same ledge, one after the other.
-  if (far > 2 && depth > trait.bridgeAt + ag.bridgeBias && willBuild(ag) && take(w, "builder")) { startBuild(w, ag); return }
+  if (far > 2 && depth > trait.bridgeAt + ag.bridgeBias && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
 
   // The umbrella comes out early for the ones who like a margin. It can only
   // ever come out EARLIER than the lethal limit, never later — a personality
@@ -1929,7 +1930,7 @@ function edgeAhead(w, ag, nx) {
   // The engineer's whole character. Anyone else facing a drop this deep reaches
   // for the umbrella; it looks for something to build to first, and only takes
   // the chute when there is nothing on the far side worth reaching.
-  if (trait.noFloat && far > 2 && willBuild(ag) && take(w, "builder")) { startBuild(w, ag); return }
+  if (trait.noFloat && far > 2 && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
 
   var wantsChute = depth > SAFE_FALL - trait.fallMargin
 
@@ -2002,7 +2003,7 @@ function considerEscape(w, ag) {
   }
 
   // Nothing to climb from here, so the only way up is to build one.
-  if (willBuild(ag) && take(w, "builder")) { startBuild(w, ag); return true }
+  if (canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return true }
   return false
 }
 
@@ -2044,6 +2045,7 @@ function startBuild(w, ag) {
   ag.buildWait = 0
   ag.timer = 0
   ag.built++
+  w.buildSites.push({ x: ag.x, y: ag.y, tick: w.ticks })
 }
 
 // An agent that has already laid two bridges has stopped solving anything and
@@ -2053,6 +2055,21 @@ function startBuild(w, ag) {
 // private folly, and the earth they add is what the ones behind them then get
 // stuck on.
 function willBuild(ag) { return ag.built < traitOf(ag).buildCap }
+
+// Let one builder finish (or visibly fail) before another edits the same
+// ledge. This is intentionally short-lived shared evidence, not a route plan:
+// after eight seconds the colony is free to disagree and try the site again.
+// Without it, a queue can spend a dozen builders on the same few cells before
+// the first bridge has even settled into terrain.
+function canStartBuild(w, ag) {
+  if (!willBuild(ag)) return false
+  for (var i = w.buildSites.length - 1; i >= 0; i--) {
+    var site = w.buildSites[i]
+    if (w.ticks - site.tick > 240) break
+    if (Math.abs(site.y - ag.y) < 4 && Math.abs(site.x - ag.x) < 8) return false
+  }
+  return true
+}
 
 function spawn(w) {
   // Drawn from the world's own stream so a given level always sends the same
@@ -2895,15 +2912,14 @@ function forceEscape(w, ag) {
     specialEscape(w, ag)
     return
   }
-  ag.idle = 0
   var footY = Math.floor(ag.y)
   var ahead = Math.floor(ag.x) + ag.dir
 
   if (exitAbove(w, ag)) {
     // Below the exit: the only useful direction is up.
     if (solid(w, ahead, footY) && wallHeight(w, ahead, footY) <= MAX_CLIMB
-        && grant(w, "climber")) { startClimb(w, ag); return }
-    if (willBuild(ag) && grant(w, "builder")) startBuild(w, ag)
+        && grant(w, "climber")) { ag.idle = 0; startClimb(w, ag); return }
+    if (canStartBuild(w, ag) && grant(w, "builder")) { ag.idle = 0; startBuild(w, ag) }
     return
   }
 
@@ -2922,11 +2938,13 @@ function forceEscape(w, ag) {
   // facing.
   var behind = Math.floor(ag.x) - ag.dir
   if (solid(w, ahead, footY) && at(w, ahead, footY) !== STEEL && grant(w, "basher")) {
+    ag.idle = 0
     ag.state = "bash"
     ag.timer = 0
     return
   }
   if (solid(w, behind, footY) && at(w, behind, footY) !== STEEL && grant(w, "basher")) {
+    ag.idle = 0
     ag.dir = -ag.dir
     ag.state = "bash"
     ag.timer = 0
@@ -2945,6 +2963,7 @@ function forceEscape(w, ag) {
     // shaft, and the two look completely different on the board.
     var ramp = traitOf(ag).mineFirst === true || ag.id % 2 === 0
     if (grant(w, ramp ? "miner" : "digger")) {
+      ag.idle = 0
       ag.state = ramp ? "mine" : "dig"
       ag.timer = 0
       return
@@ -2953,14 +2972,15 @@ function forceEscape(w, ag) {
   // The cap applies to director help too. Without it, the one mechanism meant
   // to rescue a stuck agent happily hands the keenest builder its eighteenth
   // bridge, and the pile of brickwork is what the rest then get stuck on.
-  if (willBuild(ag) && grant(w, "builder")) {
+  if (canStartBuild(w, ag) && grant(w, "builder")) {
+    ag.idle = 0
     startBuild(w, ag)
     return
   }
 
-  // Nothing applied. Don't hand back a full patience timer for having done
-  // nothing — come round again in half the time.
-  ag.idle = PATIENCE / 2
+  // Nothing applied. Leave patience untouched: pretending a refused rescue
+  // was progress lets an agent wedged between a blocker and a wall request the
+  // same unavailable tool forever without ever reaching condemnation.
 }
 
 function runDirector(w) {
@@ -3011,7 +3031,7 @@ function runDirector(w) {
              && grant(w, rampy ? "miner" : "digger")) {
     best.state = rampy ? "mine" : "dig"
     best.timer = 0
-  } else if (best.state === "walk" && willBuild(best) && grant(w, "builder")) {
+  } else if (best.state === "walk" && canStartBuild(w, best) && grant(w, "builder")) {
     startBuild(w, best)
   } else if (w.bombsUsed < 1 && w.rescues > 6 && boxedIn(w, best) && grant(w, "bomber")) {
     // Genuinely walled in by steel with every tool refused. One goes up, and
@@ -3154,6 +3174,12 @@ function step(w) {
     if (ag.still > STILL_ESCAPE && ag.state === "walk") {
       ag.still = 0
       forceEscape(w, ag)
+      // An ordinary agent that is literally stationary and was offered no
+      // usable rescue is finished. The hop has already failed or been refused
+      // by this point; consulting a second timer only leaves it displayed in
+      // the same pixel. Level 19 exposed that gap after its builders and
+      // blocker closed both sides of one cell.
+      if (!ag.special && ag.state === "walk") condemn(w, ag)
     }
 
     var dist = goalDist(w, ag)
