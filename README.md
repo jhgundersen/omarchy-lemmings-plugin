@@ -110,12 +110,24 @@ A lemming only ever turns round at a wall, at a blocker, or at an edge it
 won't step off. Landing doesn't turn it — it keeps whatever way it was facing,
 same as the original.
 
-Two of those are permanent: a lemming that becomes a climber or a floater
-stays one for the rest of its life, exactly as in the original. The other six
-are one-shot, come out of a per-level budget, and when a budget runs dry the
-rule falls through to the next option — which is where the improvisation
-comes from. A level bridged on one run gets bashed through on the next once
-the builders are gone.
+Every one of the eight costs one out of the level's budget, every time it's
+used, and when a budget runs dry the rule falls through to the next option —
+which is where the improvisation comes from. A level bridged on one run gets
+bashed through on the next once the builders are gone.
+
+That includes climbing and floating, which is a deliberate break with the
+original. There, a lemming made a climber stays one for life — but there a
+*player* picks which lemming gets it and for which wall, so the permanence is a
+resource being spent. With nobody choosing, the first lemming to meet a wall
+took a climber and then had every wall on the level for free, which quietly
+deleted the decision from everything downstream. Paying per climb puts it back:
+run out, and the wall in front of you is a problem again.
+
+Being stingy with them turns out to be free. Between three and eighteen
+climbers a level, the share of levels that end with everyone home doesn't
+budge off 85% — what strands a colony was never the shortage of climbs.
+Climbing still turns up in about seven attempts in ten; it just can't carry one
+lemming from the hatch to the exit any more.
 
 The only thing they know that isn't in front of their faces is which way home
 is *vertically* — whether the exit is on this floor, above, or below — which is
@@ -170,9 +182,9 @@ answer — a plug wall for the basher, a raised face for the climber, a run of
 pillars that has to be bashed through one at a time, a drop past two floors for
 the floater, and a chasm with the far side at the same height, which is the
 builder's. The mix is weighted rather than even, and every level is guaranteed
-a chasm: climber is a trait a lemming keeps for life, so one climbable face
-early turns every wall after it into another climb, and left to the dice the
-most distinctive thing any of them does turned up in barely half of levels.
+a chasm — left to the dice, the most distinctive thing any of them does turned
+up in barely half of levels, and a mix with as many climbable faces as anything
+else made the whole board read as walking, climbing and falling.
 
 Dirt and rock both give way to tools; steel never does. The last few paces to
 the exit are walled off with plain dirt, so every level ends with something to
@@ -196,11 +208,15 @@ that silhouette is the only thing making them read as lemmings rather than as
 animated debris.
 
 Measured over 200 levels played the way the panel plays them, retries and all:
-**89% end with everyone home** and 78% of all lemmings get home, over an
-average attempt of about 70 seconds. Across those attempts you'd see something
-bashed through in every one, a blocker standing in 83%, a bridge built in 80%,
-and the nuke go off in about a third — those being the attempts that were never
-going to finish, most of which come good on the retry.
+**84% end with everyone home** and 71% of all lemmings get home, over an average
+attempt of about 70 seconds. Of 335 attempts you'd see something bashed through
+in every one, a blocker standing in 276, a bridge built in 278, a climb in 244,
+digging in 151, mining in 137, and the nuke go off in 116 — those being the
+attempts that were never going to finish, most of which come good on a retry.
+
+No single skill carries a level any more. Per attempt it works out at roughly
+eight umbrellas, eight bridges, seven walls bashed, five climbs, two blockers
+and a couple of shafts.
 
 ### The blocker
 

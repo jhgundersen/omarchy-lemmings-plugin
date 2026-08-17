@@ -374,13 +374,26 @@ function generate(level, attempt) {
   // that arrives at the same cliff with nothing — which is a stranded level,
   // or a heap of splats, depending on the cliff.
   w.skills = {
-    // A few spare of each beyond one-per-lemming: personalities changed the
-    // demand. A cautious lemming opens its umbrella with cells to spare rather
-    // than at the limit, so exactly one floater each runs the budget dry part
-    // way down the level and leaves the stragglers turning back from drops the
-    // early arrivals floated.
-    climber: w.toRelease + 4,
-    floater: w.toRelease + 4,
+    // Climber is now the scarcest thing on the board, and that's the point.
+    // Both of these used to be permanent traits, faithfully to the original —
+    // but in the original a player picks which lemming gets one, for which
+    // wall, and the permanence is a resource being spent. With nobody
+    // choosing, the first lemming to meet a wall took a climber and then had
+    // every wall on the level for free, which quietly deleted the decision
+    // from everything downstream. Paying per climb puts it back: run out, and
+    // the wall in front of you is a problem again.
+    //
+    // Floater stays roomier, because a cliff obstacle has to be crossed by the
+    // whole colony and a lemming with no umbrella at one simply turns back.
+    //
+    // Five to nine looks brutal for a colony of fifteen and measures out fine:
+    // between three and eighteen climbers a level, the share of levels that end
+    // with everyone home doesn't move off 85%, because what strands a colony
+    // isn't the shortage of climbs. Climbing still turns up in about seven
+    // attempts in ten — it just can't carry one lemming from the hatch to the
+    // exit any more.
+    climber: irand(rng, 5, 9) + attempt * 2,
+    floater: w.toRelease + 2 + attempt * 2,
     bomber: irand(rng, 1, 2),
     blocker: irand(rng, 2, 4) + attempt,
     builder: irand(rng, 10, 16) + attempt * 3,
@@ -450,8 +463,7 @@ function placeObstacles(w, rng, c, index, corridors) {
   // overhead and no corridor below to move on to, and that hole held every
   // stranded lemming in a 120-level run.
   // Weighted, not uniform. A flat list put a climbable face in the mix as often
-  // as anything else, and since climber is a trait a lemming keeps for life,
-  // one climbable obstacle early turns every wall after it into another climb.
+  // as anything else, and climbing used to be free after the first wall.
   // Bashing and bridging have to be the common answers or the whole level reads
   // as walking, climbing and falling.
   var lastOne = index === N_CORR - 1
@@ -825,10 +837,6 @@ function hitWall(w, L) {
   // inside the level rather than out on the open surface above the earth.
   var climbable = h <= MAX_CLIMB && footY - h >= SKY
 
-  // Already a climber? Then this isn't a decision — it's just what they do.
-  // Unless it's one of the ones that would rather go straight through.
-  if (L.climber && h > MAX_STEP && climbable && !bashFirst) { startClimb(w, L); return }
-
   // Over, or through. Both work on a short wall, and which one a lemming
   // reaches for first is most of what its personality looks like from outside:
   // the brave and the stubborn put a shoulder into it, everyone else goes
@@ -837,15 +845,18 @@ function hitWall(w, L) {
 
   if (bashFirst) {
     if (t <= BASH_REACH && take(w, "basher")) { L.state = "bash"; L.timer = 0; return }
-    if (climbable && take(w, "climber")) { L.climber = true; startClimb(w, L); return }
+    if (climbable && take(w, "climber")) { startClimb(w, L); return }
   } else {
-    if (L.climber && h > MAX_STEP && climbable) { startClimb(w, L); return }
-    if (climbable && take(w, "climber")) { L.climber = true; startClimb(w, L); return }
+    if (climbable && take(w, "climber")) { startClimb(w, L); return }
     if (t <= BASH_REACH && take(w, "basher")) { L.state = "bash"; L.timer = 0; return }
   }
 
-  // A short lip with room above it — a couple of bricks is cheaper than a climb.
-  if (h <= 6 && take(w, "builder")) { startBuild(w, L); return }
+  // Bricks as the last answer to anything a climb could have handled. The
+  // threshold used to be lower than the climbable height, which was harmless
+  // while climbing was free and is not now: a raised face just past it, met by
+  // a lemming with no climbers left, had no answer at all and simply turned the
+  // whole colony back.
+  if (h <= MAX_CLIMB && willBuild(L) && take(w, "builder")) { startBuild(w, L); return }
 
   turnAround(w, L)
 }
@@ -884,7 +895,7 @@ function edgeAhead(w, L, nx) {
 
   if (!wantsChute) { L.x = nx; startFall(w, L); return }
 
-  if (L.floater || take(w, "floater")) {
+  if (take(w, "floater")) {
     L.floater = true
     L.x = nx
     startFall(w, L)
@@ -942,10 +953,7 @@ function considerEscape(w, L) {
     return false
   }
 
-  // Becoming a climber doesn't act immediately — it takes effect at the next
-  // wall, which down a shaft is a second or so away. That reads better than
-  // teleporting into a climb anyway.
-  if (!L.climber && take(w, "climber")) { L.climber = true; return true }
+  // Nothing to climb from here, so the only way up is to build one.
   if (take(w, "builder")) { startBuild(w, L); return true }
   return false
 }
@@ -1015,7 +1023,9 @@ function spawn(w) {
     y: w.hatch.y + LEM_H,
     dir: 1,
     state: "fall",
-    climber: false,
+    // Not a flag a lemming keeps. `floater` means "umbrella is out for THIS
+    // fall" and is folded away on landing; there is no climber flag at all,
+    // because every climb is paid for when it happens.
     floater: false,
     fall: 0,
     timer: 0,
@@ -1102,6 +1112,7 @@ function stepFall(w, L) {
       if (L.fall > SAFE_FALL && !L.floater) { splat(w, L); return }
       L.state = "walk"
       L.fall = 0
+      L.floater = false
       // Landing does NOT turn a lemming round. It keeps whatever way it was
       // facing, as in the original — a lemming only ever turns at a wall, at a
       // blocker, or at an edge it won't step off.
@@ -1426,7 +1437,8 @@ function forceEscape(w, L) {
 
   if (exitAbove(w, L)) {
     // Below the exit: the only useful direction is up.
-    if (!L.climber && grant(w, "climber")) { L.climber = true; return }
+    if (solid(w, ahead, footY) && wallHeight(w, ahead, footY) <= MAX_CLIMB
+        && grant(w, "climber")) { startClimb(w, L); return }
     if (willBuild(L) && grant(w, "builder")) startBuild(w, L)
     return
   }
@@ -1515,8 +1527,9 @@ function runDirector(w) {
   // Below the exit and pacing: nothing horizontal helps, and digging only
   // makes it worse. Hand them a climb.
   var rampy = best.id % 2 === 0
-  if (wantUp && !best.climber && grant(w, "climber")) {
-    best.climber = true
+  if (wantUp && solid(w, ahead, footY) && wallHeight(w, ahead, footY) <= MAX_CLIMB
+      && grant(w, "climber")) {
+    startClimb(w, best)
   } else if (solid(w, ahead, footY) && at(w, ahead, footY) !== STEEL && grant(w, "basher")) {
     best.state = "bash"
     best.timer = 0
