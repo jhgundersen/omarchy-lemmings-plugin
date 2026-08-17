@@ -920,32 +920,46 @@ function placeObstacles(w, rng, c, index, corridors) {
 // ---------------------------------------------------------------------------
 
 var SPECIALS = [
-  // Cutters: each takes a different bite out of whatever is in front of it.
-  { id: "buckshot",  name: "Buckshot",   act: "blast",  robe: "#b83232", hair: "#e8d24a" },
-  { id: "roundhouse",name: "Roundhouse", act: "kick",   robe: "#d1621f", hair: "#3a2a18" },
-  { id: "lumberjack",name: "Lumberjack", act: "fell",   robe: "#2f6b3a", hair: "#8a4b22" },
-  { id: "pyro",      name: "Pyro",       act: "melt",   robe: "#c4341c", hair: "#f0a03c" },
-  { id: "sapper",    name: "Sapper",     act: "sap",    robe: "#6b6b28", hair: "#c8c8b0" },
-  { id: "piledriver",name: "Piledriver", act: "stomp",  robe: "#4a4f59", hair: "#d8dde5" },
-  { id: "quarryman", name: "Quarryman",  act: "quarry", robe: "#a8843c", hair: "#5a4426" },
-  { id: "glazier",   name: "Glazier",    act: "slab",   robe: "#4a9ec4", hair: "#dff2ff" },
+  // Every one of these does something you can see it do, on a cooldown long
+  // enough that it reads as a decision rather than a tic. The first version had
+  // twenty, twelve of which had no animation at all — "that one is slightly
+  // teal and walks a bit quicker" is not a character at this size — and the
+  // eight that did have one fired it seventy times a level, which is not a
+  // signature move either. Ten, all visible, all rationed by time instead of
+  // by budget.
+  //
+  // `cool` is ticks before it can do it again. While it is cooling it turns at
+  // a wall like anybody else, so the move is something you wait for.
 
-  // Tradesmen: an ordinary skill, with no meter on it.
-  { id: "jackhammer",name: "Jackhammer", act: "bash",   robe: "#c9a227", hair: "#3a3a3a" },
-  { id: "mole",      name: "Mole",       act: "dig",    robe: "#6b4a2f", hair: "#2a1c12" },
-  { id: "ripper",    name: "Ripper",     act: "mine",   robe: "#a2703c", hair: "#e0c48a" },
-  { id: "bricklayer",name: "Bricklayer", act: "build",  robe: "#b06a2c", hair: "#d8d0c0" },
+  // Works like a basher, except it happens all at once: a tunnel the height of
+  // an agent, punched through in a single shot.
+  { id: "buckshot",  name: "Buckshot",   act: "blast",  cool: 150, robe: "#b83232", hair: "#e8d24a" },
 
-  // The rest earn their keep by how they move, and still carry a trick so they
-  // are never left with nothing to do at a wall.
-  { id: "gecko",     name: "Gecko",      act: "climb",  robe: "#5aa832", hair: "#2f6b1f", climbAny: true },
-  { id: "parasol",   name: "Parasol",    act: "build",  robe: "#c05a8f", hair: "#f0d0e0", alwaysFloat: true },
-  { id: "anvil",     name: "Anvil",      act: "bash",   robe: "#5a5f6b", hair: "#9aa0ac", ironFall: true },
-  { id: "juggernaut",name: "Juggernaut", act: "bash",   robe: "#3f5f8a", hair: "#c0ccd8", ironFall: true, hazardProof: true },
-  { id: "wraith",    name: "Wraith",     act: "ghost",  robe: "#8e8ea8", hair: "#e8e8f4", ghost: true },
-  { id: "sprinter",  name: "Sprinter",   act: "climb",  robe: "#2fa8a0", hair: "#d8f4f0", speed: 2.3 },
-  { id: "springheel",name: "Springheel", act: "climb",  robe: "#7a4ac0", hair: "#e0d0f4", stepUp: 6 },
-  { id: "beacon",    name: "Beacon",     act: "build",  robe: "#d4a017", hair: "#fff0c0", knowsWay: true }
+  // Does not destroy the wall. Moves it. The block ahead is picked up and put
+  // down four cells further on, which can open a way through, seal one, or
+  // shunt a lump of the level into a hole — and the colony has to deal with
+  // wherever it ended up.
+  { id: "roundhouse",name: "Roundhouse", act: "kick",   cool: 130, robe: "#d1621f", hair: "#3a2a18" },
+
+  // Goes up the wall, onto the ceiling, and keeps walking upside down until the
+  // roof runs out from under it.
+  { id: "spider",    name: "Spider",     act: "ceiling",cool: 90,  robe: "#8f2bbf", hair: "#e04a8a" },
+
+  // Topples the column rather than deleting it: what was a wall lies down and
+  // becomes a floor to walk out on.
+  { id: "lumberjack",name: "Lumberjack", act: "topple", cool: 170, robe: "#2f6b3a", hair: "#8a4b22" },
+
+  { id: "pyro",      name: "Pyro",       act: "melt",   cool: 160, robe: "#c4341c", hair: "#f0a03c" },
+  { id: "sapper",    name: "Sapper",     act: "sap",    cool: 200, robe: "#6b6b28", hair: "#c8c8b0" },
+  { id: "piledriver",name: "Piledriver", act: "stomp",  cool: 140, robe: "#4a4f59", hair: "#d8dde5" },
+  { id: "quarryman", name: "Quarryman",  act: "quarry", cool: 220, robe: "#a8843c", hair: "#5a4426" },
+
+  // The only one that adds instead of taking away.
+  { id: "glazier",   name: "Glazier",    act: "slab",   cool: 120, robe: "#4a9ec4", hair: "#dff2ff" },
+
+  // Steps through the wall rather than removing it, which leaves the level
+  // exactly as it found it and gets nobody else anywhere.
+  { id: "wraith",    name: "Wraith",     act: "phase",  cool: 110, robe: "#8e8ea8", hair: "#e8e8f4" }
 ]
 
 function specialSpec(id) {
@@ -955,42 +969,71 @@ function specialSpec(id) {
 
 function specOf(ag) { return ag.special ? specialSpec(ag.special) : null }
 
-// How far ahead each trick reaches, and what shape it takes out. Everything
-// here is expressed as cells relative to the agent, and every one of them
-// refuses steel, so no trick can open the side of the board or the floor of the
-// world — the same rule the ordinary skills live under.
+// What each move does. Everything refuses steel, so no move can open the side
+// of the board or the floor of the world — the same rule the ordinary skills
+// live under. A move that shifts nothing returns false and the special turns
+// round instead, which is the only thing standing between a trick and a
+// special firing into bedrock until the level times out.
 function specialCut(w, ag, act) {
   var fx = Math.floor(ag.x)
   var fy = Math.floor(ag.y)
   var d = ag.dir
   var moved = false
-  var i, j, r
+  var i, j
 
   if (act === "blast") {
-    // A fan: short, wide at the far end. A shotgun through a wall.
-    for (i = 1; i <= 6; i++) {
-      var spread = Math.round(i * 0.7)
-      for (j = -spread; j <= spread; j++)
-        if (clearCell(w, fx + d * i, fy - 2 + j)) moved = true
-    }
-
-  } else if (act === "kick") {
-    // Not a hole so much as a shove: the full height of the agent, driven
-    // several cells in. Whatever was there is simply somewhere else now.
-    for (i = 1; i <= 5; i++)
+    // A basher's tunnel, opened in one shot instead of over ten seconds.
+    for (i = 1; i <= 8; i++)
       for (j = -AGENT_H; j <= 0; j++)
         if (clearCell(w, fx + d * i, fy + j)) moved = true
 
-  } else if (act === "fell") {
-    // A column taken out from the floor to the ceiling, like a tree coming
-    // down. Narrow, and very tall.
-    for (i = 1; i <= 3; i++)
-      for (j = -12; j <= 1; j++)
-        if (clearCell(w, fx + d * i, fy + j)) moved = true
+  } else if (act === "kick") {
+    // The wall is not destroyed. It is moved.
+    //
+    // Three columns of it are lifted out and set down four cells further on,
+    // which can open a way through, or seal one, or drop a lump of the level
+    // into a hole somebody else was going to have to bridge. Nobody is told;
+    // they just find the level rearranged. It is the only move whose result is
+    // worth arguing about, which is the reason it exists.
+    var W = 3, SHOVE = 4
+    var block = []
+    for (i = 0; i < W; i++) {
+      block[i] = []
+      for (j = -AGENT_H; j <= 0; j++) {
+        var sx = fx + d * (1 + i)
+        var m = at(w, sx, fy + j)
+        block[i][j + AGENT_H] = (m === STEEL) ? -1 : m
+      }
+    }
+    // Refuse if any of it is steel, or if where it would land is not clear.
+    for (i = 0; i < W; i++)
+      for (j = 0; j <= AGENT_H; j++) {
+        if (block[i][j] === -1) return false
+        var dx = fx + d * (1 + i + SHOVE)
+        if (block[i][j] !== EMPTY && at(w, dx, fy - AGENT_H + j) !== EMPTY) return false
+      }
+    for (i = 0; i < W; i++)
+      for (j = 0; j <= AGENT_H; j++) {
+        var m2 = block[i][j]
+        if (m2 === EMPTY) continue
+        clearCell(w, fx + d * (1 + i), fy - AGENT_H + j)
+        setCell(w, fx + d * (1 + i + SHOVE), fy - AGENT_H + j, m2)
+        moved = true
+      }
+
+  } else if (act === "topple") {
+    // The column comes down rather than disappearing: what was a wall lies
+    // over and becomes a floor to walk out on.
+    var top = fy
+    while (top > SKY && solid(w, fx + d, top - 1)) top--
+    var height = fy - top + 1
+    if (height < 3) return false
+    for (j = top; j <= fy; j++) clearCell(w, fx + d, j)
+    for (i = 1; i <= Math.min(height, 10); i++)
+      if (at(w, fx + d * (1 + i), fy) === EMPTY) { setCell(w, fx + d * (1 + i), fy, ROCK); moved = true }
+    if (!moved) return false
 
   } else if (act === "melt") {
-    // A disc. The roundest hole on the board and the only one that leaves a
-    // dome over itself.
     for (i = -5; i <= 5; i++)
       for (j = -5; j <= 5; j++) {
         if (i * i + j * j > 26) continue
@@ -998,8 +1041,6 @@ function specialCut(w, ag, act) {
       }
 
   } else if (act === "sap") {
-    // A charge placed a few cells in, with the reach of a bomb and none of the
-    // dying. The one trick that can open two things at once.
     for (i = -BOMB_RADIUS; i <= BOMB_RADIUS; i++)
       for (j = -BOMB_RADIUS; j <= BOMB_RADIUS; j++) {
         if (i * i + j * j > BOMB_RADIUS * BOMB_RADIUS) continue
@@ -1008,24 +1049,32 @@ function specialCut(w, ag, act) {
     addDust(w, fx + d * 5, fy - 2, 18)
 
   } else if (act === "stomp") {
-    // Straight down, and fast. A lift shaft rather than a staircase.
     for (i = -1; i <= 1; i++)
       for (j = 1; j <= 6; j++)
         if (clearCell(w, fx + i, fy + j)) moved = true
 
   } else if (act === "quarry") {
-    // The biggest single bite anything on the board takes: a room, opened in
-    // one go.
     for (i = 1; i <= 7; i++)
       for (j = -7; j <= 1; j++)
         if (clearCell(w, fx + d * i, fy + j)) moved = true
 
   } else if (act === "slab") {
-    // The only trick that adds. A platform three cells thick laid straight
-    // out, which is a bridge nobody has to ration.
     for (i = 1; i <= 6; i++)
       for (j = 1; j <= 3; j++)
         if (at(w, fx + d * i, fy + j) === EMPTY) { setCell(w, fx + d * i, fy + j, ROCK); moved = true }
+
+  } else if (act === "phase") {
+    // Steps through instead of removing. It gets itself past and leaves the
+    // level exactly as it found it, which helps precisely nobody else.
+    for (i = 1; i <= 10; i++) {
+      var tx = fx + d * i
+      if (at(w, tx, fy) === STEEL) return false
+      if (!solid(w, tx, fy) && !solid(w, tx, fy - 1) && solid(w, tx, fy + 1)) {
+        ag.x = tx + 0.5
+        return true
+      }
+    }
+    return false
   }
 
   if (moved) {
@@ -1197,9 +1246,6 @@ function placeHazard(w, rng, corridors, ci) {
 // Anything alive inside the zone right now.
 function hazardCatches(w, h, ag) {
   if (ag.gone || ag.state === "saved") return false
-  // The Juggernaut walks through gunfire. It is the only thing on the board
-  // that a danger cannot touch, which is most of the point of it.
-  if (ag.special) { var hsp = specOf(ag); if (hsp && hsp.hazardProof) return false }
   var ax = Math.floor(ag.x)
   var ay = Math.floor(ag.y)
   // Its feet are at ay and its body reaches AGENT_H-1 above, so a beam across
@@ -1260,7 +1306,6 @@ function sniperAcquire(w, h, spec) {
   for (var i = 0; i < w.agents.length; i++) {
     var ag = w.agents[i]
     if (ag.gone || ag.state === "saved") continue
-    if (ag.special) { var asp = specOf(ag); if (asp && asp.hazardProof) continue }
     var d = Math.abs(ag.x - sx)
     if (d > spec.reach || d < 4) continue
     if (Math.abs(ag.y - sy) > CORR_H) continue
@@ -1878,6 +1923,7 @@ function spawn(w) {
     passes: {},        // cells re-tread since then; see countPass()
     bucket: "",
     condemned: false,
+    cool: 0,          // ticks before a special may use its move again
     markD: Infinity,   // closest it has ever been; see goalDist()
     fuse: 0,
     anim: Math.floor(Math.random() * 8),
@@ -1891,19 +1937,9 @@ function spawn(w) {
 // ---------------------------------------------------------------------------
 
 function stepWalk(w, ag) {
-  var sp = ag.special ? specOf(ag) : null
-  var nx = ag.x + ag.dir * WALK_SPEED * (sp && sp.speed ? sp.speed : 1)
+  var nx = ag.x + ag.dir * WALK_SPEED
   var cx = Math.floor(nx)
   var footY = Math.floor(ag.y)
-
-  // The wraith goes through what everyone else goes round — everything except
-  // steel, which nothing on this board has ever got through. It still walks
-  // the floor and still falls off things; it simply has no walls.
-  if (sp && sp.ghost && solid(w, cx, footY) && at(w, cx, footY) !== STEEL) {
-    ag.x = nx
-    ag.anim++
-    return
-  }
 
   if (anyBlockerNear(w, ag, nx)) { turnAround(w, ag); return }
 
@@ -1926,11 +1962,9 @@ function stepWalk(w, ag) {
 
   if (solid(w, cx, footY)) {
     // Ground rising. A stride covers MAX_STEP; anything taller is an obstacle.
-    // Springheel takes a stride where the rest meet a wall.
-    var lift = sp && sp.stepUp ? sp.stepUp : MAX_STEP
     var k = 1
-    while (k <= lift && solid(w, cx, footY - k)) k++
-    if (k > lift || !headroom(w, cx, footY - k)) { hitWall(w, ag); return }
+    while (k <= MAX_STEP && solid(w, cx, footY - k)) k++
+    if (k > MAX_STEP || !headroom(w, cx, footY - k)) { hitWall(w, ag); return }
     targetY = footY - k
   } else if (!solid(w, cx, footY + 1)) {
     // Ground falling away. One cell is a step down; more is a fall, and a fall
@@ -1980,10 +2014,7 @@ function stepFall(w, ag) {
   for (var yy = Math.floor(ag.y) + 1; yy <= Math.floor(ny) + 1; yy++) {
     if (solid(w, cx, yy)) {
       ag.y = yy - 1
-      // Anvil and Juggernaut land the way an anvil does: from any height, and
-      // the ground can take it up with them.
-      var lsp = ag.special ? specOf(ag) : null
-      if (ag.fall > SAFE_FALL && !ag.floater && !(lsp && lsp.ironFall)) { splat(w, ag); return }
+      if (ag.fall > SAFE_FALL && !ag.floater) { splat(w, ag); return }
       ag.state = "walk"
       ag.fall = 0
       ag.floater = false
@@ -2259,15 +2290,73 @@ var TRICK_WINDUP = 14
 // the trick state and cut a shape out of whatever is there.
 function specialAtWall(w, ag) {
   var spec = specOf(ag)
-  switch (spec.act) {
-    case "climb": startClimb(w, ag); return
-    case "bash":  ag.state = "bash"; ag.timer = 0; return
-    case "dig":   ag.state = "dig";  ag.timer = 0; return
-    case "mine":  ag.state = "mine"; ag.timer = 0; return
-    case "build": startBuild(w, ag); return
-    case "ghost": ag.state = "walk"; return   // it simply walks on through
-    default:      ag.state = "trick"; ag.timer = 0
+
+  // Cooling down. It turns at the wall like anybody else and comes back to it,
+  // which is the entire point of the cooldown: the move is something you wait
+  // for rather than something it does every half second.
+  if (ag.cool > 0) { turnAround(w, ag); return }
+
+  if (spec.act === "ceiling") { startCeiling(w, ag); return }
+
+  // Drilling downward is only ever the answer when down is where home is.
+  // Without this the Piledriver spends the level sinking below the exit, which
+  // is why it was the one special that almost never got home.
+  if (spec.act === "stomp" && !exitBelow(w, ag)) { turnAround(w, ag); return }
+
+  ag.state = "trick"
+  ag.timer = 0
+}
+
+// Up the wall and onto the roof. Finds the first solid ceiling overhead with
+// room to hang from it, and sticks there.
+function startCeiling(w, ag) {
+  var fx = Math.floor(ag.x)
+  for (var cy = Math.floor(ag.y) - AGENT_H; cy > SKY; cy--) {
+    if (!solid(w, fx, cy)) continue
+    // Room to hang: the body occupies the rows under whatever it grabbed.
+    var room = true
+    for (var b = 1; b <= AGENT_H; b++) if (solid(w, fx, cy + b)) { room = false; break }
+    if (!room) return turnAround(w, ag)
+    ag.y = cy + 1
+    ag.state = "ceil"
+    ag.timer = 0
+    ag.cool = specOf(ag).cool
+    return
   }
+  turnAround(w, ag)
+}
+
+// Walking upside down. The roof is the floor: it holds on as long as there is
+// something solid directly above, turns at anything solid in front, and drops
+// the moment the ceiling runs out from under — which is usually the point,
+// because the ceiling runs out over the far side of whatever stopped it.
+// How long it can hang on. Without a limit a long ceiling is somewhere to pace
+// for a minute and a half, which is what the longest run measured before this.
+var CEILING_GRIP = 260
+
+function stepCeiling(w, ag) {
+  var nx = ag.x + ag.dir * WALK_SPEED
+  var cx = Math.floor(nx)
+  var y = Math.floor(ag.y)
+
+  ag.timer++
+  if (ag.timer > CEILING_GRIP) {
+    ag.y = y + AGENT_H - 1
+    beginUncontrolledFall(w, ag)
+    return
+  }
+
+  if (!solid(w, cx, y - 1)) {
+    // Roof gone. Let go, and fall from where its feet actually are.
+    ag.y = y + AGENT_H - 1
+    beginUncontrolledFall(w, ag)
+    return
+  }
+  for (var b = 0; b < AGENT_H; b++) {
+    if (solid(w, cx, y + b)) { turnAround(w, ag); return }
+  }
+  ag.x = nx
+  ag.anim++
 }
 
 // And at a drop. The passives do most of the work here: one of them is immune
@@ -2277,8 +2366,8 @@ function specialAtWall(w, ag) {
 function specialAtEdge(w, ag, nx, depth, far) {
   var spec = specOf(ag)
 
-  if (spec.act === "build" || spec.act === "slab") {
-    if (far > 2) { startBuild(w, ag); return }
+  if (spec.act === "slab" && far > 2 && ag.cool <= 0) {
+    if (specialCut(w, ag, "slab")) { ag.cool = spec.cool; return }
   }
   // A hole with no bottom is the one thing neither toughness nor an umbrella
   // answers — the anvil takes any landing there is, and a drop with nothing to
@@ -2286,8 +2375,7 @@ function specialAtEdge(w, ag, nx, depth, far) {
   // how the two hardiest specials on the board were walking off the world.
   if (depth === Infinity) { turnAround(w, ag); return }
 
-  if (spec.alwaysFloat) { ag.floater = true; ag.x = nx; startFall(w, ag); return }
-  if (spec.ironFall || depth <= SAFE_FALL) { ag.x = nx; startFall(w, ag); return }
+  if (depth <= SAFE_FALL) { ag.x = nx; startFall(w, ag); return }
   turnAround(w, ag)
 }
 
@@ -2324,9 +2412,15 @@ function stepTrick(w, ag) {
   var cut = specialCut(w, ag, spec.act)
   ag.state = "walk"
 
+  // The cooldown runs whether or not anything moved. Charging it only on
+  // success left a special that was swinging at steel free to swing again
+  // immediately, which is how the Piledriver managed eighty-five moves in a
+  // level that should allow about a dozen — the cooldown was real and it was
+  // simply never reached.
+  ag.cool = cut ? spec.cool : Math.round(spec.cool / 2)
+
   // Nothing shifted, so whatever is in the way is steel and always will be.
-  // Turning is the only honest answer, and without this the trick fires into
-  // bedrock forever and the special is the thing that stalls the level.
+  // Turning is the only honest answer.
   if (!cut) turnAround(w, ag)
 }
 
@@ -2653,6 +2747,7 @@ function step(w) {
     // Closer to home than this agent has ever been? Then whatever it's
     // doing is working: clear both counters and let it get on with it.
     w.acting = ag
+    if (ag.cool > 0) ag.cool--
 
     var dist = goalDist(w, ag)
     if (dist < ag.markD - 2) {
@@ -2688,6 +2783,7 @@ function step(w) {
       case "block": stepBlock(w, ag); break
       case "bomb": stepBomb(w, ag); break
       case "trick": stepTrick(w, ag); break
+      case "ceil":  stepCeiling(w, ag); break
     }
 
     w.acting = null

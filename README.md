@@ -206,53 +206,45 @@ later. Bravery buys a longer walk, not a longer fall.
 
 Something over half of colonies contain exactly one. A special **cannot touch
 the toolbar at all** — no climbs, no bridges, no umbrella, nothing from the
-budget the other fourteen are sharing — and in exchange it has one thing it can
-do forever. Where everybody else is rationed and versatile, it is inexhaustible
-and one-dimensional, which is a different creature to watch: the colony works
-the level, and this one just does its trick at whatever is in the way until the
-level gives up.
-
-That trade is the whole design. Give it the trick *and* the toolbar and it
-solves the level on its own and the other fourteen become scenery.
-
-You know it by its colour. Every other agent is the same green and blue on
-purpose, so the one that isn't reads as the one that isn't from across the
-room, with a pip on the shoulder in its second colour and its name over its
-head when labels are on.
+budget the other fourteen are sharing — and in exchange it has one move it can
+make forever, rationed by a cooldown instead of by a meter.
 
 | | |
 | --- | --- |
-| **Buckshot** | Blows a widening fan of shot through whatever is in front of it |
-| **Roundhouse** | Kicks a body-height hole clean through, five cells deep |
-| **Lumberjack** | Fells a column from the floor to the ceiling |
+| **Buckshot** | A basher's tunnel, punched through in a single shot |
+| **Roundhouse** | Does not destroy the wall. Picks it up and puts it down four cells further on |
+| **Spider** | Goes up the wall, onto the ceiling, and walks upside down until the roof runs out |
+| **Lumberjack** | Topples the column rather than deleting it: what was a wall lies down and becomes a floor |
 | **Pyro** | Melts a disc, the roundest hole on the board |
-| **Sapper** | Places a charge a few cells in, with a bomb's reach and none of the dying |
-| **Piledriver** | Straight down, and fast. A lift shaft rather than a staircase |
+| **Sapper** | Places a charge with a bomb's reach and none of the dying |
+| **Piledriver** | Straight down, and only when down is where home is |
 | **Quarryman** | Opens a whole room in one go |
-| **Glazier** | The only trick that adds: a slab laid straight out, a bridge nobody rations |
-| **Jackhammer** | Bashing, with no meter on it |
-| **Mole** | Digging, with no meter on it |
-| **Ripper** | Mining, with no meter on it |
-| **Bricklayer** | Bridges, with no meter on them |
-| **Gecko** | Climbs anything, always |
-| **Parasol** | The umbrella is simply always out |
-| **Anvil** | Lands from any height and gets up |
-| **Juggernaut** | Lands from any height, and dangers cannot touch it |
-| **Wraith** | Walks through everything except steel |
-| **Sprinter** | Twice everybody else's pace |
-| **Springheel** | Takes a six-cell step in stride |
-| **Beacon** | Knows which way home is |
+| **Glazier** | The only one that adds: a slab laid straight out |
+| **Wraith** | Steps through the wall instead of removing it, and helps nobody |
 
-Every one of them also keeps a shovel for when the wall was never the problem.
-Most tricks cut sideways, so a special boxed into a pocket with the way on
-underneath it fired into the same steel wall until the level timed out — two
-thirds of them ended up condemned rather than home. The trick is for walls; the
-shovel is for everything else.
+It is known by its colour. Every other agent is the same green and blue on
+purpose, so the one that isn't reads as the one that isn't from across the room
+— with a pip on the shoulder in its second colour, its name over its head with
+labels on, and a card up in the open sky saying who is down there.
 
-They are not all equally good, deliberately. The Juggernaut and the Glazier get
-home three times out of four; the Lumberjack and the Piledriver rather less,
-because a trick that only goes down is a trick that spends a lot of time under
-the exit.
+This is the second version. The first had twenty, and it did not work. Twelve
+of them had no animation at all — they were passives, and "that one is slightly
+teal and walks a bit quicker" is not a character at four hundred pixels across
+— while the eight that did have one fired it seventy or eighty times a level,
+which is not a signature move either, it is a tic. Ten now, every one of them
+something you can watch happen, and a cooldown long enough that the move is
+something you wait for.
+
+The cooldown runs whether or not the move achieved anything, which is not an
+implementation detail: charging it only on success left a special swinging at
+steel free to swing again immediately, and that alone was the difference
+between about a dozen moves a level and eighty-five.
+
+Every one also keeps a shovel for when the wall was never the problem. Most
+moves cut sideways, so a special boxed into a pocket with the way on underneath
+it fired into the same steel wall until the level timed out — two thirds ended
+up condemned rather than home. The move is for walls; the shovel is for
+everything else.
 
 ## Levels
 

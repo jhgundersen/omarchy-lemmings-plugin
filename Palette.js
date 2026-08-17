@@ -146,6 +146,10 @@ function build(theme, level) {
     // it has to read as what it is without help.
     blood: "#b3121b",
 
+    // The card in the sky: barely above the sky itself, so it reads as a
+    // panel rather than as a hole cut in the board.
+    cardBack: css(mix(bg, fg, 0.10)),
+
     dust: css(mix(bg, fg, 0.7)),
     label: css(mix(bg, fg, 0.85)),
     // Personality names sit behind action names: with labels on, every agent

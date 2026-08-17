@@ -252,6 +252,7 @@ function drawActors(ctx, w, pal, opts) {
   var k = w.k
   ctx.reset()
   drawHatch(ctx, w, pal)
+  drawSpecialCard(ctx, w, pal)
   drawExitGlow(ctx, w, pal)
 
   drawHazard(ctx, w, pal)
@@ -277,6 +278,119 @@ function drawActors(ctx, w, pal, opts) {
     if (ag.gone) continue
     drawAgent(ctx, w, pal, ag, opts)
   }
+}
+
+// The open sky above the earth was doing nothing but holding the hatch, and
+// there is a whole band of it. When the level has a special, it gets a card up
+// there: who is on the board, and one line about them.
+//
+// Three per special, picked by level number so it is the same line every time
+// you come back to level 42 — the same rule the rest of the level runs on.
+var SPECIAL_FACTS = {
+  buckshot: [
+    "does not clear a path. It suggests one, loudly.",
+    "reloads out of spite.",
+    "has never bashed a wall twice."
+  ],
+  roundhouse: [
+    "does not destroy the wall. The wall relocates.",
+    "counted to infinity. Twice.",
+    "does not do push-ups. It pushes the level down."
+  ],
+  spider: [
+    "considers the ceiling a floor with better views.",
+    "has never once looked down.",
+    "walks upside down out of principle."
+  ],
+  lumberjack: [
+    "does not remove the wall. It lies it down.",
+    "shouts nothing. The wall knows.",
+    "turns a problem into a floor."
+  ],
+  pyro: [
+    "solves geometry with heat.",
+    "leaves the roundest holes on the board.",
+    "has opinions about dirt."
+  ],
+  sapper: [
+    "plants it, walks away, does not look back.",
+    "reads the room, then removes it.",
+    "is the only one here who survives the bang."
+  ],
+  piledriver: [
+    "only ever knows one direction, and it is down.",
+    "has never taken a staircase.",
+    "considers the floor a suggestion."
+  ],
+  quarryman: [
+    "does not dig tunnels. It opens rooms.",
+    "takes the biggest single bite on the board.",
+    "measures twice, removes everything."
+  ],
+  glazier: [
+    "is the only one here who adds anything.",
+    "lays a bridge nobody has to ration.",
+    "builds where the others break."
+  ],
+  wraith: [
+    "walks through the wall and helps nobody.",
+    "leaves the level exactly as it found it.",
+    "is not stuck. Everyone else is."
+  ]
+}
+
+// A bust of the special, drawn at double size so it reads as a portrait rather
+// than as an agent that wandered into the sky.
+function drawBust(ctx, x, y, sp, pal) {
+  var P = 2
+  function px(bx, by, bw, bh, fill) { ctx.fillStyle = fill; ctx.fillRect(x + bx * P, y + by * P, bw * P, bh * P) }
+  px(1, 0, 6, 3, sp.hair)          // hair
+  px(0, 1, 1, 2, sp.hair)
+  px(2, 3, 4, 3, pal.skin)         // face
+  px(3, 4, 1, 1, pal.eye)          // eye
+  px(1, 6, 6, 5, sp.robe)          // shoulders
+  px(0, 7, 1, 4, sp.robe)
+  px(7, 7, 1, 4, sp.robe)
+  px(1, 8, 2, 2, sp.hair)          // the shoulder pip, same as on the board
+}
+
+function drawSpecialCard(ctx, w, pal) {
+  if (!w.special) return
+  var sp = specialSpec(w.special)
+  if (!sp) return
+  var C = w.k.CELL
+  var skyH = w.k.SKY * C
+
+  // Everything here has to fit inside the open sky, which is seven rows — 28
+  // pixels — and not a pixel more. The first version laid the fact out over two
+  // lines and the second one came out underneath the earth.
+  var cardW = 232
+  var right = w.hatch.x < w.k.COLS / 2
+  var x = right ? w.k.COLS * C - cardW - 5 : 5
+  var y = 2
+  var h = skyH - 5
+
+  ctx.fillStyle = pal.cardBack
+  ctx.fillRect(x, y, cardW, h)
+  ctx.fillStyle = sp.robe
+  ctx.fillRect(x, y, 2, h)          // a spine in the special's own colour
+
+  drawBust(ctx, x + 6, y + 1, sp, pal)
+
+  var tx = x + 28
+  ctx.textAlign = "left"
+  ctx.fillStyle = sp.robe
+  ctx.font = "bold 8px monospace"
+  ctx.fillText(sp.name, tx, y + 10)
+
+  // One line, clipped rather than wrapped — there is room for exactly one.
+  var facts = SPECIAL_FACTS[sp.id] || [""]
+  var fact = facts[w.level % facts.length]
+  var room = Math.floor((cardW - 34) / 4.25)
+  if (fact.length > room) fact = fact.slice(0, room - 1) + "\u2026"
+  ctx.fillStyle = pal.labelFaint
+  ctx.font = "7px monospace"
+  ctx.fillText(fact, tx, y + 20)
 }
 
 function drawHatch(ctx, w, pal) {
