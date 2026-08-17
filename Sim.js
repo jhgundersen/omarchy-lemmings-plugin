@@ -68,8 +68,6 @@ var BOMB_RADIUS = 5
 var LEVEL_LIMIT = 30 * 110
 var NUKE_STAGGER = 5     // ticks between arming one lemming and the next
 
-// How long a blocker holds its post after the last lemming it turned back.
-var BLOCK_DUTY = 30 * 12
 
 // Skills, in the order the original's toolbar showed them.
 var SKILL_ORDER = ["climber", "floater", "bomber", "blocker", "builder", "basher", "miner", "digger"]
@@ -361,6 +359,14 @@ function generate(level, attempt) {
   // just getting everybody onto the board.
   w.toRelease = irand(rng, 12, 18)
   w.releaseInterval = irand(rng, 24, 34)
+
+  // How many have to get home for the level to count, as a number rather than
+  // all of them. The original set a percentage per level and this needs one for
+  // the same reason it did: a blocker never goes home, so on any level that
+  // posts one, "everyone home" is not a target, it's a contradiction. Asking
+  // for all of them made 86% of levels unwinnable the moment a lemming stood
+  // in a gap to save the others.
+  w.target = Math.max(1, Math.round(w.toRelease * (0.65 + rng() * 0.15)))
 
   // Deliberately generous. This is something to watch, not a puzzle to ration
   // — a level that stalls for want of one more builder is the opposite of
@@ -750,10 +756,7 @@ function anyBlockerNear(w, L, nx) {
     var B = w.lemmings[i]
     if (B === L || B.state !== "block" || B.gone) continue
     if (Math.abs(B.y - L.y) > 3) continue
-    if (Math.abs(nx - B.x) < 1.8) {
-      B.lastUse = w.ticks   // somebody still needs it; see stepBlock
-      return true
-    }
+    if (Math.abs(nx - B.x) < 1.8) return true
   }
   return false
 }
@@ -906,9 +909,14 @@ function edgeAhead(w, L, nx) {
   if (depth <= SAFE_FALL) { L.x = nx; startFall(w, L); return }
 
   // A drop that would kill, and no umbrella left to answer it with. Turning
-  // round saves this lemming; standing here saves the next one too.
-  if (countComing(w, L) >= 2 - trait.blockBias && take(w, "blocker")) { L.state = "block"; return }
-
+  // round is enough here — this lemming has solved its own problem, and a
+  // blocker is not the answer.
+  //
+  // It used to post one, which was fine while blockers stood down after a
+  // while and is not now they're permanent: an edge like this can sit on the
+  // route, and a blocker that never moves off one walls the level shut for
+  // good. Blockers are for bottomless drops, which the generator only ever
+  // puts somewhere nothing depends on.
   turnAround(w, L)
 }
 
@@ -1035,7 +1043,6 @@ function spawn(w) {
     idle: 0,           // ticks since it last got closer to home
     markD: Infinity,   // closest it has ever been; see goalDist()
     fuse: 0,
-    lastUse: 0,        // tick it last turned someone back; see stepBlock
     anim: Math.floor(Math.random() * 8),
     gone: false,
     fade: 0
@@ -1309,16 +1316,10 @@ function stepBlock(w, L) {
   if (!solid(w, Math.floor(L.x), Math.floor(L.y) + 1)) { beginUncontrolledFall(w, L); return }
   L.anim++
 
-  // And one that hasn't turned anybody back in a while stands down and gets on
-  // with its own life. The original left them planted until you blew them up,
-  // which is fine when a player is deciding when the job is done; here nobody
-  // is, and a blocker that stands forever is a lemming that never goes home
-  // and a level that runs until the clock kills it.
-  if (w.released < w.toRelease) return
-  if (w.ticks - (L.lastUse || 0) < BLOCK_DUTY) return
-  L.state = "walk"
-  L.dir = -L.dir
-  L.turns = 0
+  // It does not stand down, ever. A blocker is a lemming that has given up
+  // going home so the ones behind it don't walk into a hole, and letting it
+  // wander off after a decent interval — which is what this used to do — takes
+  // the cost out of the only skill whose whole point is the cost.
 }
 
 function stepBomb(w, L) {
@@ -1651,18 +1652,16 @@ function step(w) {
     if (L.state !== "walk" || L.idle < 300) moving++
   }
 
-  // Everyone still going is a blocker, so there's no one left for them to turn
-  // back. Let them go — the original left them standing there, but this is
-  // meant to end on everybody getting home.
+  // Everyone who was going to get home has, and the only ones left standing are
+  // the ones holding the door. They light their own fuses — which is exactly
+  // what a player does at the end of a level, and the honest end to the bargain
+  // they made. They don't walk away from it.
   if (active > 0 && active === blockers) {
     for (var b = 0; b < w.lemmings.length; b++) {
-      if (w.lemmings[b].state === "block") {
-        w.lemmings[b].state = "walk"
-        w.lemmings[b].turns = 0
-        // Back the way it came. A blocker has spent its whole life at the lip
-        // of something lethal, so the one direction it must not be sent is
-        // forward.
-        w.lemmings[b].dir = -w.lemmings[b].dir
+      var B2 = w.lemmings[b]
+      if (B2.state === "block") {
+        B2.state = "bomb"
+        B2.fuse = BOMB_FUSE
       }
     }
   }

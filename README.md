@@ -62,7 +62,12 @@ going.
   doing when it's doing something, and who it is the rest of the time
 - **Esc** — close the panel
 
-A level that doesn't get everyone home is attempted again, up to three times,
+Each level asks for a number rather than for everyone — between about two
+thirds and four fifths of the colony, shown in the header as what's needed.
+That's how the original did it, and it's what makes room for a lemming to
+sacrifice itself.
+
+A level that doesn't reach its target is attempted again, up to three times,
 before it moves on. A retry keeps the same ground and sends a different colony
 at it, with a little more in the toolbar — replaying it unchanged would be
 pointless, since everything here is deterministic and the run would fail again
@@ -102,7 +107,7 @@ picks the cheapest tool that fits what it found:
 | A wall too thick to bash, with a clear top | **Climb** over it |
 | A gap with the far side in reach | **Build** a bridge |
 | A drop too far to survive | **Float** down |
-| A drop with nothing at the bottom at all | **Block**, so nobody else walks in |
+| A drop with nothing at the bottom at all | **Block** — and stay there, so nobody else walks in |
 | Steel | Turn around. Nothing gets through steel |
 | Nothing, for long enough | **Dig** or **Mine** downward and find out |
 
@@ -208,15 +213,14 @@ that silhouette is the only thing making them read as lemmings rather than as
 animated debris.
 
 Measured over 200 levels played the way the panel plays them, retries and all:
-**84% end with everyone home** and 71% of all lemmings get home, over an average
-attempt of about 70 seconds. Of 335 attempts you'd see something bashed through
-in every one, a blocker standing in 276, a bridge built in 278, a climb in 244,
-digging in 151, mining in 137, and the nuke go off in 116 — those being the
-attempts that were never going to finish, most of which come good on a retry.
+**92% reach their target**, 64% of every lemming released gets home, over an
+average attempt of about 74 seconds. Of 299 attempts you'd see something bashed
+through in every one, a blocker standing in 245, a bridge built in 233, a climb
+in 219, digging in 137, mining in 120, and the nuke go off in 118.
 
 No single skill carries a level any more. Per attempt it works out at roughly
-eight umbrellas, eight bridges, seven walls bashed, five climbs, two blockers
-and a couple of shafts.
+eight umbrellas, eight bridges, seven walls bashed, five climbs, a blocker and a
+couple of shafts.
 
 ### The blocker
 
@@ -227,11 +231,23 @@ who ever meet it are those who turned back from an obstacle, and for them it
 is genuinely lethal. The first to reach it stands and turns the rest around,
 which costs the level nothing because the way on was always the other way.
 
-A blocker stands down twelve seconds after the last lemming it turned back,
-once the hatch is empty. The original left them planted until you blew them
-up, which is fine when a player decides the job is done — here nobody does,
-and a blocker that stands forever is a lemming that never goes home and a
-level that runs until the clock kills it.
+A blocker never stands down. It has given up going home so the ones behind it
+don't walk into a hole, and that cost is the whole point of the skill — letting
+it wander off after a decent interval, which is what this used to do, took the
+cost out of the only skill that's made of cost. When everyone who was going to
+get home has, the blockers still standing light their own fuses, which is
+exactly what a player does at the end of a level and the honest end of the
+bargain they made.
+
+That's also why a level has a *target* rather than asking for everyone (see
+above): a blocker doesn't come home, so on any level that posts one, "everyone
+home" isn't a target, it's a contradiction. Asking for all of them made 86% of
+levels unwinnable the moment a lemming stood in a gap to save the others.
+
+They're only ever posted at a drop with no bottom, never at one that's merely
+lethal. A lemming that meets a killing drop with no umbrella left has already
+solved its own problem by turning round, and an edge like that can sit on the
+route — where a blocker that never moves would wall the level shut for good.
 
 It took two goes to get the placement right. Putting the same hazard *on* the route is much
 worse — a blocker at a void the colony has to cross walls off the only way

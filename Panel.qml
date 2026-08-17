@@ -227,6 +227,7 @@ Panel {
       saved: world.saved,
       out: world.released,
       total: world.toRelease,
+      target: world.target || world.toRelease,
       attempt: world.attempt || 0,
       lost: world.lost,
       active: world.active || 0,
@@ -253,7 +254,7 @@ Panel {
     publish()
 
     if (world.done && completionLine === "") {
-      var everyone = world.saved >= world.toRelease
+      var everyone = world.saved >= (world.target || world.toRelease)
       var willRetry = !everyone && attempt + 1 < maxAttempts
       var pool = everyone ? completionLines
                           : (world.nuking ? nukedLines
@@ -268,7 +269,7 @@ Panel {
     // another go at it or the next one. The loop is the point: this is meant to
     // be left open in the corner of a screen.
     if (world.done && world.doneTicks > 110) {
-      if (world.saved >= world.toRelease || attempt + 1 >= maxAttempts) advance(1)
+      if (world.saved >= (world.target || world.toRelease) || attempt + 1 >= maxAttempts) advance(1)
       else retryLevel()
     }
   }
@@ -477,7 +478,7 @@ Panel {
             // whole way turns something you're watching to unwind into
             // something with a deadline, which is the opposite of the point —
             // but the nuke arriving out of a clear sky is worse.
-            text: "Home " + root.stats.saved + "/" + root.stats.total
+            text: "Home " + root.stats.saved + "/" + root.stats.target
                   + (root.stats.lost > 0 ? "  ·  Lost " + root.stats.lost : "")
                   + (root.stats.nuking ? "  ·  NUKE"
                      : ((root.stats.secondsLeft !== undefined && root.stats.secondsLeft <= 30)
@@ -502,7 +503,8 @@ Panel {
             color: Qt.darker(root.bar.foreground, 3.5)
 
             Rectangle {
-              width: parent.width * (root.stats.total > 0 ? root.stats.saved / root.stats.total : 0)
+              width: parent.width * (root.stats.target > 0
+                                     ? Math.min(1, root.stats.saved / root.stats.target) : 0)
               height: parent.height
               radius: height / 2
               color: Color.accent
