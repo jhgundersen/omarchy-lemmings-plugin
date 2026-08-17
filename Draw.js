@@ -254,11 +254,21 @@ function drawActors(ctx, w, pal, opts) {
   drawHatch(ctx, w, pal)
   drawExitGlow(ctx, w, pal)
 
-  ctx.globalAlpha = 0.55
-  ctx.fillStyle = pal.dust
+  drawHazard(ctx, w, pal)
+
   for (var p = 0; p < w.particles.length; p++) {
     var d = w.particles[p]
-    ctx.fillRect(Math.round(d.x * k.CELL), Math.round(d.y * k.CELL), 2, 2)
+    // Blood is bigger, redder and fades slower than dust, because it is the
+    // one particle on the board that is meant to be noticed.
+    if (d.blood) {
+      ctx.globalAlpha = Math.min(1, d.life / 24)
+      ctx.fillStyle = pal.blood
+      ctx.fillRect(Math.round(d.x * k.CELL), Math.round(d.y * k.CELL), 3, 3)
+    } else {
+      ctx.globalAlpha = 0.55
+      ctx.fillStyle = pal.dust
+      ctx.fillRect(Math.round(d.x * k.CELL), Math.round(d.y * k.CELL), 2, 2)
+    }
   }
   ctx.globalAlpha = 1
 
@@ -297,6 +307,110 @@ function drawExitGlow(ctx, w, pal) {
   ctx.fillRect(x + 2, y + hh - 6, ww - 4, 5)
   ctx.globalAlpha = pulse * 0.45
   ctx.fillRect(x - 3, y - 5, ww + 6, hh + 6)
+  ctx.globalAlpha = 1
+}
+
+// The level's one danger, if it has one. Four looks cover twenty-odd kinds:
+// what changes between a machine gun and a bear trap is mostly where it is
+// bolted and how long it takes to go off, and those are Sim.js's business.
+//
+// Three states worth telling apart at a glance: dormant is just the fixture,
+// winding up is the fixture plus a telegraph, and firing fills the zone it
+// kills in. The telegraph is not decoration — it is the only reason a danger
+// on the route is fair, so it is drawn to be unmissable.
+function drawHazard(ctx, w, pal) {
+  var h = w.hazard
+  if (!h) return
+  var C = w.k.CELL
+  var x0 = h.zx0 * C
+  var x1 = (h.zx1 + 1) * C
+  var y0 = h.zy0 * C
+  var y1 = (h.zy1 + 1) * C
+  var live = h.phase === "fire"
+  var winding = h.phase === "charge"
+
+  // The mounting: a bracket on whatever it hangs from.
+  ctx.fillStyle = pal.rig
+  if (h.mount === "ceiling") {
+    ctx.fillRect(x0, y0 - 1, x1 - x0, 4)
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0 + 2, y0 + 3, x1 - x0 - 4, 2)
+  } else if (h.mount === "floor") {
+    ctx.fillRect(x0, y1 - 4, x1 - x0, 4)
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0 + 1, y1 - 6, x1 - x0 - 2, 2)
+  } else {
+    ctx.fillRect(x0, y0, 4, y1 - y0)
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0 + 4, y0 + 2, 2, y1 - y0 - 4)
+  }
+
+  // A hazard stripe on the fixture even while it sleeps. A trap you cannot see
+  // until it fires is not a danger, it is a coin toss — and the whole appeal
+  // of these is watching the colony walk up to one.
+  ctx.fillStyle = pal.warn
+  if (h.mount === "ceiling") ctx.fillRect(x0 + 1, y0 + 1, x1 - x0 - 2, 1)
+  else if (h.mount === "floor") ctx.fillRect(x0 + 1, y1 - 3, x1 - x0 - 2, 1)
+  else ctx.fillRect(x0 + 1, y0 + 2, 1, y1 - y0 - 4)
+
+  if (!live && !winding) return
+
+  // Winding up blinks; firing is solid. A steady glow for both would make the
+  // moment it becomes lethal impossible to see coming.
+  var blink = winding ? (Math.floor(w.ticks / 4) % 2 === 0) : true
+  if (!blink) return
+  ctx.globalAlpha = winding ? 0.55 : 1
+
+  if (h.look === "beam") {
+    // A line across the zone: a sight line while it winds up, the shot itself
+    // when it fires.
+    ctx.fillStyle = live ? pal.fireHot : pal.warn
+    var my = h.mount === "wall" ? Math.round((y0 + y1) / 2) : y0 + 4
+    if (h.mount === "wall") {
+      ctx.fillRect(x0, my, x1 - x0, live ? 3 : 1)
+    } else {
+      ctx.fillRect(Math.round((x0 + x1) / 2) - (live ? 2 : 0), y0, live ? 4 : 1, y1 - y0)
+    }
+
+  } else if (h.look === "spikes") {
+    // Teeth coming up out of the plate, taller once they are actually out.
+    ctx.fillStyle = live ? pal.fireHot : pal.warn
+    var tall = live ? 9 : 3
+    for (var sx = x0; sx < x1; sx += 4) {
+      for (var t = 0; t < tall; t++) {
+        var half = Math.max(0, Math.round((tall - t) / 3))
+        ctx.fillRect(sx + 1 - half, y1 - 5 - t, half * 2 + 1, 1)
+      }
+    }
+
+  } else if (h.look === "flame") {
+    // A tapering cone away from the nozzle.
+    ctx.fillStyle = live ? pal.fireHot : pal.warn
+    var span = y1 - y0
+    var down = h.mount !== "floor"
+    for (var f = 0; f < span; f++) {
+      var t2 = f / span
+      var wide = Math.round((x1 - x0) * (live ? (0.5 + t2 * 0.5) : 0.25))
+      var fy = down ? y0 + f : y1 - 1 - f
+      ctx.fillRect(Math.round((x0 + x1) / 2) - wide / 2, fy, wide, 1)
+    }
+
+  } else {
+    // burst: the whole zone goes, with a couple of brighter bands rolling
+    // through it so it reads as firing rather than as a lit rectangle.
+    ctx.fillStyle = live ? pal.fire : pal.warn
+    ctx.globalAlpha = winding ? 0.35 : 0.72
+    ctx.fillRect(x0, y0, x1 - x0, y1 - y0)
+    if (live) {
+      ctx.globalAlpha = 1
+      ctx.fillStyle = pal.fireHot
+      for (var b = 0; b < 3; b++) {
+        var by = y0 + ((w.ticks * 3 + b * 13) % Math.max(1, y1 - y0))
+        ctx.fillRect(x0, by, x1 - x0, 2)
+      }
+    }
+  }
+
   ctx.globalAlpha = 1
 }
 

@@ -266,6 +266,9 @@ function generate(level, attempt) {
     biome: BIOMES[(level - 1) % BIOMES.length],
     k: K,
     decor: [],
+    hazard: null,
+    hazardKnown: false,
+    hazardKills: 0,
     terrain: new Uint8Array(COLS * ROWS),
     terrainVersion: 1,
     carved: 0,
@@ -340,12 +343,17 @@ function generate(level, attempt) {
     carveCorridor(w, c)
   }
 
+  // At most one danger, and only on about half of levels. It takes over that
+  // corridor's bottomless drop rather than sitting alongside it — one piece of
+  // dead ground, one thing on it.
+  var hazardCorridor = rng() < 0.6 ? irand(rng, 1, corridors.length - 2) : -1
+
   for (var j = 0; j < corridors.length; j++) {
     var cur = corridors[j]
     placeObstacles(w, rng, cur, j, corridors)
     // Middle corridors only: not the first (its near end is the hatch's
     // landing pad) and not the last (its near end is where the exit goes).
-    if (j > 0 && j < corridors.length - 1 && rng() < 0.85) placeVoid(w, cur, corridors[j - 1])
+    if (j > 0 && j < corridors.length - 1 && j !== hazardCorridor && rng() < 0.85) placeVoid(w, cur, corridors[j - 1])
     if (j < corridors.length - 1) {
       carveDescent(w, rng, cur, corridors[j + 1])
       // (No hazard call: carveDescent now takes the whole stretch past the
@@ -463,6 +471,7 @@ function generate(level, attempt) {
   // Last, once every wall, shaft and doorway is where it is going to be, so
   // nothing gets furnished and then carved away before anyone sees it.
   placeDecor(w, rng, corridors)
+  if (hazardCorridor >= 0) w.hazard = placeHazard(w, rng, corridors, hazardCorridor)
 
   return w
 }
@@ -835,6 +844,252 @@ function placeObstacles(w, rng, c, index, corridors) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Dangers
+//
+// At most one per level, and not on every level — a board that always has a
+// machine gun on it is a board with a machine gun on it, where a board that
+// might have one is a board you watch.
+//
+// Every danger is built out of one of five mechanisms and differs in where it
+// mounts, how far it reaches, how long it telegraphs before it fires and how
+// long it rests afterwards. That is deliberate: twenty separate pieces of
+// clockwork would be twenty separate ways for a level to become unwinnable,
+// where twenty settings of the same five are twenty things to look at.
+//
+//   watch    dormant until somebody comes within reach, then winds up and fires
+//   beam     fires on its own schedule whether or not anyone is there
+//   plate    armed by being stood on, and goes off a moment later
+//   cycle    never stops, never triggers — just keeps its own time
+//   field    always live, and the only kind with no safe moment at all
+//
+// Every mechanism except `field` has a rest between firings long enough to walk
+// through, so a danger is a risk rather than a wall. That matters more than it
+// sounds: the colony's answer to a danger is a blocker, and a blocker never
+// stands down, so anything that had to be sealed rather than timed would take
+// the route with it.
+// ---------------------------------------------------------------------------
+
+var HAZARDS = [
+  // watch: mounted, dormant, wakes when somebody walks into reach
+  { id: "gun",      name: "machine gun",  mech: "watch", mount: "ceiling", look: "burst", reach: 13, charge: 16, fire: 24, rest: 66, w: 5, h: 6 },
+  { id: "sentry",   name: "sentry",       mech: "watch", mount: "wall",    look: "beam",  reach: 16, charge: 34, fire: 14, rest: 74, w: 3, h: 4 },
+  { id: "darts",    name: "dart trap",    mech: "watch", mount: "wall",    look: "beam",  reach: 11, charge: 18, fire: 10, rest: 52, w: 3, h: 3 },
+  { id: "flame",    name: "flame vent",   mech: "watch", mount: "ceiling", look: "flame", reach: 9,  charge: 30, fire: 26, rest: 70, w: 4, h: 6 },
+  { id: "tesla",    name: "tesla coil",   mech: "watch", mount: "floor",   look: "burst", reach: 10, charge: 24, fire: 18, rest: 62, w: 5, h: 5 },
+  { id: "turret",   name: "turret",       mech: "watch", mount: "ceiling", look: "beam",  reach: 15, charge: 18, fire: 20, rest: 68, w: 4, h: 5 },
+
+  // beam: keeps its own schedule, telegraphs with a sight line
+  { id: "sniper",   name: "sniper",       mech: "beam",  mount: "wall",    look: "beam",  reach: 30, charge: 40, fire: 18, rest: 74, w: 4, h: 4 },
+  { id: "lasergrid",name: "laser grid",   mech: "beam",  mount: "ceiling", look: "beam",  reach: 6,  charge: 30, fire: 30, rest: 60, w: 6, h: 6 },
+  { id: "sweeper",  name: "sweeper",      mech: "beam",  mount: "ceiling", look: "beam",  reach: 10, charge: 26, fire: 34, rest: 56, w: 8, h: 6 },
+  { id: "tripwire", name: "tripwire",     mech: "beam",  mount: "floor",   look: "beam",  reach: 7,  charge: 20, fire: 16, rest: 58, w: 7, h: 2 },
+
+  // plate: armed by being stood on
+  { id: "spikes",   name: "floor spikes", mech: "plate", mount: "floor",   look: "spikes", reach: 3, charge: 16, fire: 22, rest: 46, w: 5, h: 3 },
+  { id: "beartrap", name: "bear trap",    mech: "plate", mount: "floor",   look: "spikes", reach: 2, charge: 8,  fire: 18, rest: 40, w: 3, h: 2 },
+  { id: "sawblade", name: "saw blade",    mech: "plate", mount: "floor",   look: "spikes", reach: 3, charge: 20, fire: 26, rest: 50, w: 4, h: 3 },
+  { id: "grinder",  name: "grinder",      mech: "plate", mount: "floor",   look: "spikes", reach: 4, charge: 24, fire: 30, rest: 54, w: 6, h: 3 },
+
+  // cycle: never triggers, never stops
+  { id: "crusher",  name: "crusher",      mech: "cycle", mount: "ceiling", look: "burst",  reach: 0, charge: 34, fire: 20, rest: 62, w: 5, h: 6 },
+  { id: "pendulum", name: "pendulum",     mech: "cycle", mount: "ceiling", look: "beam",   reach: 0, charge: 28, fire: 24, rest: 48, w: 6, h: 6 },
+  { id: "geyser",   name: "steam vent",   mech: "cycle", mount: "floor",   look: "flame",  reach: 0, charge: 30, fire: 26, rest: 64, w: 4, h: 6 },
+  { id: "rockfall", name: "rockfall",     mech: "cycle", mount: "ceiling", look: "burst",  reach: 0, charge: 36, fire: 18, rest: 72, w: 5, h: 6 },
+  { id: "piston",   name: "piston",       mech: "cycle", mount: "wall",    look: "burst",  reach: 0, charge: 18, fire: 24, rest: 56, w: 5, h: 4 },
+
+  // field: always live. Narrow, because there is no moment when it isn't.
+  { id: "brazier",  name: "brazier",      mech: "field", mount: "floor",   look: "flame",  reach: 0, charge: 0, fire: 1, rest: 0, w: 2, h: 4 },
+  { id: "fence",    name: "electric fence", mech: "field", mount: "floor", look: "burst",  reach: 0, charge: 0, fire: 1, rest: 0, w: 2, h: 5 }
+]
+
+function hazardSpec(id) {
+  for (var i = 0; i < HAZARDS.length; i++) if (HAZARDS[i].id === id) return HAZARDS[i]
+  return HAZARDS[0]
+}
+
+// Placed at the near end of a corridor — behind where the colony drops in, on
+// the opposite side from the handoff they are walking towards. That is the same
+// dead ground the bottomless drop uses, and for the same reason: agents land
+// facing away from it, so the only ones who ever meet it are those who turned
+// back from something, and walling it off later costs the level nothing.
+//
+// Putting one on the route instead reads as more exciting and is not, because
+// the colony's answer is a blocker and a blocker is forever. A danger you have
+// to seal is a level you cannot finish.
+function placeHazard(w, rng, corridors, ci) {
+  var c = corridors[ci]
+  var spec = pick(rng, HAZARDS)
+
+  // On the route, between where the colony arrives and where it hands off.
+  //
+  // Two earlier attempts put it on the dead ground at the far end, on the
+  // reasoning that a danger the colony walls off must not be on the way. Both
+  // were wasted: counting where agents actually spend their time showed the
+  // outer five columns of a middle corridor get essentially no traffic at all,
+  // so twenty kinds of trap produced a kill in one attempt out of ten. A
+  // danger nobody meets is scenery with extra steps.
+  //
+  // What makes it safe to put on the route instead is that a danger rests. The
+  // colony's answer below is to back off while it is live, not to seal it, so
+  // the way through is still there — it just has to be timed.
+  var lo = Math.min(c.startX, c.handoffX)
+  var hi = Math.max(c.startX, c.handoffX)
+  if (hi - lo < 30) return null
+
+  // Somewhere along the middle of the run with the room to actually mount it.
+  // The first version trusted the corridor's nominal geometry and put a fence
+  // in mid-air on any level where an obstacle had already carved the floor out
+  // from under that spot — placeObstacles runs first and is free to remove any
+  // of this. So the spot is checked rather than assumed: open corridor for the
+  // whole width of the zone, and something solid to bolt it to.
+  var x = -1
+  for (var tryN = 0; tryN < 24; tryN++) {
+    var cand = Math.round(lo + (hi - lo) * (0.3 + rng() * 0.45))
+    if (cand + spec.w >= hi || cand <= lo) continue
+    var ok = true
+    for (var q = 0; q < spec.w; q++) {
+      var qx = cand + q
+      // Open air where it fires, so it is visible and reaches somebody.
+      if (solid(w, qx, c.floorY - 1) || solid(w, qx, c.floorY - 2)) { ok = false; break }
+      // And something to hang it from.
+      var anchor = spec.mount === "ceiling" ? c.floorY - CORR_H - 1 : c.floorY
+      if (!solid(w, qx, anchor)) { ok = false; break }
+    }
+    if (ok) { x = cand; break }
+  }
+  if (x < 0) return null
+
+
+  var h = {
+    kind: spec.id,
+    name: spec.name,
+    mount: spec.mount,
+    look: spec.look,
+    corridor: ci,
+    x: x,
+    floorY: c.floorY,
+    ceilY: c.floorY - CORR_H,
+    phase: spec.mech === "field" ? "fire" : "idle",
+    t: 0,
+    fired: 0
+  }
+
+  // The zone that is lethal while it is firing. Anchored to whatever it hangs
+  // from, and never taller than the corridor — a danger that reaches through
+  // the floor into the level below is a danger in two places.
+  h.zx0 = x
+  h.zx1 = x + spec.w - 1
+  if (spec.mount === "ceiling") { h.zy0 = c.floorY - CORR_H; h.zy1 = Math.min(c.floorY - 1, h.zy0 + spec.h - 1) }
+  else if (spec.mount === "floor") { h.zy1 = c.floorY - 1; h.zy0 = Math.max(c.floorY - CORR_H, h.zy1 - spec.h + 1) }
+  else { h.zy1 = c.floorY - 1; h.zy0 = Math.max(c.floorY - CORR_H, h.zy1 - spec.h + 1) }
+
+  return h
+}
+
+// Anything alive inside the zone right now.
+function hazardCatches(w, h, ag) {
+  if (ag.gone || ag.state === "saved") return false
+  var ax = Math.floor(ag.x)
+  var ay = Math.floor(ag.y)
+  // Its feet are at ay and its body reaches AGENT_H-1 above, so a beam across
+  // its chest counts even when it is standing below the beam's own row.
+  return ax >= h.zx0 && ax <= h.zx1 && ay >= h.zy0 && ay - (AGENT_H - 1) <= h.zy1
+}
+
+function hazardWatching(w, h, spec) {
+  for (var i = 0; i < w.agents.length; i++) {
+    var ag = w.agents[i]
+    if (ag.gone || ag.state === "saved") continue
+    if (Math.abs(ag.y - h.floorY) > CORR_H) continue
+    if (Math.abs(ag.x - (h.zx0 + h.zx1) / 2) <= spec.reach) return true
+  }
+  return false
+}
+
+// Somebody has to be there to learn anything. Knowledge of a danger spreads
+// only by being present when it goes off — which is the one and only thing the
+// colony knows that it did not read off the terrain in front of its face.
+function hazardWitnessed(w, h) {
+  for (var i = 0; i < w.agents.length; i++) {
+    var ag = w.agents[i]
+    if (ag.gone || ag.state === "saved") continue
+    if (Math.abs(ag.y - h.floorY) > CORR_H + 4) continue
+    if (Math.abs(ag.x - (h.zx0 + h.zx1) / 2) <= 22) return true
+  }
+  return false
+}
+
+function stepHazard(w) {
+  var h = w.hazard
+  if (!h) return
+  var spec = hazardSpec(h.kind)
+  h.t++
+
+  if (spec.mech === "field") {
+    hazardStrike(w, h)
+    return
+  }
+
+  if (h.phase === "idle") {
+    var wake = (spec.mech === "watch") ? hazardWatching(w, h, spec) : h.t >= spec.rest
+    if (wake) { h.phase = "charge"; h.t = 0 }
+
+  } else if (h.phase === "charge") {
+    // The wind-up is the whole reason a danger is fair. It is drawn, it is
+    // long enough to read, and anything with the sense to be somewhere else
+    // has that long to get there.
+    if (h.t >= spec.charge) {
+      h.phase = "fire"
+      h.t = 0
+      h.fired++
+      if (hazardWitnessed(w, h)) w.hazardKnown = true
+    }
+
+  } else if (h.phase === "fire") {
+    hazardStrike(w, h)
+    if (h.t >= spec.fire) { h.phase = "rest"; h.t = 0 }
+
+  } else {
+    if (h.t >= spec.rest) { h.phase = "idle"; h.t = 0 }
+  }
+}
+
+function hazardStrike(w, h) {
+  for (var i = 0; i < w.agents.length; i++) {
+    var ag = w.agents[i]
+    if (!hazardCatches(w, h, ag)) continue
+    addBlood(w, ag.x, ag.y - 1.5, 14)
+    ag.gone = true
+    ag.state = "dead"
+    w.lost++
+    w.hazardKnown = true
+    w.hazardKills++
+    w.lastEvent = "hazard"
+  }
+}
+
+// Is the next step into somewhere known to be lethal *right now*? Two things
+// have to be true, and both matter.
+//
+// The colony has to have seen the thing work. Before that it is scenery and
+// they walk in exactly as confidently as they walk anywhere — somebody has to
+// find out, and that first death is the only way anything here is ever learned.
+//
+// And the danger has to be live. Backing off from something that is resting
+// would be backing off forever, and since the response is a blocker and a
+// blocker never stands down, that would wall off the route for good. Winding
+// up or firing is a reason to be elsewhere; resting is not.
+function hazardAhead(w, ag, nx) {
+  var h = w.hazard
+  if (!h || !w.hazardKnown) return false
+  if (h.phase !== "charge" && h.phase !== "fire") return false
+  var ax = Math.floor(nx)
+  var footY = Math.floor(ag.y)
+  if (footY < h.zy0 - 2 || footY > h.zy1 + 2) return false
+  return ax >= h.zx0 - 2 && ax <= h.zx1 + 2
+}
+
 // The link down to the next corridor, always carved open — either as a plain
 // shaft or as a diagonal ramp, which reads as a continuation of the corridor
 // rather than a hole in it.
@@ -920,21 +1175,6 @@ function placeVoid(w, c, prev) {
 // past it. All-home levels fell from 269/300 to 195, and the blocker still
 // never fired, because an agent that turns around at a void has already
 // solved its own problem and doesn't need to stand there. Left where it is.
-function placeHazard(w, rng, c) {
-  var x = c.dir > 0 ? c.x1 - 5 : c.x0 + 5
-  if (rng() < 0.5) {
-    // Cut through the bedrock too, so this really has no bottom. Stopping at
-    // the bedrock instead makes a five-cell-wide oubliette: survivable to fall
-    // into, walled too high to climb, and the single most reliable way to
-    // strand an agent for the rest of the level. Open at the bottom, it reads
-    // as Infinity to dropDepth(), which is what the blocker rule looks for.
-    for (var sx = x - 2; sx <= x + 2; sx++)
-      for (var sy = c.floorY; sy < ROWS; sy++) setCell(w, sx, sy, EMPTY)
-  } else {
-    for (var px = x; px < x + 2; px++)
-      for (var py = c.floorY - CORR_H; py < c.floorY; py++) setCell(w, px, py, STEEL)
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Sensing. Everything the brain knows about the world it learns through these
@@ -1299,6 +1539,21 @@ function stepWalk(w, ag) {
 
   if (anyBlockerNear(w, ag, nx)) { turnAround(w, ag); return }
 
+  // Somewhere it has learned is lethal. Treated exactly like a drop with no
+  // bottom, because to an agent it is the same problem: a place ahead that
+  // ends you, and others behind you walking towards it. The first one to
+  // arrive stands and turns the rest around, and it costs the level nothing,
+  // because a danger is only ever put on ground the route does not need.
+  //
+  // Before anyone has seen the thing fire this is all inert and they walk in
+  // as confidently as they walk anywhere. Somebody has to find out.
+  if (hazardAhead(w, ag, nx)) {
+    var htrait = traitOf(ag)
+    if (countComing(w, ag) >= 2 - htrait.blockBias && take(w, "blocker")) { ag.state = "block"; return }
+    turnAround(w, ag)
+    return
+  }
+
   var targetY = footY
 
   if (solid(w, cx, footY)) {
@@ -1588,6 +1843,23 @@ function splat(w, ag) {
 // Particles — dust from every stroke of every tool. Purely decorative, capped
 // so a level-wide bomb can't leave a thousand of them on the heap.
 // ---------------------------------------------------------------------------
+
+// Blood. Thrown harder and lasting longer than dust, and the one thing on the
+// board besides the agents themselves that never takes the theme — the same
+// reasoning as the green hair: it has to read as what it is at four pixels.
+function addBlood(w, x, y, n) {
+  for (var i = 0; i < n; i++) {
+    if (w.particles.length > 180) return
+    w.particles.push({
+      x: x + (Math.random() - 0.5) * 1.2,
+      y: y + (Math.random() - 0.5) * 1.2,
+      vx: (Math.random() - 0.5) * 0.62,
+      vy: -Math.random() * 0.45,
+      life: 34 + Math.random() * 40,
+      blood: true
+    })
+  }
+}
 
 function addDust(w, x, y, n) {
   for (var i = 0; i < n; i++) {
@@ -1949,6 +2221,7 @@ function step(w) {
     }
   }
 
+  stepHazard(w)
   stepParticles(w)
   if (!w.done) runDirector(w)
 

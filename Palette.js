@@ -133,6 +133,19 @@ function build(theme, level) {
     decorLit: css(mix(mix(bg, tint, 0.80), fg, 0.34)),
     decorDim: css(mix(bg, tint, 0.34)),
 
+    // Machinery. Deliberately colder and harder than the earth it is bolted
+    // to — a trap has to read as something someone put there.
+    rig: css(mix(bg, fg, 0.52)),
+    rigDark: css(mix(bg, fg, 0.30)),
+    // Winding up, and going off. Both are the theme's urgent colour, because
+    // that is the one colour in an Omarchy theme that already means "look".
+    warn: css(mix(bg, theme.urgent, 0.55)),
+    fire: css(theme.urgent),
+    fireHot: css(lighter(theme.urgent, 1.45)),
+    // Un-themed, like the green hair and the orange umbrella. At four pixels
+    // it has to read as what it is without help.
+    blood: "#b3121b",
+
     dust: css(mix(bg, fg, 0.7)),
     label: css(mix(bg, fg, 0.85)),
     // Personality names sit behind action names: with labels on, every agent

@@ -307,6 +307,51 @@ bedrock still reported a floor at the bottom of it and the drop was never
 bottomless. One line, and the skill went from never appearing to standing in
 about half of all levels.
 
+### Dangers
+
+About half of levels have one, and never more than one. Twenty-one kinds — a
+hanging machine gun, a sniper with a laser sight, plates that bring spikes up
+under you, a sweeping beam, a crusher, a steam vent, an electric fence — built
+out of five mechanisms, because twenty separate pieces of clockwork would be
+twenty separate ways for a level to become unwinnable, where twenty settings of
+the same five are twenty things to look at:
+
+| | |
+| --- | --- |
+| **watch** | dormant until somebody comes within reach, then winds up and fires |
+| **beam** | fires on its own schedule whether or not anyone is there |
+| **plate** | armed by being stood on, and goes off a moment later |
+| **cycle** | never triggers and never stops — just keeps its own time |
+| **field** | always live, and the only kind with no safe moment at all |
+
+Everything except `field` rests between firings for long enough to walk
+through, and everything winds up first, visibly, for long enough to read. Both
+are what make a danger sitting on the route fair rather than arbitrary.
+
+The colony knows nothing about it. A danger is scenery until somebody is
+present when it goes off — that first death is the only thing in the entire
+simulation that is learned rather than sensed. After that, an agent walking
+toward it *while it is live* treats it exactly like a drop with no bottom: the
+first one to arrive stands and blocks, and the rest turn around. When it goes
+quiet they walk through.
+
+That last detail is load-bearing. Backing off from a danger that is merely
+*resting* would mean backing off forever, and since the answer is a blocker and
+a blocker never stands down, the route would be sealed and the level lost.
+
+Getting them anywhere near anybody took three goes. The first two put the
+danger on the dead ground at the far end of a corridor, reasoning that anything
+the colony walls off must not be on the way — which was right about blockers
+and wrong about everything else, because counting where agents actually spend
+their time showed the outer five columns of a middle corridor get essentially
+no traffic at all. Twenty-one kinds of trap, and a kill in one attempt out of
+ten. They sit on the route now, and the timing does the work the placement was
+supposed to.
+
+They cost about four points of levels cleared, which is the price of the
+feature. Half of levels have one; three-quarters of those get seen working;
+about a quarter draw blood, four agents at a time.
+
 ### Going in circles
 
 An agent that has stopped getting anywhere tends to pace, and pacing is the
