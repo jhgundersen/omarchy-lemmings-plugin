@@ -118,7 +118,7 @@ of them — only which answer it reaches for when more than one would work.
 | --- | --- |
 | **steady** | No strong opinions. Most of the colony |
 | **brave** | Walks off drops the others bridge, and puts a shoulder into a wall rather than going over it |
-| **cautious** | Bridges gaps it could have jumped and gets its umbrella out with cells to spare. Nearly two umbrellas each |
+| **cautious** | Bridges gaps it could have jumped and gets its umbrella out with cells to spare, but stops after two bridges. Nearly two umbrellas each |
 | **curious** | Bored of a corridor soonest, so it's usually first to decide the way on is *down* |
 | **stubborn** | Works the same wall long after the others have turned back |
 | **tinkerer** | Cuts its way out sideways where the others drop a shaft |

@@ -123,7 +123,7 @@ var BIOMES = ["Cavern", "Ruins", "Frost", "Foundry"]
 var TRAITS = {
   steady:   { label: "steady",   turnLimit: 3, fallMargin: 0, bridgeAt: 8,  bashFirst: false, blockBias: 0, buildCap: 2, noFloat: false, standDown: 0, digBias: 0 },
   brave:    { label: "brave",    turnLimit: 5, fallMargin: 0, bridgeAt: 15, bashFirst: true,  blockBias: -1, buildCap: 1, noFloat: false, standDown: 0, digBias: 0 },
-  cautious: { label: "cautious", turnLimit: 2, fallMargin: 3, bridgeAt: 3,  bashFirst: false, blockBias: 2, buildCap: 3, noFloat: false, standDown: 0, digBias: 0 },
+  cautious: { label: "cautious", turnLimit: 2, fallMargin: 3, bridgeAt: 3,  bashFirst: false, blockBias: 2, buildCap: 2, noFloat: false, standDown: 0, digBias: 0 },
   curious:  { label: "curious",  turnLimit: 2, fallMargin: 1, bridgeAt: 9,  bashFirst: false, blockBias: 0, buildCap: 2, noFloat: false, standDown: 0, digBias: 220 },
   stubborn: { label: "stubborn", turnLimit: 8, fallMargin: 0, bridgeAt: 9,  bashFirst: true,  blockBias: -1, buildCap: 2, noFloat: false, standDown: 0, digBias: -160 },
   tinkerer: { label: "tinkerer", turnLimit: 3, fallMargin: 2, bridgeAt: 7,  bashFirst: false, blockBias: 1, buildCap: 2, noFloat: false, standDown: 0, digBias: 150, mineFirst: true },
@@ -1911,7 +1911,7 @@ function edgeAhead(w, ag, nx) {
     // Someone should stand here. Worth a blocker while there are still others
     // on their way to walk into it — which is the whole job of the skill.
     if (countComing(w, ag) >= 2 - trait.blockBias && take(w, "blocker")) { ag.state = "block"; return }
-    if (far > 2 && take(w, "builder")) { startBuild(w, ag); return }
+    if (far > 2 && willBuild(ag) && take(w, "builder")) { startBuild(w, ag); return }
     turnAround(w, ag)
     return
   }
@@ -2002,7 +2002,7 @@ function considerEscape(w, ag) {
   }
 
   // Nothing to climb from here, so the only way up is to build one.
-  if (take(w, "builder")) { startBuild(w, ag); return true }
+  if (willBuild(ag) && take(w, "builder")) { startBuild(w, ag); return true }
   return false
 }
 
@@ -2274,9 +2274,6 @@ function stepBuild(w, ag) {
   }
   ag.buildWait = 0
 
-  // A brick is three cells laid at foot level; the agent then steps along it.
-  for (var i = 0; i < 3; i++) setCell(w, bx + ag.dir * i, footY + 1, DIRT)
-
   var nx = ag.x + ag.dir * 2
 
   // Gain a course every third brick, and only when there's headroom for it —
@@ -2290,11 +2287,16 @@ function stepBuild(w, ag) {
   if ((ag.bricks % 3) === 0 && headroom(w, Math.floor(nx), Math.floor(ag.y) - 1)) ny = ag.y - 1
 
   if (!headroom(w, Math.floor(nx), Math.floor(ny))) {
-    // Even level is blocked. Turn and walk back along what's been laid.
+    // Even level is blocked. Check this BEFORE laying anything: the old order
+    // left a three-cell stub from a step the builder could never occupy, and a
+    // queue of agents repeated it into the little brick heaps seen on level 19.
     ag.dir = -ag.dir
     ag.state = "walk"
     return
   }
+
+  // A brick is three cells laid at foot level; the agent then steps along it.
+  for (var i = 0; i < 3; i++) setCell(w, bx + ag.dir * i, footY + 1, DIRT)
 
   ag.x = nx
   ag.y = ny
