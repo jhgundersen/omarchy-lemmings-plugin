@@ -202,6 +202,58 @@ Nothing here makes an agent less safe: a personality only ever brings an
 umbrella out *earlier* than the point where a landing would kill, never
 later. Bravery buys a longer walk, not a longer fall.
 
+## Special agents
+
+Something over half of colonies contain exactly one. A special **cannot touch
+the toolbar at all** — no climbs, no bridges, no umbrella, nothing from the
+budget the other fourteen are sharing — and in exchange it has one thing it can
+do forever. Where everybody else is rationed and versatile, it is inexhaustible
+and one-dimensional, which is a different creature to watch: the colony works
+the level, and this one just does its trick at whatever is in the way until the
+level gives up.
+
+That trade is the whole design. Give it the trick *and* the toolbar and it
+solves the level on its own and the other fourteen become scenery.
+
+You know it by its colour. Every other agent is the same green and blue on
+purpose, so the one that isn't reads as the one that isn't from across the
+room, with a pip on the shoulder in its second colour and its name over its
+head when labels are on.
+
+| | |
+| --- | --- |
+| **Buckshot** | Blows a widening fan of shot through whatever is in front of it |
+| **Roundhouse** | Kicks a body-height hole clean through, five cells deep |
+| **Lumberjack** | Fells a column from the floor to the ceiling |
+| **Pyro** | Melts a disc, the roundest hole on the board |
+| **Sapper** | Places a charge a few cells in, with a bomb's reach and none of the dying |
+| **Piledriver** | Straight down, and fast. A lift shaft rather than a staircase |
+| **Quarryman** | Opens a whole room in one go |
+| **Glazier** | The only trick that adds: a slab laid straight out, a bridge nobody rations |
+| **Jackhammer** | Bashing, with no meter on it |
+| **Mole** | Digging, with no meter on it |
+| **Ripper** | Mining, with no meter on it |
+| **Bricklayer** | Bridges, with no meter on them |
+| **Gecko** | Climbs anything, always |
+| **Parasol** | The umbrella is simply always out |
+| **Anvil** | Lands from any height and gets up |
+| **Juggernaut** | Lands from any height, and dangers cannot touch it |
+| **Wraith** | Walks through everything except steel |
+| **Sprinter** | Twice everybody else's pace |
+| **Springheel** | Takes a six-cell step in stride |
+| **Beacon** | Knows which way home is |
+
+Every one of them also keeps a shovel for when the wall was never the problem.
+Most tricks cut sideways, so a special boxed into a pocket with the way on
+underneath it fired into the same steel wall until the level timed out — two
+thirds of them ended up condemned rather than home. The trick is for walls; the
+shovel is for everything else.
+
+They are not all equally good, deliberately. The Juggernaut and the Glazier get
+home three times out of four; the Lumberjack and the Piledriver rather less,
+because a trick that only goes down is a trick that spends a lot of time under
+the exit.
+
 ## Levels
 
 ![All of them home](screenshot-complete.png)

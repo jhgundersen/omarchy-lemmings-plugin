@@ -728,6 +728,16 @@ function drawAgent(ctx, w, pal, ag, opts) {
   var hair = pal.hair
   var skin = pal.skin
 
+  // A special wears its own colours. Every other agent on the board is the same
+  // green and blue on purpose — the silhouette is the joke — so the one that
+  // isn't reads as the one that isn't from across the room, which is the entire
+  // requirement. It also carries a bright pip on the shoulder, because at this
+  // size a robe colour alone is a few pixels and easy to miss on a busy board.
+  if (ag.special) {
+    var sp = specialSpec(ag.special)
+    if (sp) { robe = sp.robe; hair = sp.hair }
+  }
+
   if (st === "bomb") {
     // Flash between the theme's urgent color and white on the last seconds.
     var fast = ag.fuse < 40
@@ -745,6 +755,53 @@ function drawAgent(ctx, w, pal, ag, opts) {
     blit(ctx, ox, oy, 1, 9, -7, 3, 2)
     ctx.fillStyle = pal.umbrellaStem
     blit(ctx, ox, oy, 1, 3, -7, 2, 8)
+  }
+
+  // The trick: a flash of whatever it is doing, thrown out in front. Each act
+  // gets its own shape for the same reason each danger does — a special you
+  // cannot tell from the last one is the same special.
+  if (st === "trick" && ag.special) {
+    var tsp = specialSpec(ag.special)
+    var reach = ag.timer / 14
+    var tx = ox + (dir > 0 ? SPRITE_W : 0)
+    var mid = oy + 8
+    ctx.fillStyle = tsp ? tsp.robe : pal.urgent
+    ctx.globalAlpha = 0.45 + 0.55 * reach
+    switch (tsp && tsp.act) {
+      case "blast":                             // a widening cone of shot
+        for (var bi = 1; bi <= 6; bi++) {
+          var bs = Math.round(bi * 1.6 * reach)
+          ctx.fillRect(tx + dir * bi * 3 - (dir < 0 ? 2 : 0), mid - bs, 2, bs * 2 + 1)
+        }
+        break
+      case "kick":                              // one heavy bar driven forward
+        ctx.fillRect(dir > 0 ? tx : tx - Math.round(18 * reach), mid - 6, Math.round(18 * reach), 12)
+        break
+      case "fell":                              // a tall thin slice
+        ctx.fillRect(tx + dir * 4 - 1, oy - Math.round(26 * reach), 3, Math.round(30 * reach))
+        break
+      case "melt":                              // a growing disc
+        var rr = Math.round(9 * reach)
+        for (var my = -rr; my <= rr; my++) {
+          var mw = Math.round(Math.sqrt(Math.max(0, rr * rr - my * my)))
+          ctx.fillRect(tx + dir * 14 - mw, mid + my, mw * 2, 1)
+        }
+        break
+      case "sap":                               // a charge, then the blast
+        ctx.fillRect(tx + dir * 18 - 2, mid - 2, 4, 4)
+        if (reach > 0.75) { ctx.globalAlpha = 0.8; ctx.fillRect(tx + dir * 18 - 10, mid - 10, 20, 20) }
+        break
+      case "stomp":                             // straight down, under its feet
+        ctx.fillRect(ox + 1, oy + SPRITE_PX, 6, Math.round(18 * reach))
+        break
+      case "quarry":                            // a whole room's worth
+        ctx.fillRect(dir > 0 ? tx : tx - Math.round(26 * reach), oy - 12, Math.round(26 * reach), 28)
+        break
+      case "slab":                              // laid out rather than taken out
+        ctx.fillRect(dir > 0 ? tx : tx - Math.round(24 * reach), oy + SPRITE_PX - 2, Math.round(24 * reach), 5)
+        break
+    }
+    ctx.globalAlpha = 1
   }
 
   var bodyDrop = (st === "dig" || st === "mine") ? 2 : 0
@@ -819,6 +876,14 @@ function drawAgent(ctx, w, pal, ag, opts) {
     ctx.fillText(String(Math.ceil(ag.fuse / 30)), ox + SPRITE_W / 2, oy - 3)
   }
 
+  // A pip on the shoulder in the special's second colour. The robe alone is a
+  // handful of pixels on a board that already has a lot going on.
+  if (ag.special && st !== "saved") {
+    var psp = specialSpec(ag.special)
+    ctx.fillStyle = psp ? psp.hair : pal.label
+    blit(ctx, ox, oy, dir, 1, 5 + bodyDrop, 2, 2)
+  }
+
   // --- optional label ----------------------------------------------------
   // What it's doing when it's doing something, and who it is the rest of the
   // time. The trait is the more interesting half: watching two agents reach
@@ -826,9 +891,13 @@ function drawAgent(ctx, w, pal, ag, opts) {
   // can see which one is the cautious one.
   if (opts && opts.labels && st !== "saved") {
     var action = actionLabel(st)
-    var text = action !== "" ? action : (ag.trait || "")
+    // A special is named rather than described. Its personality never comes up
+    // — it cannot use the toolbar, so the choices a trait would colour are not
+    // choices it gets to make — and the name is the useful thing to know.
+    var nsp = ag.special ? specialSpec(ag.special) : null
+    var text = nsp ? nsp.name : (action !== "" ? action : (ag.trait || ""))
     if (text !== "") {
-      ctx.fillStyle = action !== "" ? pal.label : pal.labelFaint
+      ctx.fillStyle = nsp ? nsp.robe : (action !== "" ? pal.label : pal.labelFaint)
       ctx.font = "7px monospace"
       ctx.textAlign = "center"
       ctx.fillText(text, ox + SPRITE_W / 2, oy - 4)

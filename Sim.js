@@ -301,6 +301,8 @@ function generate(level, attempt) {
     biome: BIOMES[(level - 1) % BIOMES.length],
     k: K,
     decor: [],
+    acting: null,
+    special: null,
     hazard: null,
     hazardKnown: false,
     hazardKills: 0,
@@ -508,6 +510,14 @@ function generate(level, attempt) {
     miner: irand(rng, 4, 8) + attempt * 2,
     digger: irand(rng, 6, 10) + attempt * 2
   }
+  // At most one special, on a bit over half of levels, and a fixed place in the
+  // release order — so level 42 always sends the same one out in the same slot.
+  // Never first: the colony should be under way before the odd one turns up.
+  if (rng() < 0.55) {
+    w.special = pick(rng, SPECIALS).id
+    w.specialAt = irand(rng, 1, Math.max(1, w.toRelease - 2))
+  }
+
   for (var s = 0; s < SKILL_ORDER.length; s++) w.granted[SKILL_ORDER[s]] = 0
 
   // Last, once every wall, shaft and doorway is where it is going to be, so
@@ -890,6 +900,142 @@ function placeObstacles(w, rng, c, index, corridors) {
 }
 
 // ---------------------------------------------------------------------------
+// Special agents
+//
+// One per colony at most, and not in every colony. A special cannot touch the
+// level's toolbar at all — no climbs, no bridges, no umbrella, nothing from the
+// budget the other fourteen are sharing — and in exchange it has one thing it
+// can do forever. Where everybody else is rationed, it is inexhaustible and
+// one-dimensional, which is a different kind of creature to watch: the colony
+// works the level, and this one just does its trick at whatever is in the way
+// until the level gives up.
+//
+// That trade is the whole design. Give it its trick AND the toolbar and it
+// simply solves the level on its own, and the other fourteen become scenery.
+//
+// `act` is what it does to anything blocking it, free and repeatable. Most are
+// a shape cut out of the terrain over a few ticks; a handful are just the
+// ordinary skill with no meter on it. The passives change how it moves rather
+// than what it removes.
+// ---------------------------------------------------------------------------
+
+var SPECIALS = [
+  // Cutters: each takes a different bite out of whatever is in front of it.
+  { id: "buckshot",  name: "Buckshot",   act: "blast",  robe: "#b83232", hair: "#e8d24a" },
+  { id: "roundhouse",name: "Roundhouse", act: "kick",   robe: "#d1621f", hair: "#3a2a18" },
+  { id: "lumberjack",name: "Lumberjack", act: "fell",   robe: "#2f6b3a", hair: "#8a4b22" },
+  { id: "pyro",      name: "Pyro",       act: "melt",   robe: "#c4341c", hair: "#f0a03c" },
+  { id: "sapper",    name: "Sapper",     act: "sap",    robe: "#6b6b28", hair: "#c8c8b0" },
+  { id: "piledriver",name: "Piledriver", act: "stomp",  robe: "#4a4f59", hair: "#d8dde5" },
+  { id: "quarryman", name: "Quarryman",  act: "quarry", robe: "#a8843c", hair: "#5a4426" },
+  { id: "glazier",   name: "Glazier",    act: "slab",   robe: "#4a9ec4", hair: "#dff2ff" },
+
+  // Tradesmen: an ordinary skill, with no meter on it.
+  { id: "jackhammer",name: "Jackhammer", act: "bash",   robe: "#c9a227", hair: "#3a3a3a" },
+  { id: "mole",      name: "Mole",       act: "dig",    robe: "#6b4a2f", hair: "#2a1c12" },
+  { id: "ripper",    name: "Ripper",     act: "mine",   robe: "#a2703c", hair: "#e0c48a" },
+  { id: "bricklayer",name: "Bricklayer", act: "build",  robe: "#b06a2c", hair: "#d8d0c0" },
+
+  // The rest earn their keep by how they move, and still carry a trick so they
+  // are never left with nothing to do at a wall.
+  { id: "gecko",     name: "Gecko",      act: "climb",  robe: "#5aa832", hair: "#2f6b1f", climbAny: true },
+  { id: "parasol",   name: "Parasol",    act: "build",  robe: "#c05a8f", hair: "#f0d0e0", alwaysFloat: true },
+  { id: "anvil",     name: "Anvil",      act: "bash",   robe: "#5a5f6b", hair: "#9aa0ac", ironFall: true },
+  { id: "juggernaut",name: "Juggernaut", act: "bash",   robe: "#3f5f8a", hair: "#c0ccd8", ironFall: true, hazardProof: true },
+  { id: "wraith",    name: "Wraith",     act: "ghost",  robe: "#8e8ea8", hair: "#e8e8f4", ghost: true },
+  { id: "sprinter",  name: "Sprinter",   act: "climb",  robe: "#2fa8a0", hair: "#d8f4f0", speed: 2.3 },
+  { id: "springheel",name: "Springheel", act: "climb",  robe: "#7a4ac0", hair: "#e0d0f4", stepUp: 6 },
+  { id: "beacon",    name: "Beacon",     act: "build",  robe: "#d4a017", hair: "#fff0c0", knowsWay: true }
+]
+
+function specialSpec(id) {
+  for (var i = 0; i < SPECIALS.length; i++) if (SPECIALS[i].id === id) return SPECIALS[i]
+  return null
+}
+
+function specOf(ag) { return ag.special ? specialSpec(ag.special) : null }
+
+// How far ahead each trick reaches, and what shape it takes out. Everything
+// here is expressed as cells relative to the agent, and every one of them
+// refuses steel, so no trick can open the side of the board or the floor of the
+// world — the same rule the ordinary skills live under.
+function specialCut(w, ag, act) {
+  var fx = Math.floor(ag.x)
+  var fy = Math.floor(ag.y)
+  var d = ag.dir
+  var moved = false
+  var i, j, r
+
+  if (act === "blast") {
+    // A fan: short, wide at the far end. A shotgun through a wall.
+    for (i = 1; i <= 6; i++) {
+      var spread = Math.round(i * 0.7)
+      for (j = -spread; j <= spread; j++)
+        if (clearCell(w, fx + d * i, fy - 2 + j)) moved = true
+    }
+
+  } else if (act === "kick") {
+    // Not a hole so much as a shove: the full height of the agent, driven
+    // several cells in. Whatever was there is simply somewhere else now.
+    for (i = 1; i <= 5; i++)
+      for (j = -AGENT_H; j <= 0; j++)
+        if (clearCell(w, fx + d * i, fy + j)) moved = true
+
+  } else if (act === "fell") {
+    // A column taken out from the floor to the ceiling, like a tree coming
+    // down. Narrow, and very tall.
+    for (i = 1; i <= 3; i++)
+      for (j = -12; j <= 1; j++)
+        if (clearCell(w, fx + d * i, fy + j)) moved = true
+
+  } else if (act === "melt") {
+    // A disc. The roundest hole on the board and the only one that leaves a
+    // dome over itself.
+    for (i = -5; i <= 5; i++)
+      for (j = -5; j <= 5; j++) {
+        if (i * i + j * j > 26) continue
+        if (clearCell(w, fx + d * 4 + i, fy - 2 + j)) moved = true
+      }
+
+  } else if (act === "sap") {
+    // A charge placed a few cells in, with the reach of a bomb and none of the
+    // dying. The one trick that can open two things at once.
+    for (i = -BOMB_RADIUS; i <= BOMB_RADIUS; i++)
+      for (j = -BOMB_RADIUS; j <= BOMB_RADIUS; j++) {
+        if (i * i + j * j > BOMB_RADIUS * BOMB_RADIUS) continue
+        if (clearCell(w, fx + d * 5 + i, fy - 2 + j)) moved = true
+      }
+    addDust(w, fx + d * 5, fy - 2, 18)
+
+  } else if (act === "stomp") {
+    // Straight down, and fast. A lift shaft rather than a staircase.
+    for (i = -1; i <= 1; i++)
+      for (j = 1; j <= 6; j++)
+        if (clearCell(w, fx + i, fy + j)) moved = true
+
+  } else if (act === "quarry") {
+    // The biggest single bite anything on the board takes: a room, opened in
+    // one go.
+    for (i = 1; i <= 7; i++)
+      for (j = -7; j <= 1; j++)
+        if (clearCell(w, fx + d * i, fy + j)) moved = true
+
+  } else if (act === "slab") {
+    // The only trick that adds. A platform three cells thick laid straight
+    // out, which is a bridge nobody has to ration.
+    for (i = 1; i <= 6; i++)
+      for (j = 1; j <= 3; j++)
+        if (at(w, fx + d * i, fy + j) === EMPTY) { setCell(w, fx + d * i, fy + j, ROCK); moved = true }
+  }
+
+  if (moved) {
+    w.terrainVersion++
+    addDust(w, fx + d * 2, fy - 2, 8)
+  }
+  return moved
+}
+
+// ---------------------------------------------------------------------------
 // Dangers
 //
 // At most one per level, and not on every level — a board that always has a
@@ -1051,6 +1197,9 @@ function placeHazard(w, rng, corridors, ci) {
 // Anything alive inside the zone right now.
 function hazardCatches(w, h, ag) {
   if (ag.gone || ag.state === "saved") return false
+  // The Juggernaut walks through gunfire. It is the only thing on the board
+  // that a danger cannot touch, which is most of the point of it.
+  if (ag.special) { var hsp = specOf(ag); if (hsp && hsp.hazardProof) return false }
   var ax = Math.floor(ag.x)
   var ay = Math.floor(ag.y)
   // Its feet are at ay and its body reaches AGENT_H-1 above, so a beam across
@@ -1111,6 +1260,7 @@ function sniperAcquire(w, h, spec) {
   for (var i = 0; i < w.agents.length; i++) {
     var ag = w.agents[i]
     if (ag.gone || ag.state === "saved") continue
+    if (ag.special) { var asp = specOf(ag); if (asp && asp.hazardProof) continue }
     var d = Math.abs(ag.x - sx)
     if (d > spec.reach || d < 4) continue
     if (Math.abs(ag.y - sy) > CORR_H) continue
@@ -1415,7 +1565,13 @@ function anyBlockerNear(w, ag, nx) {
 // Skill budget
 // ---------------------------------------------------------------------------
 
+// `w.acting` is whichever agent's decision is being made right now, set by the
+// step loop around each agent and by the director around its rescues. It exists
+// for one reason: a special agent may not touch the toolbar, and threading that
+// through the thirty-odd places a skill gets spent would be thirty-odd chances
+// to miss one. One gate, and every route to the budget passes through it.
 function take(w, skill) {
+  if (w.acting && w.acting.special) return false
   if ((w.skills[skill] || 0) <= 0) return false
   w.skills[skill]--
   w.lastUsed[skill] = w.ticks
@@ -1475,6 +1631,7 @@ function goalDist(w, ag) {
 function exitAbove(w, ag) { return exitFloor(w) < ag.y - 2 }
 
 function hitWall(w, ag) {
+  if (ag.special) { specialAtWall(w, ag); return }
   var footY = Math.floor(ag.y)
   var ax = Math.floor(ag.x) + ag.dir
   var mat = at(w, ax, footY)
@@ -1536,6 +1693,8 @@ function edgeAhead(w, ag, nx) {
   // help over a shaft with no floor, and checking the floater branch ahead of
   // it is exactly how a floater ends up drifting serenely out of the world.
   var trait = traitOf(ag)
+
+  if (ag.special) { specialAtEdge(w, ag, nx, depth, far); return }
 
   if (depth === Infinity) {
     // Someone should stand here. Worth a blocker while there are still others
@@ -1713,6 +1872,9 @@ function spawn(w) {
     built: 0,          // bridges laid; see willBuild()
     turns: 0,
     idle: 0,           // ticks since it last got closer to home
+    // At most one of these exists at a time, and it is barred from the toolbar
+    // for its whole life; see SPECIALS.
+    special: (w.special && w.released === w.specialAt) ? w.special : null,
     passes: {},        // cells re-tread since then; see countPass()
     bucket: "",
     condemned: false,
@@ -1729,9 +1891,19 @@ function spawn(w) {
 // ---------------------------------------------------------------------------
 
 function stepWalk(w, ag) {
-  var nx = ag.x + ag.dir * WALK_SPEED
+  var sp = ag.special ? specOf(ag) : null
+  var nx = ag.x + ag.dir * WALK_SPEED * (sp && sp.speed ? sp.speed : 1)
   var cx = Math.floor(nx)
   var footY = Math.floor(ag.y)
+
+  // The wraith goes through what everyone else goes round — everything except
+  // steel, which nothing on this board has ever got through. It still walks
+  // the floor and still falls off things; it simply has no walls.
+  if (sp && sp.ghost && solid(w, cx, footY) && at(w, cx, footY) !== STEEL) {
+    ag.x = nx
+    ag.anim++
+    return
+  }
 
   if (anyBlockerNear(w, ag, nx)) { turnAround(w, ag); return }
 
@@ -1754,9 +1926,11 @@ function stepWalk(w, ag) {
 
   if (solid(w, cx, footY)) {
     // Ground rising. A stride covers MAX_STEP; anything taller is an obstacle.
+    // Springheel takes a stride where the rest meet a wall.
+    var lift = sp && sp.stepUp ? sp.stepUp : MAX_STEP
     var k = 1
-    while (k <= MAX_STEP && solid(w, cx, footY - k)) k++
-    if (k > MAX_STEP || !headroom(w, cx, footY - k)) { hitWall(w, ag); return }
+    while (k <= lift && solid(w, cx, footY - k)) k++
+    if (k > lift || !headroom(w, cx, footY - k)) { hitWall(w, ag); return }
     targetY = footY - k
   } else if (!solid(w, cx, footY + 1)) {
     // Ground falling away. One cell is a step down; more is a fall, and a fall
@@ -1806,7 +1980,10 @@ function stepFall(w, ag) {
   for (var yy = Math.floor(ag.y) + 1; yy <= Math.floor(ny) + 1; yy++) {
     if (solid(w, cx, yy)) {
       ag.y = yy - 1
-      if (ag.fall > SAFE_FALL && !ag.floater) { splat(w, ag); return }
+      // Anvil and Juggernaut land the way an anvil does: from any height, and
+      // the ground can take it up with them.
+      var lsp = ag.special ? specOf(ag) : null
+      if (ag.fall > SAFE_FALL && !ag.floater && !(lsp && lsp.ironFall)) { splat(w, ag); return }
       ag.state = "walk"
       ag.fall = 0
       ag.floater = false
@@ -2070,6 +2247,89 @@ function addDust(w, x, y, n) {
   }
 }
 
+// A special doing its one trick. The wind-up is deliberate and a little longer
+// than a bash stroke: these are supposed to be worth stopping to watch, and an
+// instant hole would read as the level glitching rather than as somebody doing
+// something.
+var TRICK_WINDUP = 14
+
+// What a special does when something is in the way. It never consults the
+// toolbar — take() would refuse it anyway — so this is the entire decision.
+// Four of them just do an ordinary skill with no meter on it; the rest go to
+// the trick state and cut a shape out of whatever is there.
+function specialAtWall(w, ag) {
+  var spec = specOf(ag)
+  switch (spec.act) {
+    case "climb": startClimb(w, ag); return
+    case "bash":  ag.state = "bash"; ag.timer = 0; return
+    case "dig":   ag.state = "dig";  ag.timer = 0; return
+    case "mine":  ag.state = "mine"; ag.timer = 0; return
+    case "build": startBuild(w, ag); return
+    case "ghost": ag.state = "walk"; return   // it simply walks on through
+    default:      ag.state = "trick"; ag.timer = 0
+  }
+}
+
+// And at a drop. The passives do most of the work here: one of them is immune
+// to landing, one always has the umbrella, and the builders lay their own way
+// across. Anything else takes a survivable drop and turns back from a lethal
+// one, exactly like everybody else.
+function specialAtEdge(w, ag, nx, depth, far) {
+  var spec = specOf(ag)
+
+  if (spec.act === "build" || spec.act === "slab") {
+    if (far > 2) { startBuild(w, ag); return }
+  }
+  // A hole with no bottom is the one thing neither toughness nor an umbrella
+  // answers — the anvil takes any landing there is, and a drop with nothing to
+  // land on has none. Checked before both, because getting this order wrong is
+  // how the two hardiest specials on the board were walking off the world.
+  if (depth === Infinity) { turnAround(w, ag); return }
+
+  if (spec.alwaysFloat) { ag.floater = true; ag.x = nx; startFall(w, ag); return }
+  if (spec.ironFall || depth <= SAFE_FALL) { ag.x = nx; startFall(w, ag); return }
+  turnAround(w, ag)
+}
+
+// A special that has got nowhere for a while digs itself out, whatever its
+// trick is. Every trick but two cuts sideways, so a special boxed into a pocket
+// with the way on underneath it could fire into the same steel wall until the
+// level timed out — which is what the first version did, and why two thirds of
+// them ended up condemned rather than home.
+//
+// The trick stays for walls, which is where its character is. This is the
+// shovel every one of them keeps for when the wall was never the problem.
+function specialEscape(w, ag) {
+  var fx = Math.floor(ag.x)
+  var fy = Math.floor(ag.y)
+  var moved = false
+  for (var i = -1; i <= 1; i++)
+    for (var j = 1; j <= 5; j++)
+      if (clearCell(w, fx + i, fy + j)) moved = true
+  if (moved) {
+    w.terrainVersion++
+    addDust(w, fx, fy + 2, 10)
+    ag.idle = 0
+  } else {
+    specialAtWall(w, ag)
+  }
+}
+
+function stepTrick(w, ag) {
+  ag.timer++
+  if (ag.timer < TRICK_WINDUP) return
+  ag.timer = 0
+
+  var spec = specOf(ag)
+  var cut = specialCut(w, ag, spec.act)
+  ag.state = "walk"
+
+  // Nothing shifted, so whatever is in the way is steel and always will be.
+  // Turning is the only honest answer, and without this the trick fires into
+  // bedrock forever and the special is the thing that stalls the level.
+  if (!cut) turnAround(w, ag)
+}
+
 function stepParticles(w) {
   for (var i = w.particles.length - 1; i >= 0; i--) {
     var p = w.particles[i]
@@ -2162,6 +2422,7 @@ var STUCK_LIMIT = PATIENCE + 240
 // themselves instantly), this hands a tool to the specific agent that has
 // demonstrably been getting nowhere.
 function forceEscape(w, ag) {
+  if (ag.special) { specialEscape(w, ag); return }
   ag.idle = 0
   var footY = Math.floor(ag.y)
   var ahead = Math.floor(ag.x) + ag.dir
@@ -2235,7 +2496,7 @@ function runDirector(w) {
   if (mark !== w.progressMark) {
     w.progressMark = mark
     w.stallTicks = 0
-    return
+    w.acting = null; return
   }
 
   w.stallTicks++
@@ -2253,6 +2514,12 @@ function runDirector(w) {
     if (d < bestD) { bestD = d; best = ag }
   }
   if (!best) return
+
+  // The director reaches into the same budget as everyone else, so it has to
+  // go through the same gate — otherwise the one agent that is barred from the
+  // toolbar gets handed a climber by the thing that rescues stalled levels,
+  // which is exactly the kind of exception that quietly undoes a rule.
+  w.acting = best
 
   var footY = Math.floor(best.y)
   var ahead = Math.floor(best.x) + best.dir
@@ -2287,6 +2554,7 @@ function runDirector(w) {
     best.state = "bomb"
     best.fuse = BOMB_FUSE
   }
+  w.acting = null
 }
 
 // ---------------------------------------------------------------------------
@@ -2317,7 +2585,19 @@ function condemn(w, ag) {
   // budget is empty the agent goes on pacing, and PATIENCE handles it with a
   // shovel instead.
   if (ag.state === "bomb" || ag.state === "block" || ag.state === "saved") return
-  if (!take(w, "bomber")) return
+
+  // A special gets the shovel before it gets written off. Pacing trips the
+  // bucket count in about two hundred ticks, where the forced escape does not
+  // come round until six hundred — so a special boxed into a pocket was being
+  // condemned well before anything had offered it a way down, and two thirds
+  // of them ended up bombed rather than home. It digs instead, as often as it
+  // needs to, and is only written off if it is still going nowhere long after
+  // the point where an ordinary agent would have been.
+  if (ag.special && ag.idle < STUCK_LIMIT) { specialEscape(w, ag); return }
+  // A special is barred from the toolbar, bombs included, so without this the
+  // one agent that cannot be given a way out also cannot be cleared away — and
+  // it would pace until the nuke on every level it got stuck on.
+  if (!ag.special && !take(w, "bomber")) return
   ag.state = "bomb"
   ag.fuse = BOMB_FUSE
   ag.condemned = true
@@ -2372,6 +2652,8 @@ function step(w) {
 
     // Closer to home than this agent has ever been? Then whatever it's
     // doing is working: clear both counters and let it get on with it.
+    w.acting = ag
+
     var dist = goalDist(w, ag)
     if (dist < ag.markD - 2) {
       ag.markD = dist
@@ -2405,7 +2687,10 @@ function step(w) {
       case "dig": stepDig(w, ag); break
       case "block": stepBlock(w, ag); break
       case "bomb": stepBomb(w, ag); break
+      case "trick": stepTrick(w, ag); break
     }
+
+    w.acting = null
 
     if (ag.gone) continue
 
