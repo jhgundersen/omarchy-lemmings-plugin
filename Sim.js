@@ -2028,6 +2028,7 @@ function spawn(w) {
     jvy: 0,
     ceilX: 0,
     ceilTo: 0,
+    escapeFloors: {},  // a special may cut one rescue shaft per corridor
     markD: Infinity,   // closest it has ever been; see goalDist()
     fuse: 0,
     anim: Math.floor(Math.random() * 8),
@@ -2550,18 +2551,25 @@ function specialAtEdge(w, ag, nx, depth, far) {
 // level timed out — which is what the first version did, and why two thirds of
 // them ended up condemned rather than home.
 //
+// This must use the ordinary dig state rather than clearing a pocket here. An
+// instant 3x5 cut leaves the special standing on the lip of the hole it just
+// made; on its next step it quite correctly reads that shaft as a dangerous
+// drop, turns away, and eventually cuts another one. That was the specials'
+// characteristic failure: they escaped nothing and honeycombed the corridor.
+// A digger travels down with its cut and stops on the exit's floor, so the hole
+// is a route rather than another obstacle.
+//
 // The trick stays for walls, which is where its character is. This is the
 // shovel every one of them keeps for when the wall was never the problem.
 function specialEscape(w, ag) {
   var fx = Math.floor(ag.x)
   var fy = Math.floor(ag.y)
-  var moved = false
-  for (var i = -1; i <= 1; i++)
-    for (var j = 1; j <= 5; j++)
-      if (clearCell(w, fx + i, fy + j)) moved = true
-  if (moved) {
-    w.terrainVersion++
-    addDust(w, fx, fy + 2, 10)
+  var floor = Math.floor((fy + 1) / CORR_GAP)
+  if (exitBelow(w, ag) && solid(w, fx, fy + 1)
+      && at(w, fx, fy + 1) !== STEEL && !ag.escapeFloors[floor]) {
+    ag.escapeFloors[floor] = true
+    ag.state = "dig"
+    ag.timer = 0
     // Deliberately does NOT reset the patience counter. Digging is not progress
     // — getting closer to home is — and zeroing it here meant a special that
     // dug, fell, walked, got stuck and dug again never accumulated any idle

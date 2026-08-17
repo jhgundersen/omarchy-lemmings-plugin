@@ -158,7 +158,9 @@ a card up in the sky saying who is down there and one line about them.
 
 None of them commits to a move that cannot work: a block too big to shift is
 walked away from rather than kicked and missed. And every one keeps a shovel for
-when the wall was never the problem, since most of the moves cut sideways.
+when the wall was never the problem, since most of the moves cut sideways. It
+will open at most one rescue shaft on each floor, and travels down as it digs;
+it cannot stand at the rim cutting hole after hole into the same corridor.
 
 ## Levels
 
