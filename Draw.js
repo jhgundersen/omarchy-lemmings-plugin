@@ -435,30 +435,32 @@ function drawSpecialCard(ctx, w, pal) {
   // All of the sky that the hatch is not using. The hatch is drawn 16px either
   // side of its own column, so the card takes whichever side of it is bigger
   // and runs to the edge of the board.
+  // Flush with the edge of the board and the full depth of the sky. It is a
+  // panel belonging to the frame, not a sign standing in the middle of it, so
+  // it takes whichever side of the hatch has more room and runs from there to
+  // the wall.
   var hatchL = w.hatch.x * C - 18
   var hatchR = w.hatch.x * C + 18
-  var leftRoom = hatchL - 5
-  var rightRoom = boardW - 5 - hatchR
   var x, cardW
-  if (rightRoom >= leftRoom) { x = hatchR + 4; cardW = boardW - 5 - x }
-  else { x = 5; cardW = hatchL - 4 - x }
+  if (boardW - hatchR >= hatchL) { x = hatchR; cardW = boardW - x }
+  else { x = 0; cardW = hatchL }
   if (cardW < 90) return
 
-  var y = 2
-  var h = skyH - 5
+  var y = 0
+  var h = skyH
 
   ctx.fillStyle = pal.cardBack
   ctx.fillRect(x, y, cardW, h)
   ctx.fillStyle = sp.robe
   ctx.fillRect(x, y, 2, h)          // a spine in the special's own colour
 
-  drawBust(ctx, x + 6, y + 1, sp, pal)
+  drawBust(ctx, x + 6, y + 3, sp, pal)
 
   var tx = x + 28
   ctx.textAlign = "left"
   ctx.fillStyle = sp.robe
   ctx.font = "bold 8px monospace"
-  ctx.fillText(sp.name, tx, y + 10)
+  ctx.fillText(sp.name, tx, y + 12)
 
   // One line, clipped rather than wrapped — the sky is seven rows and there is
   // room for exactly one.
@@ -468,7 +470,7 @@ function drawSpecialCard(ctx, w, pal) {
   if (fact.length > room) fact = fact.slice(0, Math.max(1, room - 1)) + "\u2026"
   ctx.fillStyle = pal.labelFaint
   ctx.font = "7px monospace"
-  ctx.fillText(fact, tx, y + 20)
+  ctx.fillText(fact, tx, y + 22)
 }
 
 function drawHatch(ctx, w, pal) {

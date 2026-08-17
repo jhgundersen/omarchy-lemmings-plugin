@@ -380,6 +380,18 @@ above): a blocker doesn't come home, so on any level that posts one, "everyone
 home" isn't a target, it's a contradiction. Asking for all of them made 86% of
 levels unwinnable the moment an agent stood in a gap to save the others.
 
+The bottomless drop itself sits on the **last** corridor, and only there. It has
+to be cut through the bedrock to read as bottomless — the depth check scans real
+terrain and stops at the first solid cell — and a shaft like that, cut from a
+middle corridor, runs through the floor of every corridor beneath it on its way
+down. It punched a hole three cells wide at whatever column happened to be near
+the side wall, and on level 298 that column was where the last corridor starts
+and where the colony lands: sixteen agents out of sixteen walked into it on two
+attempts running, and the level could not be finished at all. Anywhere a drop
+can be bottomless, it is also above somewhere the colony has to walk. On the
+last corridor there is nothing underneath to ruin, and its near end is still
+dead ground, so a blocker there still costs nothing.
+
 They're only ever posted at a drop with no bottom, never at one that's merely
 lethal. An agent that meets a killing drop with no umbrella left has already
 solved its own problem by turning round, and an edge like that can sit on the

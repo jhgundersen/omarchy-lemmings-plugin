@@ -393,7 +393,10 @@ function generate(level, attempt) {
     placeObstacles(w, rng, cur, j, corridors)
     // Middle corridors only: not the first (its near end is the hatch's
     // landing pad) and not the last (its near end is where the exit goes).
-    if (j > 0 && j < corridors.length - 1 && j !== hazardCorridor && rng() < 0.85) placeVoid(w, cur, corridors[j - 1])
+    // Last corridor only — see placeVoid for why anywhere else holes the
+    // floors underneath it.
+    if (j === corridors.length - 1 && j !== hazardCorridor && rng() < 0.85)
+      placeVoid(w, cur, corridors[j - 1])
     if (j < corridors.length - 1) {
       carveDescent(w, rng, cur, corridors[j + 1])
       // (No hazard call: carveDescent now takes the whole stretch past the
@@ -1603,13 +1606,27 @@ function carveDescent(w, rng, c, next) {
 // Putting the same hazard on the route was tried and is much worse: a blocker
 // at a void the colony has to cross walls off the only way forward, and
 // all-home fell from 90% to 65%.
+// The one drop on the board with nothing at the bottom of it, which is what the
+// blocker rule keys off. It has to be cut through the bedrock to read as
+// bottomless — dropDepth() scans real terrain and stops at the first solid cell
+// — and that is precisely what made it dangerous to put anywhere but here.
+//
+// It used to go on a middle corridor. A shaft from corridor one runs through
+// corridors two and three on its way to the bedrock, so it punched a hole in
+// the floor of every corridor beneath it, at whatever column happened to be
+// three cells off the side wall. On level 298 that column was where the last
+// corridor starts and where the colony lands: sixteen agents out of sixteen
+// walked straight into it on two attempts running, and the level was not
+// winnable at all. Anywhere it can be bottomless, it is also underneath
+// somewhere the colony has to walk.
+//
+// So it goes on the last corridor, where there is nothing below to ruin. Its
+// near end is dead ground — the exit is at the far end — so a blocker posted
+// here still costs the level nothing, which was the whole point of it.
 function placeVoid(w, c, prev) {
-  // Hard against the side wall. There is less room back here than it looks —
-  // the drop from the corridor above lands about ten cells off the wall, and
-  // the hole has to sit beyond that without being where anyone arrives.
   var nearX = c.dir > 0 ? c.x0 + 3 : c.x1 - 3
   var landing = prev ? prev.handoffX : (c.dir > 0 ? c.x1 : c.x0)
-  if (Math.abs(landing - nearX) < 4) return
+  if (Math.abs(landing - nearX) < 6) return
 
   for (var vx = nearX - 1; vx <= nearX + 1; vx++)
     for (var vy = c.floorY; vy < ROWS; vy++) setCell(w, vx, vy, EMPTY)
