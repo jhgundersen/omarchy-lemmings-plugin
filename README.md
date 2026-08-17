@@ -53,11 +53,12 @@ a few seconds and the next level carves itself. Left open, it just keeps
 going.
 
 - **Space**, or clicking the board — pause and resume
-- **`←` / `→`**, or the `level` label — step back and forward through levels
+- **`←` / `→`** (or `h` / `l`), or the `level` label — step back and forward
+  through levels
 - **`n`** / **`p`** — next / previous level
 - **`r`** — regenerate the current level from scratch
 - **`s`**, or the `speed(s)` label — Calm, Steady, or Brisk
-- **`l`**, or the `who(l)` label — float a label over each lemming: what it's
+- **`w`**, or the `who(w)` label — float a label over each lemming: what it's
   doing when it's doing something, and who it is the rest of the time
 - **Esc** — close the panel
 
@@ -126,7 +127,7 @@ wall outright.
 
 The interesting part is watching two of them arrive at the same ledge and
 disagree about it — the cautious one laying a bridge across a drop the brave
-one has already walked off. Turn labels on with `l` to see who's who.
+one has already walked off. Turn labels on with `w` to see who's who.
 
 Nothing here makes a lemming less safe: a personality only ever brings an
 umbrella out *earlier* than the point where a landing would kill, never

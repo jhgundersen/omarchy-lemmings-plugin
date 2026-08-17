@@ -419,16 +419,21 @@ Panel {
       onActivateRequested: root.togglePause()
       onCloseRequested: root.close()
       onTabRequested: function (direction) { root.switchPanel(direction) }
-      // Left/right step through levels; they're a pure function of the level
-      // number, so going back always finds the same one again.
+      // Arrows and hjkl both step through levels; they're a pure function of
+      // the level number, so going back always finds the same one again.
       onMoveRequested: function (dx, dy) { if (dx !== 0) root.advance(dx) }
+      // NB: h/j/k/l never reach here. PanelKeyCatcher reads them as vim
+      // navigation, accepts the event and returns, so textKey is only emitted
+      // for keys it doesn't already own — which is why the labels toggle sat
+      // on `l` doing nothing while `l` quietly advanced the level instead.
+      // Same goes for x/X, which it takes as delete.
       onTextKey: function (t) {
         var k = t.toLowerCase()
         if (k === "n") root.advance(1)
         else if (k === "p") root.advance(-1)
         else if (k === "r") root.newLevel(root.level)
         else if (k === "s") root.cycleSpeed()
-        else if (k === "l") root.toggleLabels()
+        else if (k === "w") root.toggleLabels()
       }
 
       Column {
@@ -641,7 +646,7 @@ Panel {
             onClicked: root.cycleSpeed()
           }
           HintLabel {
-            text: "who(l): " + (root.showLabels ? "On" : "Off")
+            text: "who(w): " + (root.showLabels ? "On" : "Off")
             onClicked: root.toggleLabels()
           }
           HintLabel {
