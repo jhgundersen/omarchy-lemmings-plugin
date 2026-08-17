@@ -2147,7 +2147,13 @@ function stepWalk(w, ag) {
   // as confidently as they walk anywhere. Somebody has to find out.
   if (hazardAhead(w, ag, nx)) {
     var htrait = traitOf(ag)
-    if (countComing(w, ag) >= 2 - htrait.blockBias && take(w, "blocker")) { ag.state = "block"; return }
+    // A timed hazard may consume several blockers as each sacrifice is
+    // eventually killed. Keep the final one for a true bottomless edge, where
+    // a single permanent blocker protects everyone who follows. Level 92's
+    // bear trap used to empty the toolbar just before its last-floor void.
+    if ((w.skills.blocker || 0) > 1
+        && countComing(w, ag) >= 2 - htrait.blockBias
+        && take(w, "blocker")) { ag.state = "block"; return }
     turnAround(w, ag)
     return
   }

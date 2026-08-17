@@ -290,6 +290,11 @@ then abandon the bridge after three seconds rather than masonry an agent into it
 or deadlock with another builder. Once somebody starts at a ledge, the rest give
 that site eight seconds before trying their own version of the same bridge.
 
+Hazards may claim blockers, but never the final one in the toolbar. That last
+blocker is reserved for a genuinely bottomless edge, where one permanent guard
+can turn the rest of the colony around instead of feeding a timed trap more
+sacrifices.
+
 And an agent that re-treads the same few cells five times over with no progress
 between them is condemned and handed a bomb. A bomb rather than simply deleting
 it, because the explosion is the useful part: an agent only paces somewhere it
