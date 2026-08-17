@@ -68,10 +68,11 @@ var BASH_REACH = 10      // cells of wall a basher will commit to
 
 var BUILD_INTERVAL = 6   // ticks per brick
 var BASH_INTERVAL = 6
-var MINE_INTERVAL = 7
 var DIG_INTERVAL = 7
 var BOMB_FUSE = 150      // 5 seconds, same as the original
 var BOMB_RADIUS = 5
+var MINE_FUSE = 90       // a planted, visible 3-2-1 countdown
+var MINE_RADIUS = 6      // just wider than the carried bomb
 
 // How long a level gets before the nuke goes off. Levels that are going to
 // work are usually done well inside this; the ones that trip it are stuck for
@@ -119,7 +120,7 @@ var BIOMES = ["Cavern", "Ruins", "Frost", "Foundry"]
 // noFloat        would rather build a way across than come down under a chute
 // standDown      gives up on itself and becomes furniture once it is this stuck
 // digBias        how much sooner than the others it decides the way on is down
-// mineFirst      cuts a ramp out sideways rather than dropping a shaft
+// mineFirst      plants a timed charge rather than dropping a shaft
 var TRAITS = {
   steady:   { label: "steady",   turnLimit: 3, fallMargin: 0, bridgeAt: 8,  bashFirst: false, blockBias: 0, buildCap: 2, noFloat: false, standDown: 0, digBias: 0 },
   brave:    { label: "brave",    turnLimit: 5, fallMargin: 0, bridgeAt: 15, bashFirst: true,  blockBias: -1, buildCap: 1, noFloat: false, standDown: 0, digBias: 0 },
@@ -362,6 +363,7 @@ function generate(level, attempt) {
     terrainVersion: 1,
     carved: 0,
     agents: [],
+    mines: [],
     particles: [],
     buildSites: [],
     ticks: 0,
@@ -1987,18 +1989,18 @@ function considerEscape(w, ag) {
 
   if (exitBelow(w, ag)) {
     if (!solid(w, Math.floor(ag.x), footY + 1)) return false
-    // Half of them cut a diagonal ramp instead of sinking a shaft.
+    // Some agents plant a charge instead of sinking a shaft. They turn away
+    // immediately, leaving three seconds to get clear of the new opening.
     // Keyed off the agent's own id so it's a settled trait rather than a
     // coin flip, and so both skills actually get used — ordering digger first
     // for everyone meant the miner was a number on the toolbar that never
     // moved, because the digger budget almost never ran out.
-    // Which way out it cuts. It used to be whether the id was even, which is
-    // as arbitrary as it sounds; a tinkerer takes the ramp, everyone else the
-    // shaft, and the two look completely different on the board.
-    var ramp = traitOf(ag).mineFirst === true || ag.id % 2 === 0
-    if (ramp && take(w, "miner")) { ag.state = "mine"; ag.timer = 0; return true }
+    // Tinkerers prefer the planted charge; the id split keeps both downward
+    // tools in circulation for everyone else.
+    var charge = traitOf(ag).mineFirst === true || ag.id % 2 === 0
+    if (charge && take(w, "miner")) { plantMine(w, ag); return true }
     if (take(w, "digger")) { ag.state = "dig"; ag.timer = 0; return true }
-    if (take(w, "miner")) { ag.state = "mine"; ag.timer = 0; return true }
+    if (take(w, "miner")) { plantMine(w, ag); return true }
     return false
   }
 
@@ -2361,35 +2363,32 @@ function stepBash(w, ag) {
   if (!solid(w, Math.floor(ag.x), footY + 1)) beginUncontrolledFall(w, ag)
 }
 
-function stepMine(w, ag) {
-  ag.timer++
-  if (ag.timer < MINE_INTERVAL) return
+function plantMine(w, ag) {
+  var cx = Math.floor(ag.x)
+  var cy = Math.floor(ag.y) + 1
+  w.mines.push({ x: cx, y: cy, fuse: MINE_FUSE })
+  w.lastUsed.miner = w.ticks
+  w.lastEvent = "mine planted"
+  ag.state = "walk"
   ag.timer = 0
+  ag.idle = 0
+  ag.turns = 0
+  ag.dir = -ag.dir
+}
 
-  var footY = Math.floor(ag.y)
-  var ax = Math.floor(ag.x) + ag.dir
-
-  if (hitsSteel(w, Math.min(ax, ax + ag.dir), footY, Math.max(ax, ax + ag.dir), footY + 2)) {
-    ag.state = "walk"
-    turnAround(w, ag)
-    return
+function stepMines(w) {
+  for (var i = w.mines.length - 1; i >= 0; i--) {
+    var mine = w.mines[i]
+    mine.fuse--
+    if (mine.fuse > 0) continue
+    for (var dy = -MINE_RADIUS; dy <= MINE_RADIUS; dy++)
+      for (var dx = -MINE_RADIUS; dx <= MINE_RADIUS; dx++)
+        if (dx * dx + dy * dy <= MINE_RADIUS * MINE_RADIUS)
+          clearCell(w, mine.x + dx, mine.y + dy)
+    addDust(w, mine.x, mine.y, 28)
+    w.mines.splice(i, 1)
+    w.lastEvent = "mine boom"
   }
-
-  for (var dx = 0; dx < 2; dx++)
-    for (var dy = -AGENT_H; dy <= 2; dy++) clearCell(w, ax + ag.dir * dx, footY + dy)
-
-  addDust(w, ax, footY, 3)
-  ag.x += ag.dir
-  ag.y += 1
-  ag.anim++
-
-  // Stop on reaching the exit's own level. Starting a shaft because the exit
-  // is below you is right; carrying on once you're level with it is how a
-  // agent ends up on the bedrock under the room it was digging towards, and
-  // the ones who follow it down the shaft end up there too.
-  if (!exitBelow(w, ag)) { ag.state = "walk"; return }
-
-  if (!solid(w, Math.floor(ag.x), Math.floor(ag.y) + 1)) beginUncontrolledFall(w, ag)
 }
 
 function stepDig(w, ag) {
@@ -2958,14 +2957,11 @@ function forceEscape(w, ag) {
   // of the room it was standing in.
   if (exitBelow(w, ag) && solid(w, Math.floor(ag.x), footY + 1)
       && at(w, Math.floor(ag.x), footY + 1) !== STEEL) {
-    // Which way out it cuts. It used to be whether the id was even, which is
-    // as arbitrary as it sounds; a tinkerer takes the ramp, everyone else the
-    // shaft, and the two look completely different on the board.
-    var ramp = traitOf(ag).mineFirst === true || ag.id % 2 === 0
-    if (grant(w, ramp ? "miner" : "digger")) {
+    var charge = traitOf(ag).mineFirst === true || ag.id % 2 === 0
+    if (grant(w, charge ? "miner" : "digger")) {
       ag.idle = 0
-      ag.state = ramp ? "mine" : "dig"
-      ag.timer = 0
+      if (charge) plantMine(w, ag)
+      else { ag.state = "dig"; ag.timer = 0 }
       return
     }
   }
@@ -3019,7 +3015,7 @@ function runDirector(w) {
 
   // Below the exit and pacing: nothing horizontal helps, and digging only
   // makes it worse. Hand them a climb.
-  var rampy = best.id % 2 === 0
+  var wantsMine = best.id % 2 === 0
   if (wantUp && solid(w, ahead, footY) && wallHeight(w, ahead, footY) <= MAX_CLIMB
       && grant(w, "climber")) {
     startClimb(w, best)
@@ -3028,9 +3024,9 @@ function runDirector(w) {
     best.timer = 0
   } else if (exitBelow(w, best) && solid(w, Math.floor(best.x), footY + 1)
              && at(w, Math.floor(best.x), footY + 1) !== STEEL
-             && grant(w, rampy ? "miner" : "digger")) {
-    best.state = rampy ? "mine" : "dig"
-    best.timer = 0
+             && grant(w, wantsMine ? "miner" : "digger")) {
+    if (wantsMine) plantMine(w, best)
+    else { best.state = "dig"; best.timer = 0 }
   } else if (best.state === "walk" && canStartBuild(w, best) && grant(w, "builder")) {
     startBuild(w, best)
   } else if (w.bombsUsed < 1 && w.rescues > 6 && boxedIn(w, best) && grant(w, "bomber")) {
@@ -3216,7 +3212,6 @@ function step(w) {
       case "climb": stepClimb(w, ag); break
       case "build": stepBuild(w, ag); break
       case "bash": stepBash(w, ag); break
-      case "mine": stepMine(w, ag); break
       case "dig": stepDig(w, ag); break
       case "block": stepBlock(w, ag); break
       case "bomb": stepBomb(w, ag); break
@@ -3259,13 +3254,14 @@ function step(w) {
   }
 
   stepHazard(w)
+  stepMines(w)
   stepParticles(w)
   if (!w.done) runDirector(w)
 
   w.active = active
   w.movingCount = moving
 
-  if (!w.done && w.released >= w.toRelease && active === 0) {
+  if (!w.done && w.released >= w.toRelease && active === 0 && w.mines.length === 0) {
     w.done = true
     w.doneTicks = 0
   }

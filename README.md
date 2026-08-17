@@ -87,7 +87,7 @@ to land on within a bridge's reach — and picks the cheapest tool that fits:
 | A drop too far to survive | **Float** down |
 | A drop with nothing at the bottom at all | **Block** — and stay there, so nobody else walks in |
 | Steel | Turn around. Nothing gets through steel |
-| Nothing, for long enough | **Dig** or **Mine** downward and find out |
+| Nothing, for long enough | **Dig** a shaft or plant a **Mine** and retreat |
 
 An agent only ever turns round at a wall, at a blocker, or at an edge it won't
 step off. Landing doesn't turn it — it keeps whatever way it was facing, same as
@@ -107,6 +107,12 @@ every wall on the level for free. Paying per climb puts the decision back.
 The only thing they know that isn't in front of their faces is whether home is
 on this floor, above or below — which is what decides between digging down and
 climbing up. There is no horizontal sense of where the exit is at all.
+
+**Mine** and **Bomb** are deliberately different. Mine plants a visible charge
+in the floor, turns the agent away, counts down 3–2–1, then opens a six-cell
+crater. Bomb puts a five-second fuse on the agent itself; that agent is lost and
+the blast is slightly smaller. The old diagonal mining action is gone, so a
+miner can no longer chew through a builder's bridge and strand itself below it.
 
 ## Personalities
 
@@ -294,7 +300,7 @@ None of it is a script. They don't know the route either — they just refuse to
 let you sit watching something that has stopped happening.
 
 Measured over 200 levels played the way the panel plays them, retries and all:
-**95% reach their target**, 80% of every agent released gets home, over an
+**96% reach their target**, 88% of every agent released gets home, over an
 average attempt of under a minute.
 
 ## Persistence

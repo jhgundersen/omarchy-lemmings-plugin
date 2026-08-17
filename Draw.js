@@ -257,6 +257,24 @@ function drawActors(ctx, w, pal, opts) {
 
   drawHazard(ctx, w, pal)
 
+  // Planted mines are separate actors: a small pulsing charge on the floor
+  // with its own three-second countdown, rather than a tool hidden in a pose.
+  for (var mi = 0; mi < w.mines.length; mi++) {
+    var mine = w.mines[mi]
+    var mx = Math.round(mine.x * k.CELL)
+    var my = Math.round(mine.y * k.CELL)
+    var pulse = Math.floor(mine.fuse / (mine.fuse < 30 ? 3 : 6)) % 2 === 0
+    ctx.fillStyle = pulse ? pal.urgent : pal.dirtEdge
+    ctx.fillRect(mx - 3, my - 3, 7, 3)
+    ctx.fillRect(mx - 1, my - 5, 3, 2)
+    ctx.fillStyle = pulse ? "#ffffff" : pal.fireHot
+    ctx.fillRect(mx, my - 6, 1, 1)
+    ctx.fillStyle = pal.urgent
+    ctx.font = "bold 9px monospace"
+    ctx.textAlign = "center"
+    ctx.fillText(String(Math.ceil(mine.fuse / 30)), mx, my - 9)
+  }
+
   for (var p = 0; p < w.particles.length; p++) {
     var d = w.particles[p]
     // Blood is bigger, redder and fades slower than dust, because it is the
@@ -1010,7 +1028,7 @@ function drawAgent(ctx, w, pal, ag, opts) {
   // walks on ceilings reads as hanging rather than as floating.
   spriteFlip = (st === "ceil")
 
-  var bodyDrop = (st === "dig" || st === "mine") ? 2 : 0
+  var bodyDrop = st === "dig" ? 2 : 0
 
   // --- hair + head -------------------------------------------------------
   ctx.fillStyle = hair
@@ -1052,10 +1070,10 @@ function drawAgent(ctx, w, pal, ag, opts) {
     blit(ctx, ox, oy, dir, 2, 13, 2, 3)
     blit(ctx, ox, oy, dir, 4, 13, 2, 3)
 
-  } else if (st === "bash" || st === "mine") {
+  } else if (st === "bash") {
     blit(ctx, ox, oy, dir, 1, 7 + bodyDrop, 6, 6)
     var swing = (ag.timer % 6) < 3 ? 0 : 2
-    blit(ctx, ox, oy, dir, 6, (st === "bash" ? 8 : 10) + swing, 4, 2)
+    blit(ctx, ox, oy, dir, 6, 8 + swing, 4, 2)
     blit(ctx, ox, oy, dir, 2, 13, 2, 3)
     blit(ctx, ox, oy, dir, 4, 13, 2, 3)
 
@@ -1117,7 +1135,6 @@ function actionLabel(st) {
   if (st === "climb") return "climb"
   if (st === "build") return "build"
   if (st === "bash") return "bash"
-  if (st === "mine") return "mine"
   if (st === "dig") return "dig"
   if (st === "block") return "block"
   if (st === "bomb") return "bomb"
