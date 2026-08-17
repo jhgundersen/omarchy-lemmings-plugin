@@ -288,13 +288,35 @@ closes.
 ## Files
 
 - `manifest.json` — plugin manifest (`bar-widget` kind)
-- `Panel.qml` — bar icon, panel chrome, the clock that drives the sim, the
-  theme-derived palette, and persistence
+- `Panel.qml` — bar icon, panel chrome, the clock that drives the sim, and
+  persistence. The only file here that knows what Omarchy is
 - `Sim.js` — terrain, level generation, personalities, and the brain. Pure JS,
   knows no colors
 - `Draw.js` — pixels. Never mutates the world
+- `Palette.js` — five theme colors in, canvas colors out
 - `preview.png`, `screenshot-complete.png`, `screenshot-floaters.png`
 - `LICENSE` — MIT
+
+## It also runs in a browser
+
+The three `.js` files carry no QML directives — no `.pragma library`, no
+`.import` — and between them they never touch a QML type. That is deliberate:
+they draw onto a canvas 2D context, and that API is the same in a browser, so
+the identical files run at [jonh.no/agents.html](https://jonh.no/agents.html)
+with a page in place of `Panel.qml`. `Panel.qml` and that page are the only
+two files that differ between the two.
+
+It's there to be looked at, but it started as a development tool and is still
+the reason it exists. Changing anything about how the board looks used to mean
+restarting the whole shell to see one pixel — and `.pragma library` meant the
+plugin hot reload silently didn't reload these files at all, so the restart was
+not optional. In a browser it's a keystroke, and it can render the board under
+every Omarchy theme in a second rather than one theme per shell restart.
+
+The web version is where these three are edited; a script copies them here and
+refuses to publish either side if the two have drifted apart or if the files
+have started declaring the same name twice, which a browser would resolve
+silently and badly.
 
 ## Name
 

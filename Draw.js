@@ -1,19 +1,22 @@
-.pragma library
-.import "Sim.js" as Sim
-
 // Everything the simulation looks like. Sim.js owns state and never knows a
 // color; this file owns pixels and never changes one.
+//
+// It has no imports of any kind, which is deliberate: it draws onto a canvas
+// 2D context, and that API is the same in QML and in a browser, so the same
+// file serves the bar plugin and the web version with nothing swapped out. The
+// geometry and material constants it needs arrive on the world as `w.k` rather
+// than through an import — see the note on K in Sim.js.
 //
 // Two canvases share this: the terrain layer repaints only when the earth
 // actually moves (Sim bumps terrainVersion), the actor layer every tick. That
 // split is what keeps a boardful of diggers cheap — the expensive redraw only
 // happens when someone removes a cell.
 //
-// The palette arrives from Panel.qml, derived from the active Omarchy theme,
-// so the earth, sky and portal all shift with the theme. The agents
-// themselves keep the green hair and blue robe: that silhouette IS the joke,
-// and at sixteen pixels tall it's the only thing making them read as a doomed
-// colony rather than as pixels.
+// The palette arrives from the caller — Panel.qml from the Omarchy theme, the
+// web page from a theme it picks — so the earth, sky and portal shift with it.
+// The agents themselves keep the green hair and blue robe: that silhouette IS
+// the joke, and at sixteen pixels tall it's the only thing making them read as
+// a doomed colony rather than as pixels.
 
 var SPRITE_W = 8
 var SPRITE_PX = 16
@@ -22,34 +25,35 @@ var SPRITE_PX = 16
 // Terrain layer
 // ---------------------------------------------------------------------------
 
-function materialFill(pal, m) {
-  if (m === Sim.DIRT) return pal.dirt
-  if (m === Sim.ROCK) return pal.rock
+function materialFill(k, pal, m) {
+  if (m === k.DIRT) return pal.dirt
+  if (m === k.ROCK) return pal.rock
   return pal.steel
 }
 
-function materialEdge(pal, m) {
-  if (m === Sim.DIRT) return pal.dirtEdge
-  if (m === Sim.ROCK) return pal.rockEdge
+function materialEdge(k, pal, m) {
+  if (m === k.DIRT) return pal.dirtEdge
+  if (m === k.ROCK) return pal.rockEdge
   return pal.steelEdge
 }
 
-function materialShade(pal, m) {
-  if (m === Sim.DIRT) return pal.dirtShade
-  if (m === Sim.ROCK) return pal.rockShade
+function materialShade(k, pal, m) {
+  if (m === k.DIRT) return pal.dirtShade
+  if (m === k.ROCK) return pal.rockShade
   return pal.steelShade
 }
 
 function drawTerrain(ctx, w, pal) {
-  var C = Sim.CELL
-  var cols = Sim.COLS
-  var rows = Sim.ROWS
+  var k = w.k
+  var C = k.CELL
+  var cols = k.COLS
+  var rows = k.ROWS
 
   ctx.reset()
 
   // Sky: a shallow gradient so the open air above the earth has some depth
   // rather than reading as a flat panel background.
-  var sky = ctx.createLinearGradient(0, 0, 0, Sim.SKY * C + C * 4)
+  var sky = ctx.createLinearGradient(0, 0, 0, k.SKY * C + C * 4)
   sky.addColorStop(0, pal.skyTop)
   sky.addColorStop(1, pal.skyLow)
   ctx.fillStyle = sky
@@ -63,10 +67,10 @@ function drawTerrain(ctx, w, pal) {
     var base = y * cols
     while (x < cols) {
       var m = w.terrain[base + x]
-      if (m === Sim.EMPTY) { x++; continue }
+      if (m === k.EMPTY) { x++; continue }
       var start = x
       while (x < cols && w.terrain[base + x] === m) x++
-      ctx.fillStyle = materialFill(pal, m)
+      ctx.fillStyle = materialFill(k, pal, m)
       ctx.fillRect(start * C, y * C, (x - start) * C, C)
     }
   }
@@ -78,11 +82,11 @@ function drawTerrain(ctx, w, pal) {
     var sbase = sy2 * cols
     while (sx2 < cols) {
       var sm = w.terrain[sbase + sx2]
-      if (sm === Sim.EMPTY || sy2 + 1 >= rows || w.terrain[sbase + cols + sx2] !== Sim.EMPTY) { sx2++; continue }
+      if (sm === k.EMPTY || sy2 + 1 >= rows || w.terrain[sbase + cols + sx2] !== k.EMPTY) { sx2++; continue }
       var sstart = sx2
       while (sx2 < cols && w.terrain[sbase + sx2] === sm
-             && sy2 + 1 < rows && w.terrain[sbase + cols + sx2] === Sim.EMPTY) sx2++
-      ctx.fillStyle = materialShade(pal, sm)
+             && sy2 + 1 < rows && w.terrain[sbase + cols + sx2] === k.EMPTY) sx2++
+      ctx.fillStyle = materialShade(k, pal, sm)
       ctx.fillRect(sstart * C, sy2 * C + C - 2, (sx2 - sstart) * C, 2)
     }
   }
@@ -95,22 +99,22 @@ function drawTerrain(ctx, w, pal) {
     var ebase = ey * cols
     while (ex < cols) {
       var em = w.terrain[ebase + ex]
-      if (em === Sim.EMPTY || (ey > 0 && w.terrain[ebase - cols + ex] !== Sim.EMPTY)) { ex++; continue }
+      if (em === k.EMPTY || (ey > 0 && w.terrain[ebase - cols + ex] !== k.EMPTY)) { ex++; continue }
       var estart = ex
       while (ex < cols && w.terrain[ebase + ex] === em
-             && (ey === 0 || w.terrain[ebase - cols + ex] === Sim.EMPTY)) ex++
-      ctx.fillStyle = materialEdge(pal, em)
+             && (ey === 0 || w.terrain[ebase - cols + ex] === k.EMPTY)) ex++
+      ctx.fillStyle = materialEdge(k, pal, em)
       ctx.fillRect(estart * C, ey * C, (ex - estart) * C, Math.max(1, C - 2))
     }
   }
 
   // Depth wash: the deeper the earth, the darker. One pass, cheap, and it
   // stops the lower half of the board looking like the upper half.
-  var wash = ctx.createLinearGradient(0, Sim.SKY * C, 0, rows * C)
+  var wash = ctx.createLinearGradient(0, k.SKY * C, 0, rows * C)
   wash.addColorStop(0, pal.washTop)
   wash.addColorStop(1, pal.washLow)
   ctx.fillStyle = wash
-  ctx.fillRect(0, Sim.SKY * C, cols * C, (rows - Sim.SKY) * C)
+  ctx.fillRect(0, k.SKY * C, cols * C, (rows - k.SKY) * C)
 
   drawExitBack(ctx, w, pal)
 }
@@ -118,7 +122,8 @@ function drawTerrain(ctx, w, pal) {
 // The portal's static half sits on the terrain layer so the pulsing light on
 // top of it (see drawExitGlow) is the only part paying the per-tick cost.
 function drawExitBack(ctx, w, pal) {
-  var C = Sim.CELL
+  var k = w.k
+  var C = k.CELL
   var e = w.exit
   var x = e.x * C
   var y = e.y * C
@@ -148,6 +153,7 @@ function drawExitBack(ctx, w, pal) {
 // ---------------------------------------------------------------------------
 
 function drawActors(ctx, w, pal, opts) {
+  var k = w.k
   ctx.reset()
   drawHatch(ctx, w, pal)
   drawExitGlow(ctx, w, pal)
@@ -156,7 +162,7 @@ function drawActors(ctx, w, pal, opts) {
   ctx.fillStyle = pal.dust
   for (var p = 0; p < w.particles.length; p++) {
     var d = w.particles[p]
-    ctx.fillRect(Math.round(d.x * Sim.CELL), Math.round(d.y * Sim.CELL), 2, 2)
+    ctx.fillRect(Math.round(d.x * k.CELL), Math.round(d.y * k.CELL), 2, 2)
   }
   ctx.globalAlpha = 1
 
@@ -168,7 +174,8 @@ function drawActors(ctx, w, pal, opts) {
 }
 
 function drawHatch(ctx, w, pal) {
-  var C = Sim.CELL
+  var k = w.k
+  var C = k.CELL
   var x = w.hatch.x * C
   var y = w.hatch.y * C
   ctx.fillStyle = pal.hatchBody
@@ -180,7 +187,8 @@ function drawHatch(ctx, w, pal) {
 }
 
 function drawExitGlow(ctx, w, pal) {
-  var C = Sim.CELL
+  var k = w.k
+  var C = k.CELL
   var e = w.exit
   var pulse = 0.45 + 0.3 * Math.sin(w.ticks * 0.06)
   var x = e.x * C
@@ -205,7 +213,8 @@ function blit(ctx, ox, oy, dir, x, y, bw, bh) {
 }
 
 function drawAgent(ctx, w, pal, ag, opts) {
-  var C = Sim.CELL
+  var k = w.k
+  var C = k.CELL
   var ox = Math.round(ag.x * C) - SPRITE_W / 2
   var oy = Math.round((ag.y + 1) * C) - SPRITE_PX
   var dir = ag.dir

@@ -1,9 +1,12 @@
-.pragma library
-
-// The simulation: terrain, level generation, and the agent brain. Pure JS,
-// no QML types, so it can be a `.pragma library` shared by every instance of
-// the panel. All mutable state lives on the `world` object returned by
-// generate() — nothing module-level changes after load.
+// The simulation: terrain, level generation, and the agent brain. All mutable
+// state lives on the `world` object returned by generate() — nothing
+// module-level changes after load.
+//
+// Plain JavaScript with no directives, deliberately, so the same file runs in
+// two places: QML imports it as `import "Sim.js" as Sim`, and a browser loads
+// it with a plain <script> tag. It carried `.pragma library` until the web
+// version needed it; that pragma is also what made the QML side cache this
+// file forever and ignore plugin hot-reloads, so losing it is no loss at all.
 //
 // Rendering lives in Draw.js; the panel chrome in Panel.qml. This file never
 // knows what anything looks like.
@@ -31,6 +34,9 @@ var STEEL = 3  // permanent: every skill refuses it and the agent turns back
 
 // An agent is 4 cells (16px) tall and ~2 cells wide.
 var AGENT_H = 4
+
+// K, the constants Draw.js needs, is defined further down with the layout
+// numbers — it has to come after SKY, which is one of them.
 
 // ---------------------------------------------------------------------------
 // Tuning. Everything is per-tick at 30 ticks/second.
@@ -212,6 +218,17 @@ var CORR_H = 6           // carved headroom above a corridor floor
 var CORR_GAP = 12        // vertical distance between corridor floors
 var N_CORR = 4
 
+// Everything Draw.js needs to know about geometry and materials, stamped onto
+// every world by generate(). Draw.js used to reach for these through a QML
+// `.import`, which is the one line that stopped it loading in a browser — and
+// the dependency was never real, since it only ever wanted constants and not a
+// single function. Going through the world keeps one definition of each number:
+// change COLS above and the renderer follows, which a copy in Draw.js wouldn't.
+var K = {
+  COLS: COLS, ROWS: ROWS, CELL: CELL, SKY: SKY,
+  EMPTY: EMPTY, DIRT: DIRT, ROCK: ROCK, STEEL: STEEL
+}
+
 // `attempt` re-runs the SAME level with a different colony. The layout stays a
 // pure function of the level number — level 42 is always level 42 — but the
 // personalities and the skill budget come off the attempt as well, because a
@@ -226,6 +243,7 @@ function generate(level, attempt) {
     level: level,
     attempt: attempt,
     biome: BIOMES[(level - 1) % BIOMES.length],
+    k: K,
     terrain: new Uint8Array(COLS * ROWS),
     terrainVersion: 1,
     agents: [],

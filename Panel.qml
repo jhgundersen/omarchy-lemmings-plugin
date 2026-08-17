@@ -5,6 +5,7 @@ import qs.Ui
 import qs.Commons
 import "Sim.js" as Sim
 import "Draw.js" as Draw
+import "Palette.js" as Palette
 
 // Lemmings, but nobody is playing. A level is carved out of solid earth, a
 // hatch opens, and a dozen-odd small creatures with green hair have to work out
@@ -106,92 +107,29 @@ Panel {
   // ---------------------------------------------------------------------
   // Palette
   //
-  // Earth, sky and portal are mixed from the active theme so the board never
-  // fights the rest of the desktop, with each biome pulling toward a different
-  // theme tone. The agents are the exception: green hair, blue robe, fixed.
-  // Theme-tinting them would make them read as animated debris rather than as
-  // the thing everybody recognizes.
+  // The mixing rules live in Palette.js, shared verbatim with the web version
+  // so both render the same board from the same five theme colors. All this
+  // end has to do is hand over the theme: Palette.js works in plain {r, g, b}
+  // and knows nothing about QML, which is the only reason it can also be a
+  // <script> tag on a web page.
   // ---------------------------------------------------------------------
 
   readonly property color themeForeground: bar ? bar.foreground : Color.foreground
 
-  function mix(a, b, t) {
-    return Qt.rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1)
-  }
+  // A QML color already carries r/g/b as 0..1 floats, but it is a QColor and
+  // not a plain object; Palette.js does arithmetic on the fields and hands the
+  // results to a canvas, so it gets a plain one.
+  function rgb(c) { return { r: c.r, g: c.g, b: c.b } }
 
-  // Canvas gradients want CSS strings, and passing QML color values straight
-  // into addColorStop is the kind of thing that works until a theme has an
-  // alpha channel. Convert once, here.
-  function css(c, alpha) {
-    var a = alpha === undefined ? c.a : alpha
-    return "rgba(" + Math.round(c.r * 255) + "," + Math.round(c.g * 255) + "," + Math.round(c.b * 255) + "," + a + ")"
-  }
-
-  readonly property var biomeTints: [
-    Color.accent,                        // Cavern
-    Color.urgent,                        // Ruins
-    Qt.lighter(Color.accent, 1.7),       // Frost
-    Color.muted                          // Foundry
-  ]
-
-  readonly property var palette: {
-    var bg = Color.background
-    var fg = root.themeForeground
-    var tint = biomeTints[(root.level - 1) % biomeTints.length]
-
-    return {
-      // The carved-out space has to read as clearly empty and the earth as
-      // clearly solid, or the whole board turns into one dark slab with a few
-      // agents on it — which is what a gentler set of these looked like.
-      // Corridors are the darkest thing on the board; every material sits well
-      // above them, and the lit top edge well above that again.
-      skyTop: css(mix(bg, tint, 0.02)),
-      skyLow: css(mix(bg, tint, 0.10)),
-
-      // Dirt carries the biome's tint; rock is deliberately pulled off it
-      // toward neutral. Shading both with the same hue made the whole board one
-      // flat wash of colour in which the two materials were indistinguishable —
-      // and the material tiers are the only thing telling you how deep you're
-      // looking.
-      dirt: css(mix(bg, tint, 0.46)),
-      dirtEdge: css(mix(bg, tint, 0.86)),
-      dirtShade: css(mix(bg, tint, 0.30)),
-      rock: css(mix(bg, fg, 0.19)),
-      rockEdge: css(mix(bg, fg, 0.38)),
-      rockShade: css(mix(bg, fg, 0.12)),
-      steel: css(mix(bg, fg, 0.34)),
-      steelEdge: css(mix(bg, fg, 0.72)),
-      steelShade: css(mix(bg, fg, 0.22)),
-
-      // Just enough to say "deeper", not enough to grey the lower half out.
-      washTop: css(bg, 0.0),
-      washLow: css(bg, 0.18),
-
-      exitDeep: css(mix(bg, Color.accent, 0.35)),
-      exitGlow: css(mix(bg, Color.accent, 0.95)),
-      exitLight: css(Qt.lighter(Color.accent, 1.4)),
-      exitFrame: css(mix(bg, fg, 0.55)),
-
-      hatchBody: css(mix(bg, fg, 0.42)),
-      hatchLip: css(mix(bg, Color.accent, 0.8)),
-      hatchMouth: css(bg),
-
-      dust: css(mix(bg, fg, 0.7)),
-      label: css(mix(bg, fg, 0.85)),
-      // Personality names sit behind action names: with labels on, every
-      // agent carries one, so at full strength the board is a wall of text.
-      labelFaint: css(mix(bg, fg, 0.45)),
-      urgent: css(Color.urgent),
-
-      // The one deliberately un-themed corner of the board.
-      hair: "#00b04a",
-      robe: "#3a5cd8",
-      skin: "#f0c8a0",
-      eye: "#101014",
-      umbrella: "#e8582c",
-      umbrellaStem: "#f0c8a0"
-    }
-  }
+  // Reading each Color.* inside the binding is what makes the whole palette
+  // rebuild when the theme swaps, and root.level is what rotates the biome.
+  readonly property var palette: Palette.build({
+    background: rgb(Color.background),
+    foreground: rgb(root.themeForeground),
+    accent: rgb(Color.accent),
+    urgent: rgb(Color.urgent),
+    muted: rgb(Color.muted)
+  }, root.level)
 
   // ---------------------------------------------------------------------
   // Level lifecycle
