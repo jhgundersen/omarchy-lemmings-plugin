@@ -159,6 +159,9 @@ Panel {
 
       dust: css(mix(bg, fg, 0.7)),
       label: css(mix(bg, fg, 0.85)),
+      // Personality names sit behind action names: with labels on, every
+      // lemming carries one, so at full strength the board is a wall of text.
+      labelFaint: css(mix(bg, fg, 0.45)),
       urgent: css(Color.urgent),
 
       // The one deliberately un-themed corner of the board.
@@ -596,7 +599,7 @@ Panel {
         // --- hints --------------------------------------------------------
         Text {
           width: parent.width
-          text: "Nobody is driving. They work it out themselves."
+          text: "Nobody is driving. Every one of them has its own mind."
           color: Qt.darker(root.bar.foreground, 1.6)
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.caption
@@ -612,7 +615,7 @@ Panel {
             onClicked: root.cycleSpeed()
           }
           HintLabel {
-            text: "labels(l): " + (root.showLabels ? "On" : "Off")
+            text: "who(l): " + (root.showLabels ? "On" : "Off")
             onClicked: root.toggleLabels()
           }
           HintLabel {

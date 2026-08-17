@@ -313,12 +313,20 @@ function drawLemming(ctx, w, pal, L, opts) {
     ctx.fillText(String(Math.ceil(L.fuse / 30)), ox + LEM_W / 2, oy - 3)
   }
 
-  // --- optional action label --------------------------------------------
-  if (opts && opts.labels && st !== "walk" && st !== "fall" && st !== "saved") {
-    ctx.fillStyle = pal.label
-    ctx.font = "7px monospace"
-    ctx.textAlign = "center"
-    ctx.fillText(actionLabel(st), ox + LEM_W / 2, oy - 4)
+  // --- optional label ----------------------------------------------------
+  // What it's doing when it's doing something, and who it is the rest of the
+  // time. The trait is the more interesting half: watching two lemmings reach
+  // the same ledge and disagree about it only reads as personality once you
+  // can see which one is the cautious one.
+  if (opts && opts.labels && st !== "saved") {
+    var action = actionLabel(st)
+    var text = action !== "" ? action : (L.trait || "")
+    if (text !== "") {
+      ctx.fillStyle = action !== "" ? pal.label : pal.labelFaint
+      ctx.font = "7px monospace"
+      ctx.textAlign = "center"
+      ctx.fillText(text, ox + LEM_W / 2, oy - 4)
+    }
   }
 
   ctx.globalAlpha = 1
