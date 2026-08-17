@@ -268,8 +268,16 @@ now: one moves on any change, the other only when solid becomes empty or empty
 becomes solid.
 
 Measured over 200 levels played the way the panel plays them, retries and all:
-**95% reach their target**, 68% of every agent released gets home, over an
-average attempt of about 65 seconds. Three in ten attempts run into the nuke.
+**91% reach their target**, 74% of every agent released gets home, over an
+average attempt of about 50 seconds.
+
+The number worth watching while tuning any of this is none of those: it is how
+much of an agent's life is spent walking somewhere it has already been. That
+was a tenth of all agent-time, which is what "they run out of skills and pace"
+looks like when you count it. Condemning agents stuck on the spot, a bomb per
+agent, and loosening the two budgets that actually ran dry — climbers, which
+were empty in half of all attempts, and bashers — took it down by two thirds,
+and pulled eleven seconds off the average attempt on the way.
 
 ### The blocker
 
@@ -348,9 +356,15 @@ no traffic at all. Twenty-one kinds of trap, and a kill in one attempt out of
 ten. They sit on the route now, and the timing does the work the placement was
 supposed to.
 
-They cost about four points of levels cleared, which is the price of the
-feature. Half of levels have one; three-quarters of those get seen working;
-about a quarter draw blood, four agents at a time.
+They are placed just past an obstacle, in the direction of travel. Everyone who
+gets through a wall arrives at the same few cells on the far side of it, which
+makes that the densest traffic on the corridor and the only spot where the
+timing is funny: nine seconds of bashing, and then the machine gun. Moving them
+there took attempts that draw blood from a quarter of danger levels to better
+than a third.
+
+They cost about three points of levels cleared, which is the price of the
+feature. Half of levels have one, three-quarters of those get seen working.
 
 ### Going in circles
 
@@ -367,14 +381,25 @@ the ordinary course of a long level. A tight pace between two walls trips it in
 about six seconds. A wide lap of a whole corridor takes nearer twenty-five, by
 which time the patience timer has usually already offered it a shovel.
 
+Counting buckets only ever notices an agent that *moves* between them, so there
+is a second way to be condemned: walking, and no closer to home for a good
+while past the point where the shovel was offered and didn't help. Without it,
+an agent wearing a hole in a single five-cell stretch — turning on the spot
+between a wall and a blocker — re-tread nothing, counted nothing, and stood
+there until the level timed out. Which is the one everybody notices, precisely
+because it never goes anywhere at all.
+
 A bomb rather than simply deleting it, because the explosion is the useful
 part. An agent only ever paces somewhere it could not get past, so the hole it
 leaves is in exactly the wall that stopped it. Nobody is told; the others walk
 into the same place later and find it different, which is the first time the
 "no memory, no plan, no communication" premise has worked in their favour.
 
-It costs a bomber from the same budget as everything else, and when that is
-empty the agent goes on pacing and the patience timer handles it instead.
+It costs a bomber from the same budget as everything else, and that budget is
+one per agent released. Any smaller number is a level where the thing that ends
+the pacing has itself run out — which is exactly the level you sit and watch
+nothing happen on. At one each it runs dry in about one attempt in fifty,
+against one in four when it was a flat three to five.
 
 It fires on 45% of attempts, about one and a half agents each time. That is not
 free — it kills agents who occasionally would have come good — but it takes the

@@ -326,7 +326,8 @@ function generate(level, attempt) {
       floorY: SKY + 9 + k * CORR_GAP,
       dir: dir,
       x0: 4,
-      x1: COLS - 5
+      x1: COLS - 5,
+      obstacles: []
     })
   }
 
@@ -455,14 +456,20 @@ function generate(level, attempt) {
     // isn't the shortage of climbs. Climbing still turns up in about seven
     // attempts in ten — it just can't carry one agent from the hatch to the
     // exit any more.
-    climber: irand(rng, 5, 9) + attempt * 2,
+    // Dry in half of all attempts, which is where a good share of the pacing
+    // came from: an agent at a wall it cannot climb, cannot bash and cannot
+    // bridge has nothing left to do but walk away and come back and walk away.
+    climber: irand(rng, 12, 18) + attempt * 2,
     floater: w.toRelease + 2 + attempt * 2,
-    // Bombs have a second job now — see countPass() — so there are enough
-    // to condemn a few pacers and still have one left for a boxed-in agent.
-    bomber: irand(rng, 3, 5) + attempt,
-    blocker: irand(rng, 2, 4) + attempt,
-    builder: irand(rng, 10, 16) + attempt * 3,
-    basher: irand(rng, 6, 12) + attempt * 3,
+    // One per agent, which is the only number that makes sense once bombs are
+    // what clears a stuck agent off the board. Anything less and the budget
+    // runs out with someone still wearing a hole in a corridor — and a level
+    // where the thing that ends the pacing has itself run out is precisely the
+    // level you sit and watch nothing happen on.
+    bomber: w.toRelease,
+    blocker: irand(rng, 3, 5) + attempt,
+    builder: irand(rng, 13, 19) + attempt * 3,
+    basher: irand(rng, 9, 15) + attempt * 3,
     miner: irand(rng, 4, 8) + attempt * 2,
     digger: irand(rng, 6, 10) + attempt * 2
   }
@@ -694,6 +701,9 @@ function placeObstacles(w, rng, c, index, corridors) {
   for (var n = 1; n <= count; n++) {
     var x = Math.round(lo + slot * n)
     var kind = n === forced ? "chasm" : pick(rng, kinds)
+    // Kept so the level's danger can be put where the traffic is densest and
+    // the timing is funniest — see placeHazard().
+    c.obstacles.push(x)
 
     if (kind === "wall") {
       // A plug spanning the full corridor height: climbing it just buries the
@@ -937,6 +947,19 @@ function placeHazard(w, rng, corridors, ci) {
   var hi = Math.max(c.startX, c.handoffX)
   if (hi - lo < 30) return null
 
+  // Candidates, best first: just past an obstacle in the direction of travel.
+  // Everyone who gets through a wall arrives at the same few cells on the far
+  // side of it, which makes that the densest traffic on the corridor and the
+  // only spot where the timing is funny — you spend nine seconds bashing
+  // through and step straight into the machine gun.
+  var spots = []
+  for (var oi = 0; oi < c.obstacles.length; oi++) {
+    var past = c.obstacles[oi] + c.dir * (8 + irand(rng, 0, 5))
+    if (past > lo + 4 && past < hi - spec.w - 2) spots.push(past)
+  }
+  // Failing that, anywhere along the middle of the run.
+  for (var f = 0; f < 12; f++) spots.push(Math.round(lo + (hi - lo) * (0.3 + rng() * 0.45)))
+
   // Somewhere along the middle of the run with the room to actually mount it.
   // The first version trusted the corridor's nominal geometry and put a fence
   // in mid-air on any level where an obstacle had already carved the floor out
@@ -944,8 +967,8 @@ function placeHazard(w, rng, corridors, ci) {
   // of this. So the spot is checked rather than assumed: open corridor for the
   // whole width of the zone, and something solid to bolt it to.
   var x = -1
-  for (var tryN = 0; tryN < 24; tryN++) {
-    var cand = Math.round(lo + (hi - lo) * (0.3 + rng() * 0.45))
+  for (var tryN = 0; tryN < spots.length; tryN++) {
+    var cand = spots[tryN]
     if (cand + spec.w >= hi || cand <= lo) continue
     var ok = true
     for (var q = 0; q < spec.w; q++) {
@@ -1942,6 +1965,17 @@ var PATIENCE = 600
 var LOOP_BUCKET = 5
 var LOOP_PASSES = 5
 
+// Pacing is not the only way to be stuck. Counting buckets only ever notices an
+// agent that MOVES between them, so one wearing a hole in a single five-cell
+// stretch — turning on the spot between a wall and a blocker, say — re-tread
+// nothing, counted nothing, and stood there until the level timed out. Which is
+// exactly the one everybody notices, because it never goes anywhere at all.
+//
+// So there is a second way to be condemned: walking, and no closer to home for
+// this long. It sits past PATIENCE, so forceEscape has already had its go with
+// a shovel and failed before anything gets written off.
+var STUCK_LIMIT = PATIENCE + 240
+
 // The other half of the director, and the more important one. The global stall
 // check can't see this case: one agent bashing away keeps terrainVersion
 // moving, so the level looks busy while fifteen others tramp a corridor they
@@ -2092,7 +2126,10 @@ function countPass(w, ag) {
   ag.bucket = key
   ag.passes[key] = (ag.passes[key] || 0) + 1
   if (ag.passes[key] < LOOP_PASSES) return
+  condemn(w, ag)
+}
 
+function condemn(w, ag) {
   // Condemned. A bomb rather than simply deleting it, because the explosion is
   // the useful part: it takes a bite out of the level, and an agent only ever
   // paces somewhere it could not get past, so the hole it leaves is in exactly
@@ -2177,6 +2214,10 @@ function step(w) {
     // (see forceEscape). Only from a walk, so it never interrupts work already
     // under way.
     if (ag.state === "walk" && ag.idle > PATIENCE) forceEscape(w, ag)
+
+    // Still nowhere, well after the shovel. Stuck on the spot rather than
+    // pacing between two places, which the bucket count above cannot see.
+    if (ag.state === "walk" && ag.idle > STUCK_LIMIT) condemn(w, ag)
 
     switch (ag.state) {
       case "walk": stepWalk(w, ag); break
