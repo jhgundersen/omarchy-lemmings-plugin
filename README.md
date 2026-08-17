@@ -253,6 +253,11 @@ everyone who was going to get home has, the blockers still standing light their
 own fuses — which is exactly what a player does at the end of a level, and the
 honest end of the bargain they made.
 
+If it plants itself while another agent is already shoulder-to-shoulder with
+it, that agent may move outward until they separate. Only movement toward a
+blocker is refused; otherwise the new blocker would catch its neighbour inside
+the exclusion radius and make it turn left and right in the same pixel forever.
+
 That is also why a level has a *target* rather than asking for everyone: a
 blocker doesn't come home, so on any level that posts one, "everyone home" isn't
 a target, it's a contradiction.

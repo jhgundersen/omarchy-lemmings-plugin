@@ -1760,7 +1760,14 @@ function anyBlockerNear(w, ag, nx) {
     var B = w.agents[i]
     if (B === ag || B.state !== "block" || B.gone) continue
     if (Math.abs(B.y - ag.y) > 3) continue
-    if (Math.abs(nx - B.x) < 1.8) return true
+    var now = Math.abs(ag.x - B.x)
+    var next = Math.abs(nx - B.x)
+    // A blocker stops agents approaching it; it must not imprison somebody
+    // who was already inside the radius when the blocker planted its hands.
+    // That agent may move only outward until it has separated. The old
+    // absolute-distance test rejected both directions and made it alternate
+    // left/right forever in the same pixel.
+    if (next < 1.8 && next < now) return true
   }
   return false
 }
