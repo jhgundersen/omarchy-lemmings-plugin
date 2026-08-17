@@ -72,7 +72,22 @@ go; the header shows which try you're watching.
 Nothing in here assigns a skill. There's no cursor, no toolbar you can click,
 no way to help. The toolbar under the board is a read-out, not a control: it
 shows what this level was issued and what's left of it, and flashes when one
-of them goes out.
+of them goes out. When it reads 0 it means 0 — everything that hands out a
+skill, including the director that steps in on a stalled level, draws from the
+same budget and is refused when it's empty.
+
+## The clock
+
+A level gets 110 seconds. If they haven't made it by then the nuke goes off:
+every lemming still out there gets a five-second fuse, a few frames apart, and
+the level ends in a ripple of small explosions.
+
+It's set to the shortest limit that never cuts short a level still making
+progress. Levels that are going to work are done well inside it, and the ones
+that trip it are stuck for good rather than slow — raising it to 140 or 170
+seconds nukes exactly the same attempts and only makes you wait longer to
+watch it. The countdown appears in the header for the last thirty seconds; a
+nuked level is then retried like any other failure.
 
 ## How they work it out
 
@@ -91,6 +106,10 @@ picks the cheapest tool that fits what it found:
 | Steel | Turn around. Nothing gets through steel |
 | Nothing, for long enough | **Dig** or **Mine** downward and find out |
 
+A lemming only ever turns round at a wall, at a blocker, or at an edge it
+won't step off. Landing doesn't turn it — it keeps whatever way it was facing,
+same as the original.
+
 Two of those are permanent: a lemming that becomes a climber or a floater
 stays one for the rest of its life, exactly as in the original. The other six
 are one-shot, come out of a per-level budget, and when a budget runs dry the
@@ -98,11 +117,13 @@ rule falls through to the next option — which is where the improvisation
 comes from. A level bridged on one run gets bashed through on the next once
 the builders are gone.
 
-The one thing they know that isn't local is roughly where the exit is, and
-that only settles which way to set off after a landing — and only from the
-floor the exit is actually on. Above that, the corridors zigzag and the exit
-lies back the way they came, so following it there would walk the whole
-colony to the wrong end of the level.
+The only thing they know that isn't in front of their faces is which way home
+is *vertically* — whether the exit is on this floor, above, or below — which is
+what decides between digging down and climbing up when a lemming runs out of
+ideas. There's no horizontal sense of where the exit is at all. There used to
+be, steering them on landing, and it had to go: the corridors zigzag, so on
+every other floor the exit lies back the way they came, and following it walked
+the colony to the wrong end of the level and held it there.
 
 ## Personalities
 
@@ -175,10 +196,11 @@ that silhouette is the only thing making them read as lemmings rather than as
 animated debris.
 
 Measured over 200 levels played the way the panel plays them, retries and all:
-**83% end with everyone home, 90% of all lemmings get home, nothing dies at
-all**, and an attempt takes about 50 seconds. Across those, you'd see a bridge
-built in three quarters of them, a blocker standing in over half, and something
-bashed through in every single one.
+**89% end with everyone home** and 78% of all lemmings get home, over an
+average attempt of about 70 seconds. Across those attempts you'd see something
+bashed through in every one, a blocker standing in 83%, a bridge built in 80%,
+and the nuke go off in about a third — those being the attempts that were never
+going to finish, most of which come good on the retry.
 
 ### The blocker
 
@@ -189,7 +211,13 @@ who ever meet it are those who turned back from an obstacle, and for them it
 is genuinely lethal. The first to reach it stands and turns the rest around,
 which costs the level nothing because the way on was always the other way.
 
-It took two goes to get right. Putting the same hazard *on* the route is much
+A blocker stands down twelve seconds after the last lemming it turned back,
+once the hatch is empty. The original left them planted until you blew them
+up, which is fine when a player decides the job is done — here nobody does,
+and a blocker that stands forever is a lemming that never goes home and a
+level that runs until the clock kills it.
+
+It took two goes to get the placement right. Putting the same hazard *on* the route is much
 worse — a blocker at a void the colony has to cross walls off the only way
 forward, and all-home fell from 90% to 65%. And for a long time it couldn't
 fire at all: the rule keys off a drop with no bottom, but out-of-bounds reads

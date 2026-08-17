@@ -78,6 +78,14 @@ Panel {
     "No plan, no map, no fuss."
   ]
   // Shown when the level is about to be attempted again rather than left.
+  // Shown when the level ran out of time and was nuked.
+  readonly property var nukedLines: [
+    "Time. Everybody out, the hard way.",
+    "The clock won that one.",
+    "Out of time, and out of options.",
+    "Some levels don't get solved.",
+    "That's what the last skill is for."
+  ]
   readonly property var retryLines: [
     "Not this time. Sending a fresh lot in.",
     "That didn't work. Again, with different lemmings.",
@@ -224,6 +232,8 @@ Panel {
       active: world.active || 0,
       done: world.done,
       ticks: world.ticks,
+      nuking: world.nuking === true,
+      secondsLeft: Math.max(0, Math.ceil((world.timeLimit - world.ticks) / 30)),
       skills: world.skills,
       used: world.lastUsed
     }
@@ -245,7 +255,9 @@ Panel {
     if (world.done && completionLine === "") {
       var everyone = world.saved >= world.toRelease
       var willRetry = !everyone && attempt + 1 < maxAttempts
-      var pool = everyone ? completionLines : (willRetry ? retryLines : partialLines)
+      var pool = everyone ? completionLines
+                          : (world.nuking ? nukedLines
+                             : (willRetry ? retryLines : partialLines))
       completionLine = pool[Math.floor(Math.random() * pool.length)]
       lifetimeSaved += world.saved
       if (world.saved > 0) levelsCleared += 1
@@ -461,9 +473,16 @@ Panel {
           Text {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
+            // The clock only appears in the last thirty seconds. Running it the
+            // whole way turns something you're watching to unwind into
+            // something with a deadline, which is the opposite of the point —
+            // but the nuke arriving out of a clear sky is worse.
             text: "Home " + root.stats.saved + "/" + root.stats.total
                   + (root.stats.lost > 0 ? "  ·  Lost " + root.stats.lost : "")
-            color: Qt.darker(root.bar.foreground, 1.4)
+                  + (root.stats.nuking ? "  ·  NUKE"
+                     : ((root.stats.secondsLeft !== undefined && root.stats.secondsLeft <= 30)
+                        ? "  ·  " + root.stats.secondsLeft + "s" : ""))
+            color: root.stats.nuking ? Color.urgent : Qt.darker(root.bar.foreground, 1.4)
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: true

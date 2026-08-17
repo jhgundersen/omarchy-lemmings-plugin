@@ -60,6 +60,17 @@ var DIG_INTERVAL = 7
 var BOMB_FUSE = 150      // 5 seconds, same as the original
 var BOMB_RADIUS = 5
 
+// How long a level gets before the nuke goes off. Levels that are going to
+// work are usually done well inside this; the ones that trip it are stuck for
+// good, not slow — raising the limit to 140s or 170s nukes exactly the same
+// attempts and only makes you wait longer to watch it happen. So it is set to
+// the shortest value that does not cut short a level still making progress.
+var LEVEL_LIMIT = 30 * 110
+var NUKE_STAGGER = 5     // ticks between arming one lemming and the next
+
+// How long a blocker holds its post after the last lemming it turned back.
+var BLOCK_DUTY = 30 * 12
+
 // Skills, in the order the original's toolbar showed them.
 var SKILL_ORDER = ["climber", "floater", "bomber", "blocker", "builder", "basher", "miner", "digger"]
 var SKILL_LABELS = {
@@ -251,7 +262,11 @@ function generate(level, attempt) {
     progressMark: 0,
     stallTicks: 0,
     rescues: 0,
-    bombsUsed: 0
+    bombsUsed: 0,
+
+    timeLimit: LEVEL_LIMIT,
+    nuking: false,
+    nukeTimer: 0
   }
 
   fillEarth(w, rng)
@@ -723,7 +738,10 @@ function anyBlockerNear(w, L, nx) {
     var B = w.lemmings[i]
     if (B === L || B.state !== "block" || B.gone) continue
     if (Math.abs(B.y - L.y) > 3) continue
-    if (Math.abs(nx - B.x) < 1.8) return true
+    if (Math.abs(nx - B.x) < 1.8) {
+      B.lastUse = w.ticks   // somebody still needs it; see stepBlock
+      return true
+    }
   }
   return false
 }
@@ -749,9 +767,10 @@ function take(w, skill) {
 // bashed through on another once the bridge budget is gone.
 // ---------------------------------------------------------------------------
 
-// Which way the exit lies. Lemmings can see the beacon; this is the only
-// non-local thing they know, and it only ever breaks ties.
-function exitDir(w, L) { return w.exit.x + w.exit.w / 2 > L.x ? 1 : -1 }
+// What a lemming knows that isn't in front of its face: which way home is,
+// vertically. That's it — there is no horizontal beacon any more. There used
+// to be one, steering them on landing, and dropping it took the last thing
+// that could override what a lemming could actually see.
 
 // The row a lemming standing in the exit's mouth has its feet on. Every
 // "is the exit above/below me" test has to use this and not `exit.y`, which is
@@ -789,26 +808,6 @@ function goalDist(w, L) {
   return 1000 + dy * 4
 }
 function exitAbove(w, L) { return exitFloor(w) < L.y - 2 }
-
-// ...but only once they're down on its level. The corridors zigzag, so on
-// every other floor the exit lies back the way the route came: a lemming in
-// the top corridor has to walk RIGHT to reach the only way down, while the
-// exit — always at the bottom of the last, leftward corridor — sits away to
-// its left. Steering by the beacon up there points the whole colony at the
-// wrong end of the level and holds it there until the clock runs out.
-function beaconVisible(w, L) {
-  return Math.abs(w.exit.y + w.exit.h - L.y) < CORR_GAP
-}
-
-// Which way to set off after landing when the exit isn't in sight: away from
-// whichever side wall is nearer. That's a purely local instinct — head for the
-// open, not the corner — but because every handoff between corridors sits at
-// one end of the level, a lemming dropping into a new corridor always lands
-// near an end and this turns it to face the length of it. It reproduces the
-// serpentine without any lemming being told the serpentine exists.
-function openDir(L) {
-  return L.x < COLS / 2 ? 1 : -1
-}
 
 function hitWall(w, L) {
   var footY = Math.floor(L.y)
@@ -1026,6 +1025,7 @@ function spawn(w) {
     idle: 0,           // ticks since it last got closer to home
     markD: Infinity,   // closest it has ever been; see goalDist()
     fuse: 0,
+    lastUse: 0,        // tick it last turned someone back; see stepBlock
     anim: Math.floor(Math.random() * 8),
     gone: false,
     fade: 0
@@ -1102,10 +1102,22 @@ function stepFall(w, L) {
       if (L.fall > SAFE_FALL && !L.floater) { splat(w, L); return }
       L.state = "walk"
       L.fall = 0
-      // Landing is the one moment a lemming gets a free look around, so it's
-      // where the exit beacon gets to influence which way they set off — but
-      // only from the floor the exit is actually on (see beaconVisible).
-      L.dir = beaconVisible(w, L) ? exitDir(w, L) : openDir(L)
+      // Landing does NOT turn a lemming round. It keeps whatever way it was
+      // facing, as in the original — a lemming only ever turns at a wall, at a
+      // blocker, or at an edge it won't step off.
+      //
+      // Picking a direction here instead (toward the exit, or away from the
+      // nearest wall) routed them through the serpentine very tidily and was
+      // wrong twice over. It reads as bizarre — the whole colony pirouetting
+      // on landing — and it closes a loop: a climber that bumps a ceiling
+      // turns away and drops, and if landing then points it back at the wall
+      // it just failed to climb, it climbs it again, forever. That was every
+      // lemming found pinned in a six-cell box cycling walk-climb-fall.
+      //
+      // The serpentine still works without it. A lemming stepping off the end
+      // of one corridor lands near the start of the next still facing the way
+      // it was going, walks the short way to that end, and turns at the wall
+      // like anything else.
       return
     }
   }
@@ -1283,8 +1295,19 @@ function stepDig(w, L) {
 function stepBlock(w, L) {
   // A blocker with nothing under it stops blocking — the ground it was holding
   // has been dug out from beneath, usually by whoever it turned back.
-  if (!solid(w, Math.floor(L.x), Math.floor(L.y) + 1)) beginUncontrolledFall(w, L)
+  if (!solid(w, Math.floor(L.x), Math.floor(L.y) + 1)) { beginUncontrolledFall(w, L); return }
   L.anim++
+
+  // And one that hasn't turned anybody back in a while stands down and gets on
+  // with its own life. The original left them planted until you blew them up,
+  // which is fine when a player is deciding when the job is done; here nobody
+  // is, and a blocker that stands forever is a lemming that never goes home
+  // and a level that runs until the clock kills it.
+  if (w.released < w.toRelease) return
+  if (w.ticks - (L.lastUse || 0) < BLOCK_DUTY) return
+  L.state = "walk"
+  L.dir = -L.dir
+  L.turns = 0
 }
 
 function stepBomb(w, L) {
@@ -1363,11 +1386,17 @@ function boxedIn(w, L) {
   return leftHard && rightHard
 }
 
+// The director takes from the same budget as everyone else, and is refused
+// when it's empty. It used to top the budget up by one and spend it in the same
+// breath, which meant a skill reading 0 on the toolbar carried on being used —
+// the count was a decoration rather than a number. If the level has none left
+// it has none left; the nuke timer and the retry are what stop that becoming a
+// dead end.
 function grant(w, skill) {
+  if (!take(w, skill)) return false
   w.granted[skill] = (w.granted[skill] || 0) + 1
   w.rescues++
-  w.skills[skill] = (w.skills[skill] || 0) + 1
-  take(w, skill)
+  return true
 }
 
 // How long a lemming may walk without getting anywhere before it stops asking
@@ -1397,11 +1426,8 @@ function forceEscape(w, L) {
 
   if (exitAbove(w, L)) {
     // Below the exit: the only useful direction is up.
-    if (!L.climber) { grant(w, "climber"); L.climber = true; return }
-    if (willBuild(L)) {
-      grant(w, "builder")
-      startBuild(w, L)
-    }
+    if (!L.climber && grant(w, "climber")) { L.climber = true; return }
+    if (willBuild(L) && grant(w, "builder")) startBuild(w, L)
     return
   }
 
@@ -1419,15 +1445,13 @@ function forceEscape(w, L) {
   // the same wall indefinitely while help arrives for the direction it isn't
   // facing.
   var behind = Math.floor(L.x) - L.dir
-  if (solid(w, ahead, footY) && at(w, ahead, footY) !== STEEL) {
-    grant(w, "basher")
+  if (solid(w, ahead, footY) && at(w, ahead, footY) !== STEEL && grant(w, "basher")) {
     L.state = "bash"
     L.timer = 0
     return
   }
-  if (solid(w, behind, footY) && at(w, behind, footY) !== STEEL) {
+  if (solid(w, behind, footY) && at(w, behind, footY) !== STEEL && grant(w, "basher")) {
     L.dir = -L.dir
-    grant(w, "basher")
     L.state = "bash"
     L.timer = 0
     return
@@ -1441,16 +1465,16 @@ function forceEscape(w, L) {
   if (exitBelow(w, L) && solid(w, Math.floor(L.x), footY + 1)
       && at(w, Math.floor(L.x), footY + 1) !== STEEL) {
     var ramp = L.id % 2 === 0
-    grant(w, ramp ? "miner" : "digger")
-    L.state = ramp ? "mine" : "dig"
-    L.timer = 0
-    return
+    if (grant(w, ramp ? "miner" : "digger")) {
+      L.state = ramp ? "mine" : "dig"
+      L.timer = 0
+      return
+    }
   }
   // The cap applies to director help too. Without it, the one mechanism meant
   // to rescue a stuck lemming happily hands the keenest builder its eighteenth
   // bridge, and the pile of brickwork is what the rest then get stuck on.
-  if (willBuild(L)) {
-    grant(w, "builder")
+  if (willBuild(L) && grant(w, "builder")) {
     startBuild(w, L)
     return
   }
@@ -1490,22 +1514,20 @@ function runDirector(w) {
 
   // Below the exit and pacing: nothing horizontal helps, and digging only
   // makes it worse. Hand them a climb.
-  if (wantUp && !best.climber) {
-    grant(w, "climber")
+  var rampy = best.id % 2 === 0
+  if (wantUp && !best.climber && grant(w, "climber")) {
     best.climber = true
-  } else if (solid(w, ahead, footY) && at(w, ahead, footY) !== STEEL) {
-    grant(w, "basher")
+  } else if (solid(w, ahead, footY) && at(w, ahead, footY) !== STEEL && grant(w, "basher")) {
     best.state = "bash"
     best.timer = 0
-  } else if (exitBelow(w, best) && solid(w, Math.floor(best.x), footY + 1) && at(w, Math.floor(best.x), footY + 1) !== STEEL) {
-    var rampy = best.id % 2 === 0
-    grant(w, rampy ? "miner" : "digger")
+  } else if (exitBelow(w, best) && solid(w, Math.floor(best.x), footY + 1)
+             && at(w, Math.floor(best.x), footY + 1) !== STEEL
+             && grant(w, rampy ? "miner" : "digger")) {
     best.state = rampy ? "mine" : "dig"
     best.timer = 0
-  } else if (best.state === "walk" && willBuild(best)) {
-    grant(w, "builder")
+  } else if (best.state === "walk" && willBuild(best) && grant(w, "builder")) {
     startBuild(w, best)
-  } else if (w.bombsUsed < 1 && w.rescues > 6 && boxedIn(w, best)) {
+  } else if (w.bombsUsed < 1 && w.rescues > 6 && boxedIn(w, best) && grant(w, "bomber")) {
     // Genuinely walled in by steel with every tool refused. One goes up, and
     // the rest walk out through the hole.
     //
@@ -1515,7 +1537,6 @@ function runDirector(w) {
     // way down to blowing lemmings up as routine maintenance, and the loss
     // rate went from one in three hundred to one in sixteen.
     w.bombsUsed++
-    grant(w, "bomber")
     best.state = "bomb"
     best.fuse = BOMB_FUSE
   }
@@ -1536,6 +1557,26 @@ function step(w) {
       w.released++
       w.lemmings.push(spawn(w))
     }
+  }
+
+  // Out of time. Everybody left gets a fuse, a few ticks apart so they go up
+  // in a ripple rather than all at once — the original's nuke, and the only
+  // ending that reads as deliberate rather than as the simulation giving up.
+  if (!w.done && !w.nuking && w.ticks > w.timeLimit) w.nuking = true
+  if (w.nuking) {
+    w.nukeTimer++
+    if (w.nukeTimer >= NUKE_STAGGER) {
+      w.nukeTimer = 0
+      for (var n = 0; n < w.lemmings.length; n++) {
+        var N = w.lemmings[n]
+        if (N.gone || N.state === "saved" || N.state === "bomb") continue
+        N.state = "bomb"
+        N.fuse = BOMB_FUSE
+        break
+      }
+    }
+    // Nothing left in the hatch once the nuke is on.
+    w.released = w.toRelease
   }
 
   var active = 0
@@ -1605,9 +1646,10 @@ function step(w) {
       if (w.lemmings[b].state === "block") {
         w.lemmings[b].state = "walk"
         w.lemmings[b].turns = 0
-        w.lemmings[b].dir = beaconVisible(w, w.lemmings[b])
-          ? exitDir(w, w.lemmings[b])
-          : openDir(w.lemmings[b])
+        // Back the way it came. A blocker has spent its whole life at the lip
+        // of something lethal, so the one direction it must not be sent is
+        // forward.
+        w.lemmings[b].dir = -w.lemmings[b].dir
       }
     }
   }
@@ -1647,8 +1689,7 @@ function step(w) {
     // and any cell of earth moved, so it can only reach this while the board
     // is genuinely static — and a static board is the one thing worth cutting
     // short in something meant to be left running in the corner of a screen.
-    if (w.ticks > 30 * 150
-        || w.stallTicks > 900
+    if (w.stallTicks > 900
         || (nearlyDone && allStuck && w.stallTicks > 210)
         || (nearlyDone && w.stallTicks > 600)) {
       w.done = true
