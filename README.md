@@ -160,7 +160,10 @@ None of them commits to a move that cannot work: a block too big to shift is
 walked away from rather than kicked and missed. And every one keeps a shovel for
 when the wall was never the problem, since most of the moves cut sideways. It
 will open at most one rescue shaft on each floor, and travels down as it digs;
-it cannot stand at the rim cutting hole after hole into the same corridor.
+it cannot stand at the rim cutting hole after hole into the same corridor. If
+it is trapped on the exit's floor, it cuts one plain body-height escape through
+the thinner wall instead. Rescue decisions are spaced out, so a failed one
+cannot leave it flickering left and right in the same pixel every frame.
 
 ## Levels
 

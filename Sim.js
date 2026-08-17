@@ -1107,7 +1107,12 @@ function specialCut(w, ag, act, dry) {
     for (i = -5; i <= 5; i++)
       for (j = -5; j <= 5; j++) {
         if (i * i + j * j > 26) continue
-        if (dry ? workable(w, fx + d * 4 + i, fy - 2 + j) : clearCell(w, fx + d * 4 + i, fy - 2 + j)) {
+        var meltY = fy - 2 + j
+        // A sideways move may open the wall down to foot height, but not the
+        // floor under it. Cutting lower leaves a crater rather than a tunnel;
+        // level 1's whole colony used to collect on its one-cell shelves.
+        if (meltY > fy) continue
+        if (dry ? workable(w, fx + d * 4 + i, meltY) : clearCell(w, fx + d * 4 + i, meltY)) {
           if (dry) return true
           moved = true
         }
@@ -1117,7 +1122,9 @@ function specialCut(w, ag, act, dry) {
     for (i = -BOMB_RADIUS; i <= BOMB_RADIUS; i++)
       for (j = -BOMB_RADIUS; j <= BOMB_RADIUS; j++) {
         if (i * i + j * j > BOMB_RADIUS * BOMB_RADIUS) continue
-        if (dry ? workable(w, fx + d * 5 + i, fy - 2 + j) : clearCell(w, fx + d * 5 + i, fy - 2 + j)) {
+        var sapY = fy - 2 + j
+        if (sapY > fy) continue
+        if (dry ? workable(w, fx + d * 5 + i, sapY) : clearCell(w, fx + d * 5 + i, sapY)) {
           if (dry) return true
           moved = true
         }
@@ -1134,7 +1141,9 @@ function specialCut(w, ag, act, dry) {
 
   } else if (act === "quarry") {
     for (i = 1; i <= 7; i++)
-      for (j = -7; j <= 1; j++)
+      // Context Window is enormous sideways, not downward. The floor is the
+      // one row its opening must leave alone.
+      for (j = -7; j <= 0; j++)
         if (dry ? workable(w, fx + d * i, fy + j) : clearCell(w, fx + d * i, fy + j)) {
           if (dry) return true
           moved = true
@@ -2029,6 +2038,8 @@ function spawn(w) {
     ceilX: 0,
     ceilTo: 0,
     escapeFloors: {},  // a special may cut one rescue shaft per corridor
+    escapeTunnels: {}, // and one body-height rescue tunnel per corridor
+    rescueCool: 0,     // do not reconsider the same escape every simulation tick
     markD: Infinity,   // closest it has ever been; see goalDist()
     fuse: 0,
     anim: Math.floor(Math.random() * 8),
@@ -2577,6 +2588,35 @@ function specialEscape(w, ag) {
     // loop like that for the whole level, which is the one agent on the board
     // you would definitely notice doing it.
     ag.still = 0
+  } else if (!ag.escapeTunnels[floor]) {
+    // Same floor as home, or below it, and boxed into a pocket: digging is the
+    // wrong axis. Cut one plain body-height escape through the thinner side.
+    // This is intentionally not the special's signature shape; repeating the
+    // shape that made the pocket (notably Melt's disc) only remodels the same
+    // cell. The cut never reaches below the feet, so it cannot make a new pit.
+    // Count the whole body-height tunnel, not just the cell beside its feet.
+    // Melt's level-1 pocket was open at ankle height and blocked at the head,
+    // so a foot-only test declared both exits clear while stepWalk quite
+    // correctly refused both of them.
+    var left = 0, right = 0
+    for (var ex = 1; ex <= 8; ex++)
+      for (var ey = -AGENT_H; ey <= 0; ey++) {
+        if (workable(w, fx - ex, fy + ey)) left++
+        if (workable(w, fx + ex, fy + ey)) right++
+      }
+    var canLeft = left > 0
+    var canRight = right > 0
+    var dir = left <= right ? -1 : 1
+    if (!canLeft && canRight) dir = 1
+    if (!canRight && canLeft) dir = -1
+    if (canLeft || canRight) {
+      ag.dir = dir
+      ag.escapeTunnels[floor] = true
+      specialCut(w, ag, "blast")
+      ag.still = 0
+      return
+    }
+    specialAtWall(w, ag)
   } else {
     specialAtWall(w, ag)
   }
@@ -2766,7 +2806,16 @@ var STILL_ESCAPE = 130
 // themselves instantly), this hands a tool to the specific agent that has
 // demonstrably been getting nowhere.
 function forceEscape(w, ag) {
-  if (ag.special) { specialEscape(w, ag); return }
+  if (ag.special) {
+    // specialEscape deliberately leaves `idle` alone so a failed rescue can
+    // still reach condemnation. Without a separate throttle that also calls
+    // it on every subsequent tick; a fallback turn then makes the special
+    // alternate directions in one pixel thirty times a second.
+    if (ag.rescueCool > 0) return
+    ag.rescueCool = 90
+    specialEscape(w, ag)
+    return
+  }
   ag.idle = 0
   var footY = Math.floor(ag.y)
   var ahead = Math.floor(ag.x) + ag.dir
@@ -2909,6 +2958,10 @@ function runDirector(w) {
 // keyed by corridor as well as by column, so walking the same stretch of two
 // different floors doesn't read as pacing one of them.
 function countPass(w, ag) {
+  // Only walking can be pacing. A climber, builder or digger may cross the
+  // same bucket repeatedly while doing useful work; condemning it here turns
+  // the rescue itself into a bomb and leaves everyone behind in its crater.
+  if (ag.state !== "walk") return
   var key = Math.floor(ag.x / LOOP_BUCKET) + "@" + Math.floor((ag.y + 1) / CORR_GAP)
   if (key === ag.bucket) return
   ag.bucket = key
@@ -2998,12 +3051,18 @@ function step(w) {
     // doing is working: clear both counters and let it get on with it.
     w.acting = ag
     if (ag.cool > 0) ag.cool--
+    if (ag.rescueCool > 0) ag.rescueCool--
 
     // Stuck inside one cell. Not "getting nowhere" in the goalDist sense — the
     // literal same cell, tick after tick, which is what pacing in a pocket
     // looks like and what the bucket counter can never see.
     var cell = Math.floor(ag.x) + "," + Math.floor(ag.y)
-    if (cell === ag.cell) ag.still++
+    // Count only walking. Wind-ups, building, climbing and falling can all
+    // occupy one cell for a long time while doing exactly what they should.
+    // Carrying those ticks back into `walk` makes a completed action look
+    // instantly stuck and can launch a hop or rescue on its very next frame.
+    if (ag.state !== "walk") { ag.cell = cell; ag.still = 0 }
+    else if (cell === ag.cell) ag.still++
     else { ag.cell = cell; ag.still = 0 }
     if (ag.still > JUMP_STILL && ag.state === "walk" && canJump(w, ag)) startJump(w, ag)
 
@@ -3029,13 +3088,18 @@ function step(w) {
       ag.bucket = ""
     } else {
       ag.idle++
-      countPass(w, ag)
     }
 
     // Getting nowhere for long enough: stop waiting for the budget to allow it
     // (see forceEscape). Only from a walk, so it never interrupts work already
     // under way.
     if (ag.state === "walk" && ag.idle > PATIENCE - traitOf(ag).digBias) forceEscape(w, ag)
+
+    // Recovery gets first refusal. On a long corridor the fifth pass and the
+    // patience limit can land on the same tick; counting first condemned the
+    // agent before forceEscape could hand it the tool this counter exists to
+    // lead up to. If recovery started work, countPass ignores it above.
+    countPass(w, ag)
 
     // Still nowhere, well after the shovel. Stuck on the spot rather than
     // pacing between two places, which the bucket count above cannot see.
