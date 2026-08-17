@@ -7,14 +7,16 @@ import "Sim.js" as Sim
 import "Draw.js" as Draw
 
 // Lemmings, but nobody is playing. A level is carved out of solid earth, a
-// hatch opens, and twenty small creatures with green hair have to work out for
-// themselves how to get from there to the exit — bashing through what's in the
-// way, bridging what isn't there, climbing what's too tall, and putting up an
-// umbrella when the drop is too far. You just watch. That's the whole thing.
+// hatch opens, and a dozen-odd small creatures with green hair have to work out
+// for themselves how to get from there to the exit — bashing through what's in
+// the way, bridging what isn't there, climbing what's too tall, and putting up
+// an umbrella when the drop is too far. You just watch. That's the whole thing.
 //
-// It lives in the bar next to Snake for the same reason Snake does: the build
-// is compiling, the agent is still thinking, and staring at a progress bar is
-// worse for you than staring at this.
+// They're called agents because the joke writes itself: no supervisor, no plan
+// beyond the next two body-lengths, enormous confidence, and a success rate of
+// about two thirds. It lives in the bar next to Snake for the same reason Snake
+// does — the build is compiling, the *other* agent is still thinking, and
+// staring at a progress bar is worse for you than staring at this.
 //
 // The three files split cleanly and none of them reaches into another's job:
 //
@@ -23,19 +25,19 @@ import "Draw.js" as Draw
 //   Panel.qml this: bar button, panel chrome, the clock that drives the sim,
 //             the theme-derived palette, and what persists between sessions.
 //
-// The lemmings are genuinely not told the route. Each one senses only the
+// The agents are genuinely not told the route. Each one senses only the
 // terrain within a couple of body-lengths — is there a wall, how thick, how
 // tall, is there floor ahead, how far down, is there anything to land on — and
 // picks the cheapest tool that fits (see decide-time helpers in Sim.js). The
-// only thing they know that isn't local is roughly which way the exit lies,
-// which breaks ties after a landing and nothing else. Level generation is
+// only thing they know that isn't local is whether home is on this floor,
+// above, or below — no horizontal sense of it at all. Level generation is
 // constrained to shapes those rules can answer, and a `director` in Sim.js
 // tops up a skill if a level genuinely stalls, so watching this never turns
 // into watching something fail.
 Panel {
   id: root
-  moduleName: "jhgundersen.lemmings"
-  ipcTarget: "jhgundersen.lemmings"
+  moduleName: "jhgundersen.oh-no-more-agents"
+  ipcTarget: "jhgundersen.oh-no-more-agents"
 
   readonly property int boardWidth: Sim.WIDTH
   readonly property int boardHeight: Sim.HEIGHT
@@ -88,7 +90,7 @@ Panel {
   ]
   readonly property var retryLines: [
     "Not this time. Sending a fresh lot in.",
-    "That didn't work. Again, with different lemmings.",
+    "That didn't work. Again, with different agents.",
     "Some levels take two goes.",
     "Round two. Same ground, new colony.",
     "They'll have another crack at it."
@@ -106,7 +108,7 @@ Panel {
   //
   // Earth, sky and portal are mixed from the active theme so the board never
   // fights the rest of the desktop, with each biome pulling toward a different
-  // theme tone. The lemmings are the exception: green hair, blue robe, fixed.
+  // theme tone. The agents are the exception: green hair, blue robe, fixed.
   // Theme-tinting them would make them read as animated debris rather than as
   // the thing everybody recognizes.
   // ---------------------------------------------------------------------
@@ -140,7 +142,7 @@ Panel {
     return {
       // The carved-out space has to read as clearly empty and the earth as
       // clearly solid, or the whole board turns into one dark slab with a few
-      // lemmings on it — which is what a gentler set of these looked like.
+      // agents on it — which is what a gentler set of these looked like.
       // Corridors are the darkest thing on the board; every material sits well
       // above them, and the lit top edge well above that again.
       skyTop: css(mix(bg, tint, 0.02)),
@@ -177,7 +179,7 @@ Panel {
       dust: css(mix(bg, fg, 0.7)),
       label: css(mix(bg, fg, 0.85)),
       // Personality names sit behind action names: with labels on, every
-      // lemming carries one, so at full strength the board is a wall of text.
+      // agent carries one, so at full strength the board is a wall of text.
       labelFaint: css(mix(bg, fg, 0.45)),
       urgent: css(Color.urgent),
 
@@ -528,7 +530,7 @@ Panel {
           radius: Style.cornerRadius > 0 ? 4 : 0
           clip: true
 
-          // Terrain repaints only when a lemming actually removes or lays a
+          // Terrain repaints only when an agent actually removes or lays a
           // cell; the actors repaint every tick. Splitting them is what makes
           // a boardful of diggers affordable.
           Canvas {
@@ -595,7 +597,7 @@ Panel {
         // --- the toolbar --------------------------------------------------
         // The original's eight skills in the original's order, showing what
         // this level was issued and what's left. Nothing here is clickable:
-        // deciding is the lemmings' job, and the row is how you watch them
+        // deciding is the agents' job, and the row is how you watch them
         // spend it.
         Row {
           anchors.horizontalCenter: parent.horizontalCenter
@@ -607,7 +609,7 @@ Panel {
             Rectangle {
               required property var modelData
               readonly property int count: root.stats.skills[modelData] || 0
-              // Flashes for two thirds of a second after a lemming takes one,
+              // Flashes for two thirds of a second after an agent takes one,
               // so you can catch which skill just went out.
               readonly property bool recent: {
                 var t = root.stats.used[modelData]

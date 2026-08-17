@@ -10,13 +10,13 @@
 // happens when someone removes a cell.
 //
 // The palette arrives from Panel.qml, derived from the active Omarchy theme,
-// so the earth, sky and portal all shift with the theme. The lemmings
+// so the earth, sky and portal all shift with the theme. The agents
 // themselves keep the green hair and blue robe: that silhouette IS the joke,
-// and at sixteen pixels tall it's the only thing making them read as lemmings
-// rather than as pixels.
+// and at sixteen pixels tall it's the only thing making them read as a doomed
+// colony rather than as pixels.
 
-var LEM_W = 8
-var LEM_PX = 16
+var SPRITE_W = 8
+var SPRITE_PX = 16
 
 // ---------------------------------------------------------------------------
 // Terrain layer
@@ -160,10 +160,10 @@ function drawActors(ctx, w, pal, opts) {
   }
   ctx.globalAlpha = 1
 
-  for (var i = 0; i < w.lemmings.length; i++) {
-    var L = w.lemmings[i]
-    if (L.gone) continue
-    drawLemming(ctx, w, pal, L, opts)
+  for (var i = 0; i < w.agents.length; i++) {
+    var ag = w.agents[i]
+    if (ag.gone) continue
+    drawAgent(ctx, w, pal, ag, opts)
   }
 }
 
@@ -198,24 +198,24 @@ function drawExitGlow(ctx, w, pal) {
 
 // One 8x16 sprite, mirrored by facing, with per-action limb changes. The
 // helper takes coordinates in right-facing sprite space and flips them for a
-// left-facing lemming, so every pose below is written once.
+// left-facing agent, so every pose below is written once.
 function blit(ctx, ox, oy, dir, x, y, bw, bh) {
-  var sx = dir > 0 ? ox + x : ox + (LEM_W - x - bw)
+  var sx = dir > 0 ? ox + x : ox + (SPRITE_W - x - bw)
   ctx.fillRect(Math.round(sx), Math.round(oy + y), bw, bh)
 }
 
-function drawLemming(ctx, w, pal, L, opts) {
+function drawAgent(ctx, w, pal, ag, opts) {
   var C = Sim.CELL
-  var ox = Math.round(L.x * C) - LEM_W / 2
-  var oy = Math.round((L.y + 1) * C) - LEM_PX
-  var dir = L.dir
-  var st = L.state
+  var ox = Math.round(ag.x * C) - SPRITE_W / 2
+  var oy = Math.round((ag.y + 1) * C) - SPRITE_PX
+  var dir = ag.dir
+  var st = ag.state
 
   if (st === "saved") {
     // A short rise and fade into the portal, so getting home reads as an
-    // arrival rather than a lemming simply blinking out.
-    ctx.globalAlpha = Math.max(0, 1 - L.fade / 14)
-    oy -= L.fade
+    // arrival rather than an agent simply blinking out.
+    ctx.globalAlpha = Math.max(0, 1 - ag.fade / 14)
+    oy -= ag.fade
   }
 
   var robe = pal.robe
@@ -224,15 +224,15 @@ function drawLemming(ctx, w, pal, L, opts) {
 
   if (st === "bomb") {
     // Flash between the theme's urgent color and white on the last seconds.
-    var fast = L.fuse < 40
-    var on = Math.floor(L.fuse / (fast ? 3 : 7)) % 2 === 0
+    var fast = ag.fuse < 40
+    var on = Math.floor(ag.fuse / (fast ? 3 : 7)) % 2 === 0
     robe = on ? pal.urgent : pal.robe
     hair = on ? pal.urgent : pal.hair
     skin = on ? "#ffffff" : pal.skin
   }
 
   // --- umbrella, drawn behind nothing and above everything --------------
-  if (L.floater && st === "fall" && L.fall > 2) {
+  if (ag.floater && st === "fall" && ag.fall > 2) {
     ctx.fillStyle = pal.umbrella
     blit(ctx, ox, oy, 1, -3, -9, 14, 2)
     blit(ctx, ox, oy, 1, -4, -7, 3, 2)
@@ -258,7 +258,7 @@ function drawLemming(ctx, w, pal, L, opts) {
 
   if (st === "climb") {
     blit(ctx, ox, oy, dir, 2, 7, 4, 6)
-    blit(ctx, ox, oy, dir, 5, 3 + (L.anim >> 3) % 2, 2, 4)   // hand over hand
+    blit(ctx, ox, oy, dir, 5, 3 + (ag.anim >> 3) % 2, 2, 4)   // hand over hand
     blit(ctx, ox, oy, dir, 3, 13, 3, 3)
 
   } else if (st === "fall") {
@@ -285,7 +285,7 @@ function drawLemming(ctx, w, pal, L, opts) {
 
   } else if (st === "bash" || st === "mine") {
     blit(ctx, ox, oy, dir, 1, 7 + bodyDrop, 6, 6)
-    var swing = (L.timer % 6) < 3 ? 0 : 2
+    var swing = (ag.timer % 6) < 3 ? 0 : 2
     blit(ctx, ox, oy, dir, 6, (st === "bash" ? 8 : 10) + swing, 4, 2)
     blit(ctx, ox, oy, dir, 2, 13, 2, 3)
     blit(ctx, ox, oy, dir, 4, 13, 2, 3)
@@ -299,7 +299,7 @@ function drawLemming(ctx, w, pal, L, opts) {
   } else {
     // Walking (and the saved fade-out, which keeps the walk pose).
     blit(ctx, ox, oy, dir, 1, 7, 6, 6)
-    var f = (L.anim >> 2) % 4
+    var f = (ag.anim >> 2) % 4
     var lead = [0, 1, 0, -1][f]
     blit(ctx, ox, oy, dir, 2 + lead, 13, 2, 3)
     blit(ctx, ox, oy, dir, 4 - lead, 13, 2, 3)
@@ -310,22 +310,22 @@ function drawLemming(ctx, w, pal, L, opts) {
     ctx.fillStyle = pal.urgent
     ctx.font = "bold 9px monospace"
     ctx.textAlign = "center"
-    ctx.fillText(String(Math.ceil(L.fuse / 30)), ox + LEM_W / 2, oy - 3)
+    ctx.fillText(String(Math.ceil(ag.fuse / 30)), ox + SPRITE_W / 2, oy - 3)
   }
 
   // --- optional label ----------------------------------------------------
   // What it's doing when it's doing something, and who it is the rest of the
-  // time. The trait is the more interesting half: watching two lemmings reach
+  // time. The trait is the more interesting half: watching two agents reach
   // the same ledge and disagree about it only reads as personality once you
   // can see which one is the cautious one.
   if (opts && opts.labels && st !== "saved") {
     var action = actionLabel(st)
-    var text = action !== "" ? action : (L.trait || "")
+    var text = action !== "" ? action : (ag.trait || "")
     if (text !== "") {
       ctx.fillStyle = action !== "" ? pal.label : pal.labelFaint
       ctx.font = "7px monospace"
       ctx.textAlign = "center"
-      ctx.fillText(text, ox + LEM_W / 2, oy - 4)
+      ctx.fillText(text, ox + SPRITE_W / 2, oy - 4)
     }
   }
 

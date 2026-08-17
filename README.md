@@ -1,6 +1,6 @@
-# Lemmings
+# Oh No! More Agents
 
-![Lemmings](preview.png)
+![Oh No! More Agents](preview.png)
 
 Not a game. A level carves itself out of solid earth, a hatch opens, and a
 dozen-odd small creatures with green hair have to work out for themselves how
@@ -8,11 +8,17 @@ to get from there to the exit — bashing through what's in the way, bridging
 what isn't there, climbing what's too tall, and putting an umbrella up when
 the drop is too far.
 
+They are agents in the strict sense. No supervisor, no plan beyond the next two
+body-lengths, no memory of the last wall, no idea where the exit is. Each one
+looks at what's in front of it, picks the cheapest tool that fits, and commits
+completely. About two thirds of them make it. The rest are a learning
+experience for nobody in particular.
+
 You don't play it. You watch it. That's the whole thing.
 
 It lives in the bar next to [Snake](https://github.com/jhgundersen/omarchy-snake-plugin)
-for the same reason Snake does: the build is compiling, the agent is still
-thinking, and staring at a progress bar is worse for you than staring at
+for the same reason Snake does: the build is compiling, the *other* agent is
+still thinking, and staring at a progress bar is worse for you than staring at
 this. Snake is for when you want something to do. This is for when you
 don't.
 
@@ -23,26 +29,26 @@ widgets: one bar icon, one popup panel.
 ## Install
 
 ```sh
-omarchy plugin add https://github.com/jhgundersen/omarchy-lemmings-plugin.git --enable
+omarchy plugin add https://github.com/jhgundersen/omarchy-oh-no-more-agents-plugin.git --enable
 ```
 
 Or, to hack on it locally, clone it straight into your plugins directory:
 
 ```sh
-git clone https://github.com/jhgundersen/omarchy-lemmings-plugin.git ~/.config/omarchy/plugins/jhgundersen.lemmings
-omarchy plugin enable jhgundersen.lemmings
+git clone https://github.com/jhgundersen/omarchy-oh-no-more-agents-plugin.git ~/.config/omarchy/plugins/jhgundersen.oh-no-more-agents
+omarchy plugin enable jhgundersen.oh-no-more-agents
 ```
 
 ## Uninstall
 
 ```sh
-omarchy plugin remove jhgundersen.lemmings
+omarchy plugin remove jhgundersen.oh-no-more-agents
 ```
 
 Or disable it without removing the files:
 
 ```sh
-omarchy plugin disable jhgundersen.lemmings
+omarchy plugin disable jhgundersen.oh-no-more-agents
 ```
 
 ## Watching
@@ -58,13 +64,13 @@ going.
 - **`n`** / **`p`** — next / previous level
 - **`r`** — regenerate the current level from scratch
 - **`s`**, or the `speed(s)` label — Calm, Steady, or Brisk
-- **`w`**, or the `who(w)` label — float a label over each lemming: what it's
+- **`w`**, or the `who(w)` label — float a label over each agent: what it's
   doing when it's doing something, and who it is the rest of the time
 - **Esc** — close the panel
 
 Each level asks for a number rather than for everyone — between about two
 thirds and four fifths of the colony, shown in the header as what's needed.
-That's how the original did it, and it's what makes room for a lemming to
+That's how the original did it, and it's what makes room for an agent to
 sacrifice itself.
 
 A level that doesn't reach its target is attempted again, up to three times,
@@ -84,7 +90,7 @@ same budget and is refused when it's empty.
 ## The clock
 
 A level gets 110 seconds. If they haven't made it by then the nuke goes off:
-every lemming still out there gets a five-second fuse, a few frames apart, and
+every agent still out there gets a five-second fuse, a few frames apart, and
 the level ends in a ripple of small explosions.
 
 It's set to the shortest limit that never cuts short a level still making
@@ -96,7 +102,7 @@ nuked level is then retried like any other failure.
 
 ## How they work it out
 
-Each lemming senses only the terrain within a couple of body-lengths of
+Each agent senses only the terrain within a couple of body-lengths of
 itself — is there a wall, how thick is it, how tall, is there floor ahead,
 how far down, is there anything to land on within a bridge's reach — and
 picks the cheapest tool that fits what it found:
@@ -111,7 +117,7 @@ picks the cheapest tool that fits what it found:
 | Steel | Turn around. Nothing gets through steel |
 | Nothing, for long enough | **Dig** or **Mine** downward and find out |
 
-A lemming only ever turns round at a wall, at a blocker, or at an edge it
+An agent only ever turns round at a wall, at a blocker, or at an edge it
 won't step off. Landing doesn't turn it — it keeps whatever way it was facing,
 same as the original.
 
@@ -121,9 +127,9 @@ which is where the improvisation comes from. A level bridged on one run gets
 bashed through on the next once the builders are gone.
 
 That includes climbing and floating, which is a deliberate break with the
-original. There, a lemming made a climber stays one for life — but there a
-*player* picks which lemming gets it and for which wall, so the permanence is a
-resource being spent. With nobody choosing, the first lemming to meet a wall
+original. There, an agent made a climber stays one for life — but there a
+*player* picks which one gets it and for which wall, so the permanence is a
+resource being spent. With nobody choosing, the first agent to meet a wall
 took a climber and then had every wall on the level for free, which quietly
 deleted the decision from everything downstream. Paying per climb puts it back:
 run out, and the wall in front of you is a problem again.
@@ -132,11 +138,11 @@ Being stingy with them turns out to be free. Between three and eighteen
 climbers a level, the share of levels that end with everyone home doesn't
 budge off 85% — what strands a colony was never the shortage of climbs.
 Climbing still turns up in about seven attempts in ten; it just can't carry one
-lemming from the hatch to the exit any more.
+agent from the hatch to the exit any more.
 
 The only thing they know that isn't in front of their faces is which way home
 is *vertically* — whether the exit is on this floor, above, or below — which is
-what decides between digging down and climbing up when a lemming runs out of
+what decides between digging down and climbing up when an agent runs out of
 ideas. There's no horizontal sense of where the exit is at all. There used to
 be, steering them on landing, and it had to go: the corridors zigzag, so on
 every other floor the exit lies back the way they came, and following it walked
@@ -144,8 +150,8 @@ the colony to the wrong end of the level and held it there.
 
 ## Personalities
 
-Every lemming gets one for life, drawn when it steps out of the hatch. They
-don't change what a lemming can do — the senses and the rules are identical
+Every agent gets one for life, drawn when it steps out of the hatch. They
+don't change what an agent can do — the senses and the rules are identical
 for all of them — only which answer it reaches for when more than one would
 work:
 
@@ -159,7 +165,7 @@ work:
 | **tinkerer** | Reaches for bricks first, even where a bash would do. |
 
 On top of the personality each one carries its own small variation, so two
-cautious lemmings aren't the same lemming twice: where its bridge-or-jump line
+cautious agents aren't the same agent twice: where its bridge-or-jump line
 sits shifts a little either way, and one in five reverses its instinct at a
 wall outright.
 
@@ -167,7 +173,7 @@ The interesting part is watching two of them arrive at the same ledge and
 disagree about it — the cautious one laying a bridge across a drop the brave
 one has already walked off. Turn labels on with `w` to see who's who.
 
-Nothing here makes a lemming less safe: a personality only ever brings an
+Nothing here makes an agent less safe: a personality only ever brings an
 umbrella out *earlier* than the point where a landing would kill, never
 later. Bravery buys a longer walk, not a longer fall.
 
@@ -176,7 +182,7 @@ later. Bravery buys a longer walk, not a longer fall.
 ![All of them home](screenshot-complete.png)
 
 Levels are a pure function of their number — level 42 always generates the
-same level, with the same lemmings in the same order — so `←` and `→` walk a
+same level, with the same agents in the same order — so `←` and `→` walk a
 fixed catalogue rather than reshuffling. The board starts as one solid mass of
 earth and the level is *carved* out of it: four corridors, each walked in the
 opposite direction to the one above. Each corridor's floor simply stops at the
@@ -207,13 +213,13 @@ of the active Omarchy theme. Change your theme and the board changes with it.
 
 ![Umbrellas out](screenshot-floaters.png)
 
-The lemmings themselves are the one deliberately un-themed thing on the
+The agents themselves are the one deliberately un-themed thing on the
 board: green hair, blue robe, orange umbrella, fixed. At sixteen pixels tall
-that silhouette is the only thing making them read as lemmings rather than as
-animated debris.
+that silhouette is the only thing making them read as a doomed colony rather
+than as animated debris.
 
 Measured over 200 levels played the way the panel plays them, retries and all:
-**92% reach their target**, 64% of every lemming released gets home, over an
+**92% reach their target**, 64% of every agent released gets home, over an
 average attempt of about 74 seconds. Of 299 attempts you'd see something bashed
 through in every one, a blocker standing in 245, a bridge built in 233, a climb
 in 219, digging in 137, mining in 120, and the nuke go off in 118.
@@ -226,7 +232,7 @@ couple of shafts.
 
 Most corridors have a hole cut clean through the bedrock at the near end —
 behind where the colony drops in, on the opposite side from the handoff
-they're walking towards. Lemmings land facing away from it, so the only ones
+they're walking towards. Agents land facing away from it, so the only ones
 who ever meet it are those who turned back from an obstacle, and for them it
 is genuinely lethal. The first to reach it stands and turns the rest around,
 which costs the level nothing because the way on was always the other way.
@@ -242,10 +248,10 @@ bargain they made.
 That's also why a level has a *target* rather than asking for everyone (see
 above): a blocker doesn't come home, so on any level that posts one, "everyone
 home" isn't a target, it's a contradiction. Asking for all of them made 86% of
-levels unwinnable the moment a lemming stood in a gap to save the others.
+levels unwinnable the moment an agent stood in a gap to save the others.
 
 They're only ever posted at a drop with no bottom, never at one that's merely
-lethal. A lemming that meets a killing drop with no umbrella left has already
+lethal. An agent that meets a killing drop with no umbrella left has already
 solved its own problem by turning round, and an edge like that can sit on the
 route — where a blocker that never moves would wall the level shut for good.
 
@@ -262,9 +268,9 @@ about half of all levels.
 
 A brain this local can occasionally paint itself into a corner, so two things
 watch for it. A **director** notices when a level has gone a stretch with no
-lemming saved, none lost, and not a cell of earth moved, and quietly hands the
-lemming nearest the exit whatever tool would get it moving. And any individual
-lemming that has gone twenty seconds without getting any closer to home stops
+agent saved, none lost, and not a cell of earth moved, and quietly hands the
+agent nearest the exit whatever tool would get it moving. And any individual
+agent that has gone twenty seconds without getting any closer to home stops
 waiting for the budget to allow it and digs.
 
 Neither is a script. They don't know the route either — they just refuse to
@@ -272,11 +278,12 @@ let you sit watching something that has stopped happening.
 
 ## Persistence
 
-Which level you're on, how many lemmings you've got home across every session,
+Which level you're on, how many agents you've got home across every session,
 levels cleared, total watching time, and your speed and label settings survive
 shell restarts — kept as JSON in
-`~/.local/state/omarchy/plugins/jhgundersen.lemmings/state.json`, written when
-a level finishes, when a setting changes, and when the panel closes.
+`~/.local/state/omarchy/plugins/jhgundersen.oh-no-more-agents/state.json`,
+written when a level finishes, when a setting changes, and when the panel
+closes.
 
 ## Files
 
@@ -288,6 +295,15 @@ a level finishes, when a setting changes, and when the panel closes.
 - `Draw.js` — pixels. Never mutates the world
 - `preview.png`, `screenshot-complete.png`, `screenshot-floaters.png`
 - `LICENSE` — MIT
+
+## Name
+
+It's a parody, and the lineage is the point: this is *Lemmings*, the 1991
+Psygnosis game, with the player removed. The title is the sequel's — *Oh No!
+More Lemmings* — with the noun updated to the one currently being applied to
+software that acts without supervision and mostly gets away with it.
+
+No affiliation with anybody who owns anything.
 
 ## License
 

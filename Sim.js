@@ -1,6 +1,6 @@
 .pragma library
 
-// The simulation: terrain, level generation, and the lemming brain. Pure JS,
+// The simulation: terrain, level generation, and the agent brain. Pure JS,
 // no QML types, so it can be a `.pragma library` shared by every instance of
 // the panel. All mutable state lives on the `world` object returned by
 // generate() — nothing module-level changes after load.
@@ -8,10 +8,10 @@
 // Rendering lives in Draw.js; the panel chrome in Panel.qml. This file never
 // knows what anything looks like.
 //
-// Coordinates: terrain is a cell grid (COLS x ROWS). Lemmings carry *float*
-// cell coordinates so they move smoothly across a chunky grid — `L.x` is the
-// horizontal center, `L.y` is the FEET row, meaning the lemming stands on
-// whatever is solid at (L.x, L.y + 1) and its body occupies rows L.y-3..L.y.
+// Coordinates: terrain is a cell grid (COLS x ROWS). Agents carry *float*
+// cell coordinates so they move smoothly across a chunky grid — `ag.x` is the
+// horizontal center, `ag.y` is the FEET row, meaning the agent stands on
+// whatever is solid at (ag.x, ag.y + 1) and its body occupies rows ag.y-3..ag.y.
 
 // ---------------------------------------------------------------------------
 // Geometry and materials
@@ -27,10 +27,10 @@ var HEIGHT = ROWS * CELL
 var EMPTY = 0
 var DIRT = 1   // soft: bashable, minable, diggable
 var ROCK = 2   // hard-looking but still workable; purely a visual tier
-var STEEL = 3  // permanent: every skill refuses it and the lemming turns back
+var STEEL = 3  // permanent: every skill refuses it and the agent turns back
 
-// A lemming is 4 cells (16px) tall and ~2 cells wide.
-var LEM_H = 4
+// An agent is 4 cells (16px) tall and ~2 cells wide.
+var AGENT_H = 4
 
 // ---------------------------------------------------------------------------
 // Tuning. Everything is per-tick at 30 ticks/second.
@@ -66,7 +66,7 @@ var BOMB_RADIUS = 5
 // attempts and only makes you wait longer to watch it happen. So it is set to
 // the shortest value that does not cut short a level still making progress.
 var LEVEL_LIMIT = 30 * 110
-var NUKE_STAGGER = 5     // ticks between arming one lemming and the next
+var NUKE_STAGGER = 5     // ticks between arming one agent and the next
 
 
 // Skills, in the order the original's toolbar showed them.
@@ -81,14 +81,14 @@ var BIOMES = ["Cavern", "Ruins", "Frost", "Foundry"]
 // ---------------------------------------------------------------------------
 // Personalities
 //
-// Every lemming gets one for life. They don't change what a lemming is capable
+// Every agent gets one for life. They don't change what an agent is capable
 // of — the sensing and the rules are the same for all of them — only which
 // answer it reaches for when more than one would work. Put twenty of them on
 // the same ledge and they'll deal with it differently, which is the whole
 // point: a colony that solves an obstacle six ways is worth watching, and one
 // that files through it identically is a conveyor belt.
 //
-// Nothing here makes a lemming less safe. `fallMargin` only ever brings an
+// Nothing here makes an agent less safe. `fallMargin` only ever brings an
 // umbrella out EARLIER than the physical limit — bravery buys a longer walk,
 // not a longer fall, because the alternative is personality that kills them.
 //
@@ -119,7 +119,7 @@ var TRAIT_POOL = [
 
 var TRAIT_ORDER = ["steady", "brave", "cautious", "curious", "stubborn", "tinkerer"]
 
-function traitOf(L) { return TRAITS[L.trait] || TRAITS.steady }
+function traitOf(ag) { return TRAITS[ag.trait] || TRAITS.steady }
 
 // ---------------------------------------------------------------------------
 // Terrain access
@@ -166,9 +166,9 @@ function hitsSteel(w, x0, y0, x1, y1) {
   return false
 }
 
-// The lemming's body needs three clear cells above its feet to stand somewhere.
+// The agent's body needs three clear cells above its feet to stand somewhere.
 function headroom(w, x, footY) {
-  for (var k = 1; k < LEM_H; k++)
+  for (var k = 1; k < AGENT_H; k++)
     if (solid(w, x, footY - k)) return false
   return true
 }
@@ -197,12 +197,12 @@ function irand(rng, lo, hi) { return lo + Math.floor(rng() * (hi - lo + 1)) }
 // it: a serpentine of corridors, each walked in the opposite direction to the
 // one above, joined end to end by a descent. Starting solid rather than
 // placing platforms means a digger or basher always has real material to work
-// in, wherever a lemming decides to improvise — the level isn't a set of thin
+// in, wherever an agent decides to improvise — the level isn't a set of thin
 // ledges floating in a void.
 //
 // Obstacles are never arbitrary: each one is a shape the brain in decide()
 // below is known to handle (a plug wall for the basher, a raised face for the
-// climber, a gap for the builder, a long drop for the floater). The lemmings
+// climber, a gap for the builder, a long drop for the floater). The agents
 // still work it out locally from what they can sense — they're never handed
 // the route — but the level can't pose a question they have no answer to.
 // ---------------------------------------------------------------------------
@@ -217,7 +217,7 @@ var N_CORR = 4
 // personalities and the skill budget come off the attempt as well, because a
 // retry that reproduces the run exactly is not a retry: everything here is
 // deterministic, so replaying a failed level unchanged fails it again, tick for
-// tick. Same problem, different lemmings, and a little more to work with each
+// tick. Same problem, different agents, and a little more to work with each
 // time round.
 function generate(level, attempt) {
   attempt = attempt || 0
@@ -228,7 +228,7 @@ function generate(level, attempt) {
     biome: BIOMES[(level - 1) % BIOMES.length],
     terrain: new Uint8Array(COLS * ROWS),
     terrainVersion: 1,
-    lemmings: [],
+    agents: [],
     particles: [],
     ticks: 0,
     nextId: 1,
@@ -270,7 +270,7 @@ function generate(level, attempt) {
   fillEarth(w, rng)
 
   // Corridor floors, top to bottom. floorY is the topmost SOLID row, so a
-  // lemming standing on it has its feet at floorY - 1.
+  // agent standing on it has its feet at floorY - 1.
   var corridors = []
   for (var k = 0; k < N_CORR; k++) {
     var dir = (k % 2 === 0) ? 1 : -1
@@ -314,11 +314,11 @@ function generate(level, attempt) {
     for (var sx = hx - 2; sx <= hx + 2; sx++) clearCell(w, sx, sy)
   w.hatch = { x: hx, y: 3 }
 
-  // Steel under the landing pad. The hatch goes on dropping lemmings onto this
+  // Steel under the landing pad. The hatch goes on dropping agents onto this
   // spot for the whole level, so it's the one piece of floor that must still
   // be there in two minutes' time — and without this it reliably isn't: the
-  // first lemming to decide the way on is *down* digs a shaft right where it
-  // landed, and every lemming after it falls through the hole, through the two
+  // first agent to decide the way on is *down* digs a shaft right where it
+  // landed, and every agent after it falls through the hole, through the two
   // corridors below, and splats.
   for (var py = first.floorY; py < first.floorY + 2; py++)
     for (var px = hx - 2; px <= hx + 2; px++) setCell(w, px, py, STEEL)
@@ -342,7 +342,7 @@ function generate(level, attempt) {
   // to a basher or to whatever forceEscape hands over if the budget is gone.
   //
   // It stops two rows short of the ceiling on purpose. A wall spanning the full
-  // corridor has exactly one answer, and since every lemming on the level meets
+  // corridor has exactly one answer, and since every agent on the level meets
   // this one, a level where that answer doesn't come off is a level where
   // nobody gets home at all — the difference between a bad result and no
   // result. Leaving a lip to climb gives it a second, independent answer, and
@@ -355,7 +355,7 @@ function generate(level, attempt) {
 
   w.corridors = corridors
   // Fewer and quicker out of the hatch than before. Denser levels take longer
-  // per lemming, and a slow trickle of twenty spent half the level's clock
+  // per agent, and a slow trickle of twenty spent half the level's clock
   // just getting everybody onto the board.
   w.toRelease = irand(rng, 12, 18)
   w.releaseInterval = irand(rng, 24, 34)
@@ -364,7 +364,7 @@ function generate(level, attempt) {
   // all of them. The original set a percentage per level and this needs one for
   // the same reason it did: a blocker never goes home, so on any level that
   // posts one, "everyone home" is not a target, it's a contradiction. Asking
-  // for all of them made 86% of levels unwinnable the moment a lemming stood
+  // for all of them made 86% of levels unwinnable the moment an agent stood
   // in a gap to save the others.
   w.target = Math.max(1, Math.round(w.toRelease * (0.65 + rng() * 0.15)))
 
@@ -374,7 +374,7 @@ function generate(level, attempt) {
   // same way.
   //
   // Climber and floater are sized off the population rather than given a flat
-  // count, because unlike the other six they are permanent traits: a lemming
+  // count, because unlike the other six they are permanent traits: an agent
   // that takes one holds it for the rest of its life. A fixed handful gets
   // consumed by the first few to meet the first cliff, and every one after
   // that arrives at the same cliff with nothing — which is a stranded level,
@@ -382,21 +382,21 @@ function generate(level, attempt) {
   w.skills = {
     // Climber is now the scarcest thing on the board, and that's the point.
     // Both of these used to be permanent traits, faithfully to the original —
-    // but in the original a player picks which lemming gets one, for which
+    // but in the original a player picks which agent gets one, for which
     // wall, and the permanence is a resource being spent. With nobody
-    // choosing, the first lemming to meet a wall took a climber and then had
+    // choosing, the first agent to meet a wall took a climber and then had
     // every wall on the level for free, which quietly deleted the decision
     // from everything downstream. Paying per climb puts it back: run out, and
     // the wall in front of you is a problem again.
     //
     // Floater stays roomier, because a cliff obstacle has to be crossed by the
-    // whole colony and a lemming with no umbrella at one simply turns back.
+    // whole colony and an agent with no umbrella at one simply turns back.
     //
     // Five to nine looks brutal for a colony of fifteen and measures out fine:
     // between three and eighteen climbers a level, the share of levels that end
     // with everyone home doesn't move off 85%, because what strands a colony
     // isn't the shortage of climbs. Climbing still turns up in about seven
-    // attempts in ten — it just can't carry one lemming from the hatch to the
+    // attempts in ten — it just can't carry one agent from the hatch to the
     // exit any more.
     climber: irand(rng, 5, 9) + attempt * 2,
     floater: w.toRelease + 2 + attempt * 2,
@@ -465,9 +465,9 @@ function placeObstacles(w, rng, c, index, corridors) {
   // On the last corridor, only obstacles that sit ON the floor. The exit is on
   // that floor, and gap/pit/cliff all work by carving it away — which on every
   // corridor above just opens an early way down, and on this one digs a pocket
-  // underneath the only room that matters. A lemming that falls in has the exit
+  // underneath the only room that matters. An agent that falls in has the exit
   // overhead and no corridor below to move on to, and that hole held every
-  // stranded lemming in a 120-level run.
+  // stranded agent in a 120-level run.
   // Weighted, not uniform. A flat list put a climbable face in the mix as often
   // as anything else, and climbing used to be free after the first wall.
   // Bashing and bridging have to be the common answers or the whole level reads
@@ -506,7 +506,7 @@ function placeObstacles(w, rng, c, index, corridors) {
 
     if (kind === "wall") {
       // A plug spanning the full corridor height: climbing it just buries the
-      // lemming's head in the ceiling, so the only way on is through it.
+      // agent's head in the ceiling, so the only way on is through it.
       var t = irand(rng, 3, 6)
       for (var wx = x; wx < x + t; wx++)
         for (var wy = c.floorY - CORR_H; wy < c.floorY; wy++) setCell(w, wx, wy, DIRT)
@@ -562,7 +562,7 @@ function placeObstacles(w, rng, c, index, corridors) {
     } else if (kind === "gap") {
       // Floor removed with the far side back at the same height — a bridge is
       // the obvious answer, and the pocket below is a soft landing if a
-      // lemming walks in before anyone thinks to build.
+      // agent walks in before anyone thinks to build.
       var g = irand(rng, 7, 13)
       for (var gx = x; gx < x + g; gx++)
         for (var gy = c.floorY; gy < c.floorY + 9; gy++) clearCell(w, gx, gy)
@@ -583,7 +583,7 @@ function placeObstacles(w, rng, c, index, corridors) {
       //
       // It drops all the way to the floor of the corridor two below, which is
       // the point: a trench of its own with a fresh floor laid at the bottom
-      // looks the same and is a lemming trap, because the thing that floats
+      // looks the same and is an agent trap, because the thing that floats
       // down into it lands in a sealed box with earth on both sides and no
       // route out. Landing in a real corridor makes the same drop a shortcut
       // — a floor skipped — instead of a dead end.
@@ -618,7 +618,7 @@ function placeObstacles(w, rng, c, index, corridors) {
 //
 // The corridor floor STOPS at the handoff and does not resume: everything from
 // there to the far wall is open air. That matters more than it looks. A narrow
-// shaft with the floor continuing on the other side is, to a lemming's senses,
+// shaft with the floor continuing on the other side is, to an agent's senses,
 // indistinguishable from an ordinary gap in a floor — same drop, same landing
 // at the same height a few cells along — so the ones inclined to bridge a gap
 // bridge the descent instead, walk over the only way down, and the level
@@ -648,10 +648,10 @@ function carveDescent(w, rng, c, next) {
 }
 
 // A hole with no bottom at the corridor's NEAR end — the short stretch behind
-// where lemmings drop in, on the opposite side from the handoff they're headed
+// where agents drop in, on the opposite side from the handoff they're headed
 // for. This is the one place a blocker earns its keep.
 //
-// Everything about the placement is about not standing on the route. Lemmings
+// Everything about the placement is about not standing on the route. Agents
 // land facing away from it and walk off toward the handoff, so the only ones
 // who ever meet it are those who turned back from an obstacle — and for them
 // it is genuinely lethal, being open all the way through the bedrock. The
@@ -675,16 +675,16 @@ function placeVoid(w, c, prev) {
 
 // A steel pillar (a wall no skill touches, so they simply turn back) or a shaft
 // with no floor at all, out past the handoff where nothing on the route depends
-// on it. Level texture, and the one thing a blocker is for if a lemming ever
+// on it. Level texture, and the one thing a blocker is for if an agent ever
 // does wander out here.
 //
 // It was worth trying this at the corridor's near end instead — behind where
-// lemmings drop in — on the theory that a hazard nobody reaches is a hazard
+// agents drop in — on the theory that a hazard nobody reaches is a hazard
 // that may as well not exist, and that a blocker posted there would protect
-// the stragglers. It reads well and it is much worse: lemmings land next to
+// the stragglers. It reads well and it is much worse: agents land next to
 // it, and the ones that turn back from an obstacle walk into it rather than
 // past it. All-home levels fell from 269/300 to 195, and the blocker still
-// never fired, because a lemming that turns around at a void has already
+// never fired, because an agent that turns around at a void has already
 // solved its own problem and doesn't need to stand there. Left where it is.
 function placeHazard(w, rng, c) {
   var x = c.dir > 0 ? c.x1 - 5 : c.x0 + 5
@@ -692,7 +692,7 @@ function placeHazard(w, rng, c) {
     // Cut through the bedrock too, so this really has no bottom. Stopping at
     // the bedrock instead makes a five-cell-wide oubliette: survivable to fall
     // into, walled too high to climb, and the single most reliable way to
-    // strand a lemming for the rest of the level. Open at the bottom, it reads
+    // strand an agent for the rest of the level. Open at the bottom, it reads
     // as Infinity to dropDepth(), which is what the blocker rule looks for.
     for (var sx = x - 2; sx <= x + 2; sx++)
       for (var sy = c.floorY; sy < ROWS; sy++) setCell(w, sx, sy, EMPTY)
@@ -704,7 +704,7 @@ function placeHazard(w, rng, c) {
 
 // ---------------------------------------------------------------------------
 // Sensing. Everything the brain knows about the world it learns through these
-// — a lemming reads the terrain immediately around it and nothing else.
+// — an agent reads the terrain immediately around it and nothing else.
 // ---------------------------------------------------------------------------
 
 // How far up the obstruction in front goes, capped: past the cap it may as
@@ -751,11 +751,11 @@ function landingAhead(w, x, footY, dir) {
   return -1
 }
 
-function anyBlockerNear(w, L, nx) {
-  for (var i = 0; i < w.lemmings.length; i++) {
-    var B = w.lemmings[i]
-    if (B === L || B.state !== "block" || B.gone) continue
-    if (Math.abs(B.y - L.y) > 3) continue
+function anyBlockerNear(w, ag, nx) {
+  for (var i = 0; i < w.agents.length; i++) {
+    var B = w.agents[i]
+    if (B === ag || B.state !== "block" || B.gone) continue
+    if (Math.abs(B.y - ag.y) > 3) continue
     if (Math.abs(nx - B.x) < 1.8) return true
   }
   return false
@@ -782,134 +782,134 @@ function take(w, skill) {
 // bashed through on another once the bridge budget is gone.
 // ---------------------------------------------------------------------------
 
-// What a lemming knows that isn't in front of its face: which way home is,
+// What an agent knows that isn't in front of its face: which way home is,
 // vertically. That's it — there is no horizontal beacon any more. There used
 // to be one, steering them on landing, and dropping it took the last thing
-// that could override what a lemming could actually see.
+// that could override what an agent could actually see.
 
-// The row a lemming standing in the exit's mouth has its feet on. Every
+// The row an agent standing in the exit's mouth has its feet on. Every
 // "is the exit above/below me" test has to use this and not `exit.y`, which is
-// the TOP of the doorway five rows higher: measured from there, a lemming
+// the TOP of the doorway five rows higher: measured from there, an agent
 // standing on the exit's own floor concludes the exit is above it and starts
-// trying to climb. In the last corridor, where that is every lemming, they
+// trying to climb. In the last corridor, where that is every agent, they
 // climb, fall, walk, climb again, and the level times out with the exit a few
 // paces away.
 function exitFloor(w) { return w.exit.y + w.exit.h }
 
-function exitBelow(w, L) { return exitFloor(w) > L.y + 2 }
+function exitBelow(w, ag) { return exitFloor(w) > ag.y + 2 }
 
-// How far this lemming still is from home, with height weighted because a
+// How far this agent still is from home, with height weighted because a
 // corridor down is worth more than a corridor along. This is the ONLY thing
 // that counts as progress: both the frustration counter and the patience timer
 // reset on it and nothing else.
 //
 // They used to reset on proxies — turning round, changing state — and the
-// proxies were wrong in the same way. A lemming oscillating between walking,
+// proxies were wrong in the same way. An agent oscillating between walking,
 // climbing a wall it can't top, and falling off it again cleared its patience
 // timer on every state change, so the one mechanism meant to rescue a stuck
-// lemming never fired for the lemmings that were most stuck.
+// agent never fired for the agents that were most stuck.
 // Depth is the only thing that counts until they're on the exit's own floor.
 //
 // Counting horizontal distance everywhere sounds more informative and is
 // actively misleading on a serpentine: the exit sits at the bottom of the last,
 // leftward corridor, so in the top corridor "closer to the exit" means the left
 // wall — the dead end — while the only way down is the far right. Every
-// leftward leg of a lemming pacing that corridor therefore looked like progress
+// leftward leg of an agent pacing that corridor therefore looked like progress
 // and cleared the frustration it had built up, so it never reached the count
 // that makes it dig, and a corridor with no open descent simply stalled.
-function goalDist(w, L) {
-  var dy = Math.abs(L.y - exitFloor(w))
-  if (dy <= 3) return Math.abs(L.x - (w.exit.x + w.exit.w / 2))
+function goalDist(w, ag) {
+  var dy = Math.abs(ag.y - exitFloor(w))
+  if (dy <= 3) return Math.abs(ag.x - (w.exit.x + w.exit.w / 2))
   return 1000 + dy * 4
 }
-function exitAbove(w, L) { return exitFloor(w) < L.y - 2 }
+function exitAbove(w, ag) { return exitFloor(w) < ag.y - 2 }
 
-function hitWall(w, L) {
-  var footY = Math.floor(L.y)
-  var ax = Math.floor(L.x) + L.dir
+function hitWall(w, ag) {
+  var footY = Math.floor(ag.y)
+  var ax = Math.floor(ag.x) + ag.dir
   var mat = at(w, ax, footY)
 
   // Steel is the one honest "no". Nothing to try, so don't waste a skill on it.
-  if (mat === STEEL) { turnAround(w, L); return }
+  if (mat === STEEL) { turnAround(w, ag); return }
 
   var h = wallHeight(w, ax, footY)
-  var t = wallThickness(w, ax, footY, L.dir)
-  var trait = traitOf(L)
-  var bashFirst = L.contrary ? !trait.bashFirst : trait.bashFirst
+  var t = wallThickness(w, ax, footY, ag.dir)
+  var trait = traitOf(ag)
+  var bashFirst = ag.contrary ? !trait.bashFirst : trait.bashFirst
   // Climbable means: short enough to be worth it, and the top is somewhere
   // inside the level rather than out on the open surface above the earth.
   var climbable = h <= MAX_CLIMB && footY - h >= SKY
 
-  // Over, or through. Both work on a short wall, and which one a lemming
+  // Over, or through. Both work on a short wall, and which one an agent
   // reaches for first is most of what its personality looks like from outside:
   // the brave and the stubborn put a shoulder into it, everyone else goes
   // round. A tinkerer would rather lay bricks than do either.
-  if (trait.bridgeAt <= 3 && h <= 6 && willBuild(L) && take(w, "builder")) { startBuild(w, L); return }
+  if (trait.bridgeAt <= 3 && h <= 6 && willBuild(ag) && take(w, "builder")) { startBuild(w, ag); return }
 
   if (bashFirst) {
-    if (t <= BASH_REACH && take(w, "basher")) { L.state = "bash"; L.timer = 0; return }
-    if (climbable && take(w, "climber")) { startClimb(w, L); return }
+    if (t <= BASH_REACH && take(w, "basher")) { ag.state = "bash"; ag.timer = 0; return }
+    if (climbable && take(w, "climber")) { startClimb(w, ag); return }
   } else {
-    if (climbable && take(w, "climber")) { startClimb(w, L); return }
-    if (t <= BASH_REACH && take(w, "basher")) { L.state = "bash"; L.timer = 0; return }
+    if (climbable && take(w, "climber")) { startClimb(w, ag); return }
+    if (t <= BASH_REACH && take(w, "basher")) { ag.state = "bash"; ag.timer = 0; return }
   }
 
   // Bricks as the last answer to anything a climb could have handled. The
   // threshold used to be lower than the climbable height, which was harmless
   // while climbing was free and is not now: a raised face just past it, met by
-  // a lemming with no climbers left, had no answer at all and simply turned the
+  // an agent with no climbers left, had no answer at all and simply turned the
   // whole colony back.
-  if (h <= MAX_CLIMB && willBuild(L) && take(w, "builder")) { startBuild(w, L); return }
+  if (h <= MAX_CLIMB && willBuild(ag) && take(w, "builder")) { startBuild(w, ag); return }
 
-  turnAround(w, L)
+  turnAround(w, ag)
 }
 
-function edgeAhead(w, L, nx) {
-  var footY = Math.floor(L.y)
+function edgeAhead(w, ag, nx) {
+  var footY = Math.floor(ag.y)
   var ax = Math.floor(nx)
   var depth = dropDepth(w, ax, footY)
-  var far = landingAhead(w, L.x, footY, L.dir)
+  var far = landingAhead(w, ag.x, footY, ag.dir)
 
   // Nothing down there at all. This case has to come first: an umbrella is no
   // help over a shaft with no floor, and checking the floater branch ahead of
   // it is exactly how a floater ends up drifting serenely out of the world.
-  var trait = traitOf(L)
+  var trait = traitOf(ag)
 
   if (depth === Infinity) {
     // Someone should stand here. Worth a blocker while there are still others
     // on their way to walk into it — which is the whole job of the skill.
-    if (countComing(w, L) >= 2 - trait.blockBias && take(w, "blocker")) { L.state = "block"; return }
-    if (far > 2 && take(w, "builder")) { startBuild(w, L); return }
-    turnAround(w, L)
+    if (countComing(w, ag) >= 2 - trait.blockBias && take(w, "blocker")) { ag.state = "block"; return }
+    if (far > 2 && take(w, "builder")) { startBuild(w, ag); return }
+    turnAround(w, ag)
     return
   }
 
   // A gap with the far side in reach is what a builder is for. Where the line
   // sits between "bridge this" and "just step off" is the clearest thing
-  // personality does to a lemming's behaviour: a cautious one bridges a drop a
+  // personality does to an agent's behaviour: a cautious one bridges a drop a
   // brave one walks straight off, and you can watch them disagree about the
   // same ledge, one after the other.
-  if (far > 2 && depth > trait.bridgeAt + L.bridgeBias && willBuild(L) && take(w, "builder")) { startBuild(w, L); return }
+  if (far > 2 && depth > trait.bridgeAt + ag.bridgeBias && willBuild(ag) && take(w, "builder")) { startBuild(w, ag); return }
 
   // The umbrella comes out early for the ones who like a margin. It can only
   // ever come out EARLIER than the lethal limit, never later — a personality
   // that gets its owner killed isn't a personality, it's a bug.
   var wantsChute = depth > SAFE_FALL - trait.fallMargin
 
-  if (!wantsChute) { L.x = nx; startFall(w, L); return }
+  if (!wantsChute) { ag.x = nx; startFall(w, ag); return }
 
   if (take(w, "floater")) {
-    L.floater = true
-    L.x = nx
-    startFall(w, L)
+    ag.floater = true
+    ag.x = nx
+    startFall(w, ag)
     return
   }
 
   // Survivable after all, just not comfortably. Better than turning back.
-  if (depth <= SAFE_FALL) { L.x = nx; startFall(w, L); return }
+  if (depth <= SAFE_FALL) { ag.x = nx; startFall(w, ag); return }
 
   // A drop that would kill, and no umbrella left to answer it with. Turning
-  // round is enough here — this lemming has solved its own problem, and a
+  // round is enough here — this agent has solved its own problem, and a
   // blocker is not the answer.
   //
   // It used to post one, which was fine while blockers stood down after a
@@ -917,16 +917,16 @@ function edgeAhead(w, L, nx) {
   // route, and a blocker that never moves off one walls the level shut for
   // good. Blockers are for bottomless drops, which the generator only ever
   // puts somewhere nothing depends on.
-  turnAround(w, L)
+  turnAround(w, ag)
 }
 
 // How many others are still unaccounted for and might yet arrive here. Used
 // to decide whether posting a blocker actually protects anybody.
-function countComing(w, L) {
+function countComing(w, ag) {
   var n = w.toRelease - w.released
-  for (var i = 0; i < w.lemmings.length; i++) {
-    var O = w.lemmings[i]
-    if (O === L || O.gone || O.state === "saved" || O.state === "block") continue
+  for (var i = 0; i < w.agents.length; i++) {
+    var O = w.agents[i]
+    if (O === ag || O.gone || O.state === "saved" || O.state === "block") continue
     n++
   }
   return n
@@ -936,33 +936,33 @@ function countComing(w, L) {
 // the signal that horizontal has been exhausted, and the way out of that is
 // whichever direction the exit actually lies in.
 //
-// The downward half of this is the interesting one — it's what makes a lemming
+// The downward half of this is the interesting one — it's what makes an agent
 // stop at a dead end and start a shaft rather than pace forever. The upward
-// half exists because a lemming that has dropped into a pit or ridden a shaft
+// half exists because an agent that has dropped into a pit or ridden a shaft
 // to the bedrock has the exit ABOVE it, and without this there is no rule in
 // the whole brain that ever says "go up": it paces the floor until the level
 // times out.
-function considerEscape(w, L) {
-  if (L.turns < traitOf(L).turnLimit) return false
-  var footY = Math.floor(L.y)
-  L.turns = 0
+function considerEscape(w, ag) {
+  if (ag.turns < traitOf(ag).turnLimit) return false
+  var footY = Math.floor(ag.y)
+  ag.turns = 0
 
-  if (exitBelow(w, L)) {
-    if (!solid(w, Math.floor(L.x), footY + 1)) return false
+  if (exitBelow(w, ag)) {
+    if (!solid(w, Math.floor(ag.x), footY + 1)) return false
     // Half of them cut a diagonal ramp instead of sinking a shaft.
-    // Keyed off the lemming's own id so it's a settled trait rather than a
+    // Keyed off the agent's own id so it's a settled trait rather than a
     // coin flip, and so both skills actually get used — ordering digger first
     // for everyone meant the miner was a number on the toolbar that never
     // moved, because the digger budget almost never ran out.
-    var ramp = L.id % 2 === 0
-    if (ramp && take(w, "miner")) { L.state = "mine"; L.timer = 0; return true }
-    if (take(w, "digger")) { L.state = "dig"; L.timer = 0; return true }
-    if (take(w, "miner")) { L.state = "mine"; L.timer = 0; return true }
+    var ramp = ag.id % 2 === 0
+    if (ramp && take(w, "miner")) { ag.state = "mine"; ag.timer = 0; return true }
+    if (take(w, "digger")) { ag.state = "dig"; ag.timer = 0; return true }
+    if (take(w, "miner")) { ag.state = "mine"; ag.timer = 0; return true }
     return false
   }
 
   // Nothing to climb from here, so the only way up is to build one.
-  if (take(w, "builder")) { startBuild(w, L); return true }
+  if (take(w, "builder")) { startBuild(w, ag); return true }
   return false
 }
 
@@ -970,68 +970,68 @@ function considerEscape(w, L) {
 // State transitions
 // ---------------------------------------------------------------------------
 
-function turnAround(w, L) {
-  L.dir = -L.dir
-  L.turns++
-  considerEscape(w, L)
+function turnAround(w, ag) {
+  ag.dir = -ag.dir
+  ag.turns++
+  considerEscape(w, ag)
 }
 
-function startFall(w, L) {
-  L.state = "fall"
-  L.fall = 0
+function startFall(w, ag) {
+  ag.state = "fall"
+  ag.fall = 0
 }
 
-// A fall nobody chose: the floor bashed out from under a lemming, a shaft
+// A fall nobody chose: the floor bashed out from under an agent, a shaft
 // breaking through into open air, a bridge ending over nothing. Unlike
 // edgeAhead() there was no chance to look first, so check on the way out and
 // get an umbrella open if the landing would otherwise be fatal.
-function beginUncontrolledFall(w, L) {
-  if (!L.floater) {
-    var d = dropDepth(w, Math.floor(L.x), Math.floor(L.y))
-    if (d > SAFE_FALL && take(w, "floater")) L.floater = true
+function beginUncontrolledFall(w, ag) {
+  if (!ag.floater) {
+    var d = dropDepth(w, Math.floor(ag.x), Math.floor(ag.y))
+    if (d > SAFE_FALL && take(w, "floater")) ag.floater = true
   }
-  startFall(w, L)
+  startFall(w, ag)
 }
 
-function startClimb(w, L) {
-  L.state = "climb"
-  L.timer = 0
+function startClimb(w, ag) {
+  ag.state = "climb"
+  ag.timer = 0
 }
 
-function startBuild(w, L) {
-  L.state = "build"
-  L.bricks = 12
-  L.timer = 0
-  L.built++
+function startBuild(w, ag) {
+  ag.state = "build"
+  ag.bricks = 12
+  ag.timer = 0
+  ag.built++
 }
 
-// A lemming that has already laid two bridges has stopped solving anything and
+// An agent that has already laid two bridges has stopped solving anything and
 // started building on its own brickwork: every bridge leaves a new ledge and a
 // new wall, which reads to the next decision as another obstacle worth
 // bridging. Left uncapped, the keen ones spend a whole level constructing a
 // private folly, and the earth they add is what the ones behind them then get
 // stuck on.
-function willBuild(L) { return L.built < 2 }
+function willBuild(ag) { return ag.built < 2 }
 
 function spawn(w) {
   // Drawn from the world's own stream so a given level always sends the same
-  // lemmings out in the same order — level 42 has the same stubborn one at the
+  // agents out in the same order — level 42 has the same stubborn one at the
   // same point in the queue every time you come back to it.
   var trait = TRAIT_POOL[Math.floor(w.traitRng() * TRAIT_POOL.length) % TRAIT_POOL.length]
   var whim = w.traitRng()
   return {
     id: w.nextId++,
     trait: trait,
-    // Individual variation inside the personality, so two cautious lemmings
-    // aren't the same lemming twice. Shifts where its bridge-or-jump line
+    // Individual variation inside the personality, so two cautious agents
+    // aren't the same agent twice. Shifts where its bridge-or-jump line
     // sits, and one in five reverses its instinct at a wall outright.
     bridgeBias: Math.round(whim * 5) - 2,
     contrary: whim < 0.2,
     x: w.hatch.x + 0.5,
-    y: w.hatch.y + LEM_H,
+    y: w.hatch.y + AGENT_H,
     dir: 1,
     state: "fall",
-    // Not a flag a lemming keeps. `floater` means "umbrella is out for THIS
+    // Not a flag an agent keeps. `floater` means "umbrella is out for THIS
     // fall" and is folded away on landing; there is no climber flag at all,
     // because every climb is paid for when it happens.
     floater: false,
@@ -1053,12 +1053,12 @@ function spawn(w) {
 // Per-state updates
 // ---------------------------------------------------------------------------
 
-function stepWalk(w, L) {
-  var nx = L.x + L.dir * WALK_SPEED
+function stepWalk(w, ag) {
+  var nx = ag.x + ag.dir * WALK_SPEED
   var cx = Math.floor(nx)
-  var footY = Math.floor(L.y)
+  var footY = Math.floor(ag.y)
 
-  if (anyBlockerNear(w, L, nx)) { turnAround(w, L); return }
+  if (anyBlockerNear(w, ag, nx)) { turnAround(w, ag); return }
 
   var targetY = footY
 
@@ -1066,62 +1066,62 @@ function stepWalk(w, L) {
     // Ground rising. A stride covers MAX_STEP; anything taller is an obstacle.
     var k = 1
     while (k <= MAX_STEP && solid(w, cx, footY - k)) k++
-    if (k > MAX_STEP || !headroom(w, cx, footY - k)) { hitWall(w, L); return }
+    if (k > MAX_STEP || !headroom(w, cx, footY - k)) { hitWall(w, ag); return }
     targetY = footY - k
   } else if (!solid(w, cx, footY + 1)) {
     // Ground falling away. One cell is a step down; more is a fall, and a fall
     // is a decision.
     if (solid(w, cx, footY + 2)) targetY = footY + 1
-    else { edgeAhead(w, L, nx); return }
+    else { edgeAhead(w, ag, nx); return }
   }
 
-  if (!headroom(w, cx, targetY)) { hitWall(w, L); return }
+  if (!headroom(w, cx, targetY)) { hitWall(w, ag); return }
 
-  L.x = nx
-  L.y = targetY
-  L.anim++
+  ag.x = nx
+  ag.y = targetY
+  ag.anim++
 }
 
-function stepFall(w, L) {
-  var speed = L.floater && L.fall > 2 ? FLOAT_SPEED : FALL_SPEED
-  var cx = Math.floor(L.x)
-  var ny = L.y + speed
+function stepFall(w, ag) {
+  var speed = ag.floater && ag.fall > 2 ? FLOAT_SPEED : FALL_SPEED
+  var cx = Math.floor(ag.x)
+  var ny = ag.y + speed
 
   // Out through the bottom of the world. Has to be caught before the landing
   // scan below, which would otherwise find the out-of-bounds STEEL that at()
   // reports and land them on nothing.
   if (ny >= ROWS) {
-    L.gone = true
+    ag.gone = true
     w.lost++
     w.lastEvent = "fell"
     return
   }
 
   // Last-moment umbrella. A drop that was measured as survivable at the edge
-  // can stop being survivable while a lemming is still in the air — the floor
+  // can stop being survivable while an agent is still in the air — the floor
   // it was aiming at gets dug out from underneath by somebody else working
   // below. Re-checking on the way down catches every version of that without
   // having to anticipate each one, and a late umbrella is a better thing to
   // watch than a splat anyway.
   // The test has to be on the drop that's LEFT, not just on there being no
   // floor in the very next cell: an ordinary corridor-to-corridor drop passes
-  // that weaker test a cell or two before landing, which had every lemming in
+  // that weaker test a cell or two before landing, which had every agent in
   // the level opening an umbrella on a fall they were always going to walk
   // away from.
-  if (!L.floater && L.fall > SAFE_FALL - 6) {
+  if (!ag.floater && ag.fall > SAFE_FALL - 6) {
     var remaining = dropDepth(w, cx, Math.floor(ny))
-    if (L.fall + remaining > SAFE_FALL && take(w, "floater")) L.floater = true
+    if (ag.fall + remaining > SAFE_FALL && take(w, "floater")) ag.floater = true
   }
 
-  for (var yy = Math.floor(L.y) + 1; yy <= Math.floor(ny) + 1; yy++) {
+  for (var yy = Math.floor(ag.y) + 1; yy <= Math.floor(ny) + 1; yy++) {
     if (solid(w, cx, yy)) {
-      L.y = yy - 1
-      if (L.fall > SAFE_FALL && !L.floater) { splat(w, L); return }
-      L.state = "walk"
-      L.fall = 0
-      L.floater = false
-      // Landing does NOT turn a lemming round. It keeps whatever way it was
-      // facing, as in the original — a lemming only ever turns at a wall, at a
+      ag.y = yy - 1
+      if (ag.fall > SAFE_FALL && !ag.floater) { splat(w, ag); return }
+      ag.state = "walk"
+      ag.fall = 0
+      ag.floater = false
+      // Landing does NOT turn an agent round. It keeps whatever way it was
+      // facing, as in the original — an agent only ever turns at a wall, at a
       // blocker, or at an edge it won't step off.
       //
       // Picking a direction here instead (toward the exit, or away from the
@@ -1130,218 +1130,218 @@ function stepFall(w, L) {
       // on landing — and it closes a loop: a climber that bumps a ceiling
       // turns away and drops, and if landing then points it back at the wall
       // it just failed to climb, it climbs it again, forever. That was every
-      // lemming found pinned in a six-cell box cycling walk-climb-fall.
+      // agent found pinned in a six-cell box cycling walk-climb-fall.
       //
-      // The serpentine still works without it. A lemming stepping off the end
+      // The serpentine still works without it. An agent stepping off the end
       // of one corridor lands near the start of the next still facing the way
       // it was going, walks the short way to that end, and turns at the wall
       // like anything else.
       return
     }
   }
-  L.fall += speed
-  L.y = ny
+  ag.fall += speed
+  ag.y = ny
 }
 
-function stepClimb(w, L) {
-  var wallX = Math.floor(L.x) + L.dir
-  var footY = Math.floor(L.y)
+function stepClimb(w, ag) {
+  var wallX = Math.floor(ag.x) + ag.dir
+  var footY = Math.floor(ag.y)
 
   // Head into a ceiling: nothing above to climb onto, so let go. Counts as a
-  // failed attempt — a lemming that keeps trying the same wall should end up
+  // failed attempt — an agent that keeps trying the same wall should end up
   // concluding the way on is somewhere else.
-  if (solid(w, Math.floor(L.x), footY - LEM_H)) {
-    L.dir = -L.dir
-    L.turns++
-    beginUncontrolledFall(w, L)
+  if (solid(w, Math.floor(ag.x), footY - AGENT_H)) {
+    ag.dir = -ag.dir
+    ag.turns++
+    beginUncontrolledFall(w, ag)
     return
   }
 
   if (!solid(w, wallX, footY)) {
     // Feet clear the wall's top course — haul over onto it.
     if (headroom(w, wallX, footY)) {
-      L.x = wallX + 0.5
-      L.state = "walk"
-      L.turns = 0
+      ag.x = wallX + 0.5
+      ag.state = "walk"
+      ag.turns = 0
     } else {
-      L.dir = -L.dir
-      beginUncontrolledFall(w, L)
+      ag.dir = -ag.dir
+      beginUncontrolledFall(w, ag)
     }
     return
   }
 
-  L.y -= CLIMB_SPEED
-  L.anim++
-  if (L.y < 1) { L.dir = -L.dir; startFall(w, L) }
+  ag.y -= CLIMB_SPEED
+  ag.anim++
+  if (ag.y < 1) { ag.dir = -ag.dir; startFall(w, ag) }
 }
 
-function stepBuild(w, L) {
-  L.timer++
-  if (L.timer < BUILD_INTERVAL) return
-  L.timer = 0
+function stepBuild(w, ag) {
+  ag.timer++
+  if (ag.timer < BUILD_INTERVAL) return
+  ag.timer = 0
 
-  var footY = Math.floor(L.y)
-  var bx = Math.floor(L.x) + L.dir
+  var footY = Math.floor(ag.y)
+  var bx = Math.floor(ag.x) + ag.dir
 
-  // A brick is three cells laid at foot level; the lemming then steps along it.
-  for (var i = 0; i < 3; i++) setCell(w, bx + L.dir * i, footY + 1, DIRT)
+  // A brick is three cells laid at foot level; the agent then steps along it.
+  for (var i = 0; i < 3; i++) setCell(w, bx + ag.dir * i, footY + 1, DIRT)
 
-  var nx = L.x + L.dir * 2
+  var nx = ag.x + ag.dir * 2
 
   // Gain a course every third brick, and only when there's headroom for it —
   // otherwise keep laying level. The original's builders climb a course per
   // brick, which is fine on an open hillside and useless in a corridor with two
-  // cells of clearance over a lemming's head: the bridge hits the ceiling after
+  // cells of clearance over an agent's head: the bridge hits the ceiling after
   // three bricks, the builder turns round, and the gap it was called for is
   // still there. Sloping where it can and running flat where it can't gets the
   // staircase look wherever there's room for one, and a bridge everywhere else.
-  var ny = L.y
-  if ((L.bricks % 3) === 0 && headroom(w, Math.floor(nx), Math.floor(L.y) - 1)) ny = L.y - 1
+  var ny = ag.y
+  if ((ag.bricks % 3) === 0 && headroom(w, Math.floor(nx), Math.floor(ag.y) - 1)) ny = ag.y - 1
 
   if (!headroom(w, Math.floor(nx), Math.floor(ny))) {
     // Even level is blocked. Turn and walk back along what's been laid.
-    L.dir = -L.dir
-    L.state = "walk"
+    ag.dir = -ag.dir
+    ag.state = "walk"
     return
   }
 
-  L.x = nx
-  L.y = ny
-  L.bricks--
-  addDust(w, L.x, L.y, 1)
+  ag.x = nx
+  ag.y = ny
+  ag.bricks--
+  addDust(w, ag.x, ag.y, 1)
 
-  if (L.bricks <= 0) {
-    L.state = "walk"
-    L.turns = 0
+  if (ag.bricks <= 0) {
+    ag.state = "walk"
+    ag.turns = 0
   }
 }
 
-function stepBash(w, L) {
-  L.timer++
-  if (L.timer < BASH_INTERVAL) return
-  L.timer = 0
+function stepBash(w, ag) {
+  ag.timer++
+  if (ag.timer < BASH_INTERVAL) return
+  ag.timer = 0
 
-  var footY = Math.floor(L.y)
-  var ax = Math.floor(L.x) + L.dir
+  var footY = Math.floor(ag.y)
+  var ax = Math.floor(ag.x) + ag.dir
 
-  if (hitsSteel(w, Math.min(ax, ax + L.dir), footY - LEM_H, Math.max(ax, ax + L.dir), footY)) {
+  if (hitsSteel(w, Math.min(ax, ax + ag.dir), footY - AGENT_H, Math.max(ax, ax + ag.dir), footY)) {
     // Order matters: turnAround() may itself pick a new action (see
     // considerEscape), so the reset to walking has to happen first or it
     // silently throws away the skill that was just spent.
-    L.state = "walk"
-    turnAround(w, L)
+    ag.state = "walk"
+    turnAround(w, ag)
     return
   }
 
   var removed = 0
   for (var dx = 0; dx < 2; dx++)
-    for (var dy = -LEM_H; dy <= 0; dy++)
-      if (clearCell(w, ax + L.dir * dx, footY + dy)) removed++
+    for (var dy = -AGENT_H; dy <= 0; dy++)
+      if (clearCell(w, ax + ag.dir * dx, footY + dy)) removed++
 
   addDust(w, ax, footY - 2, 3)
-  L.x += L.dir
-  L.anim++
+  ag.x += ag.dir
+  ag.anim++
 
   // Broken through into open air: stop chewing and walk.
-  if (removed === 0 && !solid(w, ax + L.dir * 2, footY)) {
-    L.state = "walk"
-    L.turns = 0
+  if (removed === 0 && !solid(w, ax + ag.dir * 2, footY)) {
+    ag.state = "walk"
+    ag.turns = 0
   }
   // Bashed the floor out from under itself.
-  if (!solid(w, Math.floor(L.x), footY + 1)) beginUncontrolledFall(w, L)
+  if (!solid(w, Math.floor(ag.x), footY + 1)) beginUncontrolledFall(w, ag)
 }
 
-function stepMine(w, L) {
-  L.timer++
-  if (L.timer < MINE_INTERVAL) return
-  L.timer = 0
+function stepMine(w, ag) {
+  ag.timer++
+  if (ag.timer < MINE_INTERVAL) return
+  ag.timer = 0
 
-  var footY = Math.floor(L.y)
-  var ax = Math.floor(L.x) + L.dir
+  var footY = Math.floor(ag.y)
+  var ax = Math.floor(ag.x) + ag.dir
 
-  if (hitsSteel(w, Math.min(ax, ax + L.dir), footY, Math.max(ax, ax + L.dir), footY + 2)) {
-    L.state = "walk"
-    turnAround(w, L)
+  if (hitsSteel(w, Math.min(ax, ax + ag.dir), footY, Math.max(ax, ax + ag.dir), footY + 2)) {
+    ag.state = "walk"
+    turnAround(w, ag)
     return
   }
 
   for (var dx = 0; dx < 2; dx++)
-    for (var dy = -LEM_H; dy <= 2; dy++) clearCell(w, ax + L.dir * dx, footY + dy)
+    for (var dy = -AGENT_H; dy <= 2; dy++) clearCell(w, ax + ag.dir * dx, footY + dy)
 
   addDust(w, ax, footY, 3)
-  L.x += L.dir
-  L.y += 1
-  L.anim++
+  ag.x += ag.dir
+  ag.y += 1
+  ag.anim++
 
   // Stop on reaching the exit's own level. Starting a shaft because the exit
   // is below you is right; carrying on once you're level with it is how a
-  // lemming ends up on the bedrock under the room it was digging towards, and
+  // agent ends up on the bedrock under the room it was digging towards, and
   // the ones who follow it down the shaft end up there too.
-  if (!exitBelow(w, L)) { L.state = "walk"; return }
+  if (!exitBelow(w, ag)) { ag.state = "walk"; return }
 
-  if (!solid(w, Math.floor(L.x), Math.floor(L.y) + 1)) beginUncontrolledFall(w, L)
+  if (!solid(w, Math.floor(ag.x), Math.floor(ag.y) + 1)) beginUncontrolledFall(w, ag)
 }
 
-function stepDig(w, L) {
-  L.timer++
-  if (L.timer < DIG_INTERVAL) return
-  L.timer = 0
+function stepDig(w, ag) {
+  ag.timer++
+  if (ag.timer < DIG_INTERVAL) return
+  ag.timer = 0
 
-  var footY = Math.floor(L.y)
-  var cx = Math.floor(L.x)
+  var footY = Math.floor(ag.y)
+  var cx = Math.floor(ag.x)
 
   if (hitsSteel(w, cx - 1, footY + 1, cx + 1, footY + 1)) {
-    L.state = "walk"
-    turnAround(w, L)
+    ag.state = "walk"
+    turnAround(w, ag)
     return
   }
 
   for (var dx = -1; dx <= 1; dx++) clearCell(w, cx + dx, footY + 1)
   addDust(w, cx, footY + 1, 3)
-  L.y += 1
-  L.anim++
+  ag.y += 1
+  ag.anim++
 
   // Stop on reaching the exit's own level. Starting a shaft because the exit
   // is below you is right; carrying on once you're level with it is how a
-  // lemming ends up on the bedrock under the room it was digging towards, and
+  // agent ends up on the bedrock under the room it was digging towards, and
   // the ones who follow it down the shaft end up there too.
-  if (!exitBelow(w, L)) { L.state = "walk"; return }
+  if (!exitBelow(w, ag)) { ag.state = "walk"; return }
 
-  if (!solid(w, cx, Math.floor(L.y) + 1)) beginUncontrolledFall(w, L)
+  if (!solid(w, cx, Math.floor(ag.y) + 1)) beginUncontrolledFall(w, ag)
 }
 
-function stepBlock(w, L) {
+function stepBlock(w, ag) {
   // A blocker with nothing under it stops blocking — the ground it was holding
   // has been dug out from beneath, usually by whoever it turned back.
-  if (!solid(w, Math.floor(L.x), Math.floor(L.y) + 1)) { beginUncontrolledFall(w, L); return }
-  L.anim++
+  if (!solid(w, Math.floor(ag.x), Math.floor(ag.y) + 1)) { beginUncontrolledFall(w, ag); return }
+  ag.anim++
 
-  // It does not stand down, ever. A blocker is a lemming that has given up
+  // It does not stand down, ever. A blocker is an agent that has given up
   // going home so the ones behind it don't walk into a hole, and letting it
   // wander off after a decent interval — which is what this used to do — takes
   // the cost out of the only skill whose whole point is the cost.
 }
 
-function stepBomb(w, L) {
-  L.fuse--
-  if (L.fuse > 0) return
+function stepBomb(w, ag) {
+  ag.fuse--
+  if (ag.fuse > 0) return
 
-  var cx = Math.floor(L.x)
-  var cy = Math.floor(L.y) - 1
+  var cx = Math.floor(ag.x)
+  var cy = Math.floor(ag.y) - 1
   for (var dy = -BOMB_RADIUS; dy <= BOMB_RADIUS; dy++)
     for (var dx = -BOMB_RADIUS; dx <= BOMB_RADIUS; dx++)
       if (dx * dx + dy * dy <= BOMB_RADIUS * BOMB_RADIUS) clearCell(w, cx + dx, cy + dy)
 
-  addDust(w, L.x, L.y - 1, 22)
-  L.gone = true
+  addDust(w, ag.x, ag.y - 1, 22)
+  ag.gone = true
   w.lost++
   w.lastEvent = "boom"
 }
 
-function splat(w, L) {
-  L.gone = true
+function splat(w, ag) {
+  ag.gone = true
   w.lost++
-  addDust(w, L.x, L.y, 10)
+  addDust(w, ag.x, ag.y, 10)
   w.lastEvent = "splat"
 }
 
@@ -1378,10 +1378,10 @@ function stepParticles(w) {
 // The director
 //
 // The brain is local by design, which means it can occasionally paint itself
-// into a corner — every lemming pacing a sealed pocket, or the one skill that
+// into a corner — every agent pacing a sealed pocket, or the one skill that
 // would open the way already spent. Rather than let the level sit there, the
 // director watches for a stretch with no saves, no losses, and no terrain
-// moved, then quietly tops up whichever skill the stuck lemming could actually
+// moved, then quietly tops up whichever skill the stuck agent could actually
 // use. It's the invisible hand that keeps this something to relax to.
 // ---------------------------------------------------------------------------
 
@@ -1390,9 +1390,9 @@ function stepParticles(w) {
 // time the director steps in, and the skill never registers as used at all.
 // Walled in on both sides by something no tool touches, with no floor worth
 // digging. The only honest use for a bomb.
-function boxedIn(w, L) {
-  var footY = Math.floor(L.y)
-  var cx = Math.floor(L.x)
+function boxedIn(w, ag) {
+  var footY = Math.floor(ag.y)
+  var cx = Math.floor(ag.x)
   var leftHard = at(w, cx - 1, footY) === STEEL || at(w, cx - 2, footY) === STEEL
   var rightHard = at(w, cx + 1, footY) === STEEL || at(w, cx + 2, footY) === STEEL
   return leftHard && rightHard
@@ -1411,7 +1411,7 @@ function grant(w, skill) {
   return true
 }
 
-// How long a lemming may walk without getting anywhere before it stops asking
+// How long an agent may walk without getting anywhere before it stops asking
 // permission. Twenty seconds of pacing the same ledge is well past the point
 // where a watcher has noticed it's stuck — but not shorter: at fifteen they
 // start sinking shafts through corridors they were still perfectly capable of
@@ -1420,81 +1420,81 @@ function grant(w, skill) {
 var PATIENCE = 600
 
 // The other half of the director, and the more important one. The global stall
-// check can't see this case: one lemming bashing away keeps terrainVersion
+// check can't see this case: one agent bashing away keeps terrainVersion
 // moving, so the level looks busy while fifteen others tramp a corridor they
 // have no way out of.
 //
-// The deeper reason they get stranded is that skill budgets are per-lemming
+// The deeper reason they get stranded is that skill budgets are per-agent
 // but a tunnel is shared — the first few to meet an obstacle spend the level's
 // diggers opening a way down, and everyone who doesn't happen to find that
 // shaft needs a digger of their own that no longer exists. Rather than inflate
 // every budget until that can't happen (which just makes levels solve
-// themselves instantly), this hands a tool to the specific lemming that has
+// themselves instantly), this hands a tool to the specific agent that has
 // demonstrably been getting nowhere.
-function forceEscape(w, L) {
-  L.idle = 0
-  var footY = Math.floor(L.y)
-  var ahead = Math.floor(L.x) + L.dir
+function forceEscape(w, ag) {
+  ag.idle = 0
+  var footY = Math.floor(ag.y)
+  var ahead = Math.floor(ag.x) + ag.dir
 
-  if (exitAbove(w, L)) {
+  if (exitAbove(w, ag)) {
     // Below the exit: the only useful direction is up.
     if (solid(w, ahead, footY) && wallHeight(w, ahead, footY) <= MAX_CLIMB
-        && grant(w, "climber")) { startClimb(w, L); return }
-    if (willBuild(L) && grant(w, "builder")) startBuild(w, L)
+        && grant(w, "climber")) { startClimb(w, ag); return }
+    if (willBuild(ag) && grant(w, "builder")) startBuild(w, ag)
     return
   }
 
   // What's in FRONT comes first. Checking the floor first looks equivalent and
-  // is not: a lemming is almost always standing on something, so the floor test
-  // always won and a lemming stopped dead against a wall would sink a shaft
+  // is not: an agent is almost always standing on something, so the floor test
+  // always won and an agent stopped dead against a wall would sink a shaft
   // beneath its own feet rather than go through the thing actually blocking it.
-  // At the wall sealing the exit — which every lemming on the level meets, and
+  // At the wall sealing the exit — which every agent on the level meets, and
   // meets last — that put the whole colony underground a few paces short of
   // home.
   // Look BOTH ways for something worth going through, and turn to face it.
-  // Checking only what's in front makes the rescue a coin toss: a lemming that
+  // Checking only what's in front makes the rescue a coin toss: an agent that
   // happens to have just turned away from the wall it's stuck behind is offered
   // nothing, and since this resets its patience either way, it can bounce off
   // the same wall indefinitely while help arrives for the direction it isn't
   // facing.
-  var behind = Math.floor(L.x) - L.dir
+  var behind = Math.floor(ag.x) - ag.dir
   if (solid(w, ahead, footY) && at(w, ahead, footY) !== STEEL && grant(w, "basher")) {
-    L.state = "bash"
-    L.timer = 0
+    ag.state = "bash"
+    ag.timer = 0
     return
   }
   if (solid(w, behind, footY) && at(w, behind, footY) !== STEEL && grant(w, "basher")) {
-    L.dir = -L.dir
-    L.state = "bash"
-    L.timer = 0
+    ag.dir = -ag.dir
+    ag.state = "bash"
+    ag.timer = 0
     return
   }
   // Only ever downward when the exit really is below. On the last corridor it
-  // is not — it's on this very floor — and a lemming that sinks a shaft there
+  // is not — it's on this very floor — and an agent that sinks a shaft there
   // drops itself into the earth beneath the only room that matters, with the
   // way back up costing a climber nobody has left. Ungated, this was every
-  // stranded lemming in the run: the colony tunnelling out through the floor
+  // stranded agent in the run: the colony tunnelling out through the floor
   // of the room it was standing in.
-  if (exitBelow(w, L) && solid(w, Math.floor(L.x), footY + 1)
-      && at(w, Math.floor(L.x), footY + 1) !== STEEL) {
-    var ramp = L.id % 2 === 0
+  if (exitBelow(w, ag) && solid(w, Math.floor(ag.x), footY + 1)
+      && at(w, Math.floor(ag.x), footY + 1) !== STEEL) {
+    var ramp = ag.id % 2 === 0
     if (grant(w, ramp ? "miner" : "digger")) {
-      L.state = ramp ? "mine" : "dig"
-      L.timer = 0
+      ag.state = ramp ? "mine" : "dig"
+      ag.timer = 0
       return
     }
   }
   // The cap applies to director help too. Without it, the one mechanism meant
-  // to rescue a stuck lemming happily hands the keenest builder its eighteenth
+  // to rescue a stuck agent happily hands the keenest builder its eighteenth
   // bridge, and the pile of brickwork is what the rest then get stuck on.
-  if (willBuild(L) && grant(w, "builder")) {
-    startBuild(w, L)
+  if (willBuild(ag) && grant(w, "builder")) {
+    startBuild(w, ag)
     return
   }
 
   // Nothing applied. Don't hand back a full patience timer for having done
   // nothing — come round again in half the time.
-  L.idle = PATIENCE / 2
+  ag.idle = PATIENCE / 2
 }
 
 function runDirector(w) {
@@ -1513,11 +1513,11 @@ function runDirector(w) {
   // finish the level if they can just get moving again.
   var best = null
   var bestD = Infinity
-  for (var i = 0; i < w.lemmings.length; i++) {
-    var L = w.lemmings[i]
-    if (L.gone || L.state === "saved") continue
-    var d = Math.abs(L.x - w.exit.x) + Math.abs(L.y - w.exit.y) * 2
-    if (d < bestD) { bestD = d; best = L }
+  for (var i = 0; i < w.agents.length; i++) {
+    var ag = w.agents[i]
+    if (ag.gone || ag.state === "saved") continue
+    var d = Math.abs(ag.x - w.exit.x) + Math.abs(ag.y - w.exit.y) * 2
+    if (d < bestD) { bestD = d; best = ag }
   }
   if (!best) return
 
@@ -1548,7 +1548,7 @@ function runDirector(w) {
     // Strictly last-ditch, and capped at one a level. As a plain `else` it is
     // not a rescue but an execution: whenever the branches above it stopped
     // applying — a build cap reached, say — the director quietly worked its
-    // way down to blowing lemmings up as routine maintenance, and the loss
+    // way down to blowing agents up as routine maintenance, and the loss
     // rate went from one in three hundred to one in sixteen.
     w.bombsUsed++
     best.state = "bomb"
@@ -1569,7 +1569,7 @@ function step(w) {
     if (w.releaseTimer >= w.releaseInterval) {
       w.releaseTimer = 0
       w.released++
-      w.lemmings.push(spawn(w))
+      w.agents.push(spawn(w))
     }
   }
 
@@ -1581,8 +1581,8 @@ function step(w) {
     w.nukeTimer++
     if (w.nukeTimer >= NUKE_STAGGER) {
       w.nukeTimer = 0
-      for (var n = 0; n < w.lemmings.length; n++) {
-        var N = w.lemmings[n]
+      for (var n = 0; n < w.agents.length; n++) {
+        var N = w.agents[n]
         if (N.gone || N.state === "saved" || N.state === "bomb") continue
         N.state = "bomb"
         N.fuse = BOMB_FUSE
@@ -1597,59 +1597,59 @@ function step(w) {
   var blockers = 0
   var moving = 0
 
-  for (var i = 0; i < w.lemmings.length; i++) {
-    var L = w.lemmings[i]
-    if (L.gone) continue
+  for (var i = 0; i < w.agents.length; i++) {
+    var ag = w.agents[i]
+    if (ag.gone) continue
 
-    if (L.state === "saved") {
-      L.fade++
-      if (L.fade > 14) L.gone = true
+    if (ag.state === "saved") {
+      ag.fade++
+      if (ag.fade > 14) ag.gone = true
       continue
     }
 
-    // Closer to home than this lemming has ever been? Then whatever it's
+    // Closer to home than this agent has ever been? Then whatever it's
     // doing is working: clear both counters and let it get on with it.
-    var dist = goalDist(w, L)
-    if (dist < L.markD - 2) {
-      L.markD = dist
-      L.idle = 0
-      L.turns = 0
+    var dist = goalDist(w, ag)
+    if (dist < ag.markD - 2) {
+      ag.markD = dist
+      ag.idle = 0
+      ag.turns = 0
     } else {
-      L.idle++
+      ag.idle++
     }
 
     // Getting nowhere for long enough: stop waiting for the budget to allow it
     // (see forceEscape). Only from a walk, so it never interrupts work already
     // under way.
-    if (L.state === "walk" && L.idle > PATIENCE) forceEscape(w, L)
+    if (ag.state === "walk" && ag.idle > PATIENCE) forceEscape(w, ag)
 
-    switch (L.state) {
-      case "walk": stepWalk(w, L); break
-      case "fall": stepFall(w, L); break
-      case "climb": stepClimb(w, L); break
-      case "build": stepBuild(w, L); break
-      case "bash": stepBash(w, L); break
-      case "mine": stepMine(w, L); break
-      case "dig": stepDig(w, L); break
-      case "block": stepBlock(w, L); break
-      case "bomb": stepBomb(w, L); break
+    switch (ag.state) {
+      case "walk": stepWalk(w, ag); break
+      case "fall": stepFall(w, ag); break
+      case "climb": stepClimb(w, ag); break
+      case "build": stepBuild(w, ag); break
+      case "bash": stepBash(w, ag); break
+      case "mine": stepMine(w, ag); break
+      case "dig": stepDig(w, ag); break
+      case "block": stepBlock(w, ag); break
+      case "bomb": stepBomb(w, ag); break
     }
 
-    if (L.gone) continue
+    if (ag.gone) continue
 
     // Home. The exit's mouth is a rectangle; walking into it is all it takes.
     var e = w.exit
-    if (L.x > e.x && L.x < e.x + e.w && L.y > e.y && L.y < e.y + e.h + 1) {
-      L.state = "saved"
-      L.fade = 0
+    if (ag.x > e.x && ag.x < e.x + e.w && ag.y > e.y && ag.y < e.y + e.h + 1) {
+      ag.state = "saved"
+      ag.fade = 0
       w.saved++
       w.lastEvent = "saved"
       continue
     }
 
     active++
-    if (L.state === "block") blockers++
-    if (L.state !== "walk" || L.idle < 300) moving++
+    if (ag.state === "block") blockers++
+    if (ag.state !== "walk" || ag.idle < 300) moving++
   }
 
   // Everyone who was going to get home has, and the only ones left standing are
@@ -1657,8 +1657,8 @@ function step(w) {
   // what a player does at the end of a level, and the honest end to the bargain
   // they made. They don't walk away from it.
   if (active > 0 && active === blockers) {
-    for (var b = 0; b < w.lemmings.length; b++) {
-      var B2 = w.lemmings[b]
+    for (var b = 0; b < w.agents.length; b++) {
+      var B2 = w.agents[b]
       if (B2.state === "block") {
         B2.state = "bomb"
         B2.fuse = BOMB_FUSE
@@ -1681,16 +1681,16 @@ function step(w) {
   // A level nobody can finish still has to end, and it should end while it's
   // still worth looking at. Two cutoffs: a hard ceiling, and a much earlier
   // one for the common case where everybody bar a straggler or two is home and
-  // the rest is going to be one lemming pacing a ledge.
+  // the rest is going to be one agent pacing a ledge.
   if (!w.done) {
     var settled = w.saved + w.lost
     var nearlyDone = settled >= w.toRelease - 2 && w.released >= w.toRelease
     // `stallTicks` alone is the wrong test for the straggler case: it only
-    // watches saves, losses and terrain, so a lemming quietly walking or
+    // watches saves, losses and terrain, so an agent quietly walking or
     // climbing its way home counts as nothing happening, and the level gets
     // called at 14 of 16 while the last two are most of the way there. Ending
     // early is only right when everyone left has genuinely stopped getting
-    // anywhere, which is exactly what each lemming's own idle counter knows.
+    // anywhere, which is exactly what each agent's own idle counter knows.
     var allStuck = w.movingCount === 0
     // Twenty seconds in which nothing was saved, nothing was lost and not one
     // cell of earth moved is a finished level whatever the stragglers look

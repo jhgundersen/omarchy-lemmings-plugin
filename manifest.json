@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "jhgundersen.lemmings",
-  "name": "Lemmings",
+  "id": "jhgundersen.oh-no-more-agents",
+  "name": "Oh No! More Agents",
   "version": "1.0.0",
   "author": "Jon Håvard Gundersen",
-  "description": "An ambient Lemmings simulation in your top bar. A level carves itself, twenty lemmings work out how to get through it, and you watch.",
+  "description": "Autonomous agents with no supervisor, no plan, and one umbrella each. A level carves itself, a dozen-odd of them work out how to get through it, and you watch.",
   "kinds": [
     "bar-widget"
   ],
@@ -12,7 +12,7 @@
     "barWidget": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "Lemmings",
+    "displayName": "Oh No! More Agents",
     "description": "Something to watch, not something to play",
     "category": "Fun",
     "allowMultiple": false
