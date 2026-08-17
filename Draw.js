@@ -310,14 +310,45 @@ function drawExitGlow(ctx, w, pal) {
   ctx.globalAlpha = 1
 }
 
-// The level's one danger, if it has one. Four looks cover twenty-odd kinds:
-// what changes between a machine gun and a bear trap is mostly where it is
-// bolted and how long it takes to go off, and those are Sim.js's business.
+// The level's one danger, if it has one — and each of the twenty-one gets its
+// own fixture and its own effect, because they were built on four shared looks
+// and eight of them came out as the same beam. A hazard you cannot tell from
+// the last one is, from where the viewer sits, the same hazard.
 //
-// Three states worth telling apart at a glance: dormant is just the fixture,
-// winding up is the fixture plus a telegraph, and firing fills the zone it
-// kills in. The telegraph is not decoration — it is the only reason a danger
-// on the route is fair, so it is drawn to be unmissable.
+// Three states worth telling apart at a glance: dormant is the fixture and a
+// warning stripe, winding up adds a blinking telegraph, and firing fills the
+// ground it kills on. The telegraph is not decoration — it is the only reason a
+// danger sitting on the route is fair, so it is drawn to be unmissable.
+
+// A triangle standing on its base, or hanging from it. Teeth, spikes, jaws and
+// stalactite-shaped things are all this.
+function hzTri(ctx, cx, baseY, halfW, height, dir) {
+  for (var i = 0; i < height; i++) {
+    var hw = Math.max(0, Math.round(halfW * (1 - i / height)))
+    ctx.fillRect(cx - hw, baseY + dir * i, hw * 2 + 1, 1)
+  }
+}
+
+// A jagged line between two points: arcs, sparks, lightning.
+function hzBolt(ctx, x0, y0, x1, y1, seed, amp) {
+  var steps = 6
+  var px = x0, py = y0
+  for (var i = 1; i <= steps; i++) {
+    var t = i / steps
+    var nx = x0 + (x1 - x0) * t
+    var ny = y0 + (y1 - y0) * t
+    if (i < steps) {
+      var j = ((seed + i * 37) % 7) - 3
+      if (Math.abs(x1 - x0) > Math.abs(y1 - y0)) ny += j * amp
+      else nx += j * amp
+    }
+    var dx = nx - px, dy = ny - py
+    var n = Math.max(1, Math.round(Math.max(Math.abs(dx), Math.abs(dy))))
+    for (var k2 = 0; k2 <= n; k2++) ctx.fillRect(Math.round(px + dx * k2 / n), Math.round(py + dy * k2 / n), 1, 1)
+    px = nx; py = ny
+  }
+}
+
 function drawHazard(ctx, w, pal) {
   var h = w.hazard
   if (!h) return
@@ -326,89 +357,345 @@ function drawHazard(ctx, w, pal) {
   var x1 = (h.zx1 + 1) * C
   var y0 = h.zy0 * C
   var y1 = (h.zy1 + 1) * C
+  var cx = Math.round((x0 + x1) / 2)
+  var wide = x1 - x0
+  var tall = y1 - y0
   var live = h.phase === "fire"
   var winding = h.phase === "charge"
+  var t = w.ticks
+  var seed = h.zx0
 
-  // The mounting: a bracket on whatever it hangs from.
-  ctx.fillStyle = pal.rig
-  if (h.mount === "ceiling") {
-    ctx.fillRect(x0, y0 - 1, x1 - x0, 4)
-    ctx.fillStyle = pal.rigDark
-    ctx.fillRect(x0 + 2, y0 + 3, x1 - x0 - 4, 2)
-  } else if (h.mount === "floor") {
-    ctx.fillRect(x0, y1 - 4, x1 - x0, 4)
-    ctx.fillStyle = pal.rigDark
-    ctx.fillRect(x0 + 1, y1 - 6, x1 - x0 - 2, 2)
-  } else {
-    ctx.fillRect(x0, y0, 4, y1 - y0)
-    ctx.fillStyle = pal.rigDark
-    ctx.fillRect(x0 + 4, y0 + 2, 2, y1 - y0 - 4)
-  }
-
-  // A hazard stripe on the fixture even while it sleeps. A trap you cannot see
-  // until it fires is not a danger, it is a coin toss — and the whole appeal
-  // of these is watching the colony walk up to one.
-  ctx.fillStyle = pal.warn
-  if (h.mount === "ceiling") ctx.fillRect(x0 + 1, y0 + 1, x1 - x0 - 2, 1)
-  else if (h.mount === "floor") ctx.fillRect(x0 + 1, y1 - 3, x1 - x0 - 2, 1)
-  else ctx.fillRect(x0 + 1, y0 + 2, 1, y1 - y0 - 4)
-
-  if (!live && !winding) return
-
-  // Winding up blinks; firing is solid. A steady glow for both would make the
+  // Winding up blinks, firing is solid. A steady glow for both would make the
   // moment it becomes lethal impossible to see coming.
-  var blink = winding ? (Math.floor(w.ticks / 4) % 2 === 0) : true
-  if (!blink) return
-  ctx.globalAlpha = winding ? 0.55 : 1
+  var show = live || (winding && Math.floor(t / 4) % 2 === 0)
+  var hot = live ? pal.fireHot : pal.warn
 
-  if (h.look === "beam") {
-    // A line across the zone: a sight line while it winds up, the shot itself
-    // when it fires.
-    ctx.fillStyle = live ? pal.fireHot : pal.warn
-    var my = h.mount === "wall" ? Math.round((y0 + y1) / 2) : y0 + 4
-    if (h.mount === "wall") {
-      ctx.fillRect(x0, my, x1 - x0, live ? 3 : 1)
-    } else {
-      ctx.fillRect(Math.round((x0 + x1) / 2) - (live ? 2 : 0), y0, live ? 4 : 1, y1 - y0)
+  switch (h.kind) {
+
+  // --- watch: mounted, dormant, wakes when somebody walks into reach -------
+  case "gun":
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0 + 2, y0, wide - 4, 5)          // mount
+    ctx.fillRect(cx - 2, y0 + 5, 4, 6)             // barrel
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(cx - 6, y0 + 2, 4, 4)             // drum magazine
+    ctx.fillStyle = pal.warn
+    ctx.fillRect(x0 + 2, y0 + 1, wide - 4, 1)
+    if (show) {
+      ctx.fillStyle = hot
+      if (live) {
+        hzTri(ctx, cx, y0 + 11, 3, 4, 1)           // muzzle flash
+        for (var g = 0; g < tall; g += 5) ctx.fillRect(cx - 1, y0 + 13 + ((t * 4 + g) % tall), 2, 3)
+      } else ctx.fillRect(cx - 1, y0 + 11, 2, 2)
     }
+    break
 
-  } else if (h.look === "spikes") {
-    // Teeth coming up out of the plate, taller once they are actually out.
-    ctx.fillStyle = live ? pal.fireHot : pal.warn
-    var tall = live ? 9 : 3
-    for (var sx = x0; sx < x1; sx += 4) {
-      for (var t = 0; t < tall; t++) {
-        var half = Math.max(0, Math.round((tall - t) / 3))
-        ctx.fillRect(sx + 1 - half, y1 - 5 - t, half * 2 + 1, 1)
+  case "sentry":
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0, y0, wide, 6)
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0 + 1, y0 + 6, wide - 2, 2)
+    ctx.fillStyle = show ? hot : pal.warn
+    ctx.fillRect(cx - 2, y0 + 2, 4, 3)             // lens
+    if (show) { ctx.fillStyle = hot; ctx.fillRect(cx - (live ? 2 : 0), y0 + 6, live ? 4 : 1, tall - 6) }
+    break
+
+  case "turret":
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0 + 1, y0, wide - 2, 4)
+    ctx.fillRect(cx - 4, y0 + 4, 3, 5)             // twin barrels
+    ctx.fillRect(cx + 2, y0 + 4, 3, 5)
+    ctx.fillStyle = pal.warn
+    ctx.fillRect(x0 + 1, y0 + 1, wide - 2, 1)
+    if (show) {
+      ctx.fillStyle = hot
+      ctx.fillRect(cx - 3, y0 + 9, live ? 2 : 1, tall - 9)
+      ctx.fillRect(cx + 3, y0 + 9, live ? 2 : 1, tall - 9)
+    }
+    break
+
+  case "darts":
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0, y0, 5, tall)                  // wall plate
+    ctx.fillStyle = pal.rigDark
+    for (var dh = 0; dh < 3; dh++) ctx.fillRect(x0 + 5, y0 + 3 + dh * 5, 2, 2)
+    ctx.fillStyle = pal.warn
+    ctx.fillRect(x0 + 1, y0 + 2, 1, tall - 4)
+    if (show) {
+      ctx.fillStyle = hot
+      // Darts in flight: short dashes marching away from the plate.
+      for (var dd = 0; dd < 3; dd++) {
+        var dx2 = x0 + 7 + ((t * 5 + dd * 11) % Math.max(1, wide))
+        ctx.fillRect(dx2, y0 + 3 + dd * 5, live ? 5 : 2, 1)
       }
     }
+    break
 
-  } else if (h.look === "flame") {
-    // A tapering cone away from the nozzle.
-    ctx.fillStyle = live ? pal.fireHot : pal.warn
-    var span = y1 - y0
-    var down = h.mount !== "floor"
-    for (var f = 0; f < span; f++) {
-      var t2 = f / span
-      var wide = Math.round((x1 - x0) * (live ? (0.5 + t2 * 0.5) : 0.25))
-      var fy = down ? y0 + f : y1 - 1 - f
-      ctx.fillRect(Math.round((x0 + x1) / 2) - wide / 2, fy, wide, 1)
+  case "flame":
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(cx - 4, y0, 8, 3)
+    hzTri(ctx, cx, y0 + 3, 3, 4, 1)                // flared nozzle
+    ctx.fillStyle = pal.warn
+    ctx.fillRect(cx - 3, y0 + 1, 6, 1)
+    if (show) {
+      // A cone that widens as it falls, with a hotter core.
+      for (var f = 0; f < (live ? tall - 7 : 5); f++) {
+        var fw = Math.round((wide / 2) * (0.25 + (f / tall) * (live ? 1.5 : 0.5)))
+        ctx.fillStyle = f % 3 === Math.floor(t / 3) % 3 ? pal.fireHot : pal.fire
+        ctx.fillRect(cx - fw, y0 + 7 + f, fw * 2, 1)
+      }
     }
+    break
 
-  } else {
-    // burst: the whole zone goes, with a couple of brighter bands rolling
-    // through it so it reads as firing rather than as a lit rectangle.
-    ctx.fillStyle = live ? pal.fire : pal.warn
-    ctx.globalAlpha = winding ? 0.35 : 0.72
-    ctx.fillRect(x0, y0, x1 - x0, y1 - y0)
-    if (live) {
-      ctx.globalAlpha = 1
+  case "tesla":
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(cx - 2, y1 - tall + 4, 4, tall - 4)   // post
+    ctx.fillRect(x0 + 1, y1 - 3, wide - 2, 3)          // base
+    ctx.fillStyle = show ? hot : pal.rigDark
+    ctx.fillRect(cx - 4, y0, 8, 4)                     // ball on top
+    if (show) {
+      ctx.fillStyle = hot
+      hzBolt(ctx, cx, y0 + 2, x0, y1 - 4, seed + t, live ? 2 : 1)
+      hzBolt(ctx, cx, y0 + 2, x1, y1 - 4, seed + t + 3, live ? 2 : 1)
+    }
+    break
+
+  // --- snipe: one target, a long way off, one shot then a long reload -----
+  case "sniper":
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0, y0 + 2, 4, tall - 4)              // housing
+    ctx.fillRect(x0 + 4, y0 + 4, 7, 3)                 // barrel
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0 + 4, y0 + 1, 4, 3)                 // scope
+    ctx.fillStyle = h.phase === "rest" ? pal.rigDark : pal.warn
+    ctx.fillRect(x0 + 1, y0 + 3, 1, tall - 6)
+    if (show && h.lineTo >= 0) {
+      // The sight, then the shot. One pixel high while it is only looking, and
+      // it reaches all the way to whoever it has picked out.
+      var tx = h.lineTo * C
+      var ty = h.lineY * C
+      var sy = y0 + 5
+      ctx.fillStyle = hot
+      var n2 = Math.max(1, Math.round(Math.abs(tx - (x0 + 11))))
+      for (var q = 0; q <= n2; q += live ? 1 : 3) {
+        var qx = (x0 + 11) + (tx - (x0 + 11)) * (q / n2)
+        var qy = sy + (ty - sy) * (q / n2)
+        ctx.fillRect(Math.round(qx), Math.round(qy), live ? 2 : 1, live ? 2 : 1)
+      }
+    }
+    break
+
+  // --- beam: keeps its own schedule ---------------------------------------
+  case "lasergrid":
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0, y0, wide, 3)
+    ctx.fillStyle = pal.rigDark
+    for (var e = x0 + 2; e < x1 - 1; e += 8) ctx.fillRect(e, y0 + 3, 3, 2)
+    ctx.fillStyle = pal.warn
+    ctx.fillRect(x0, y0 + 1, wide, 1)
+    if (show) {
+      ctx.fillStyle = hot
+      for (var b2 = x0 + 3; b2 < x1 - 1; b2 += 8) ctx.fillRect(b2, y0 + 5, live ? 2 : 1, tall - 5)
+    }
+    break
+
+  case "sweeper":
+    // A head that travels along a rail, with the beam raking after it.
+    var rail = x0 + Math.round((wide - 8) * (0.5 + 0.5 * Math.sin(t * 0.05)))
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0, y0, wide, 2)                      // the rail
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(rail, y0, 8, 5)                       // the head
+    ctx.fillStyle = pal.warn
+    ctx.fillRect(rail + 1, y0 + 1, 6, 1)
+    if (show) {
+      ctx.fillStyle = hot
+      for (var sv = 0; sv < tall - 5; sv++) {
+        var lean = Math.round(sv * Math.sin(t * 0.05) * 0.5)
+        ctx.fillRect(rail + 3 + lean, y0 + 5 + sv, live ? 3 : 1, 1)
+      }
+    }
+    break
+
+  case "tripwire":
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0, y1 - 8, 2, 8)                     // posts
+    ctx.fillRect(x1 - 2, y1 - 8, 2, 8)
+    ctx.fillStyle = show ? hot : pal.warn
+    ctx.fillRect(x0, y1 - 7, wide, 1)                  // the wire itself
+    if (show && live) {
       ctx.fillStyle = pal.fireHot
-      for (var b = 0; b < 3; b++) {
-        var by = y0 + ((w.ticks * 3 + b * 13) % Math.max(1, y1 - y0))
-        ctx.fillRect(x0, by, x1 - x0, 2)
+      for (var tw = 0; tw < wide; tw += 3) ctx.fillRect(x0 + tw, y1 - 9 - ((t + tw) % 4), 2, 2)
+    }
+    break
+
+  // --- plate: armed by being stood on -------------------------------------
+  case "spikes":
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0, y1 - 3, wide, 3)                  // the plate
+    ctx.fillStyle = pal.warn
+    ctx.fillRect(x0 + 1, y1 - 2, wide - 2, 1)
+    if (show) {
+      ctx.fillStyle = hot
+      for (var sp = x0 + 2; sp < x1 - 1; sp += 4) hzTri(ctx, sp, y1 - 3, 2, live ? 10 : 3, -1)
+    }
+    break
+
+  case "beartrap":
+    // Jaws: open and waiting, or shut.
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(cx - 1, y1 - 2, 2, 2)                 // the plate between them
+    ctx.fillStyle = show && live ? hot : pal.rigDark
+    if (show && live) {
+      hzTri(ctx, cx - 3, y1 - 2, 3, 7, -1)
+      hzTri(ctx, cx + 3, y1 - 2, 3, 7, -1)
+    } else {
+      for (var jw = 0; jw < 5; jw++) {
+        ctx.fillRect(x0 + jw, y1 - 3 - jw, 2, 1)       // open, leaning out
+        ctx.fillRect(x1 - 2 - jw, y1 - 3 - jw, 2, 1)
+      }
+      ctx.fillStyle = pal.warn
+      ctx.fillRect(cx - 2, y1 - 3, 4, 1)
+    }
+    break
+
+  case "sawblade":
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0 + 2, y1 - 3, wide - 4, 3)          // slot
+    ctx.fillStyle = pal.warn
+    ctx.fillRect(x0 + 3, y1 - 2, wide - 6, 1)
+    if (show) {
+      // A disc rising out of the slot, teeth turning.
+      var rise = live ? 9 : 3
+      var rad = Math.min(rise, 8)
+      ctx.fillStyle = hot
+      for (var a2 = 0; a2 < 12; a2++) {
+        var ang = (a2 / 12) * Math.PI * 2 + t * 0.25
+        ctx.fillRect(Math.round(cx + Math.cos(ang) * rad), Math.round(y1 - 3 - rise / 2 + Math.sin(ang) * rad * 0.6), 2, 2)
+      }
+      ctx.fillRect(cx - 1, y1 - 4 - rise / 2, 2, 2)
+    }
+    break
+
+  case "grinder":
+    // Two toothed rollers side by side, turning inward.
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0, y1 - 6, wide, 6)
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(cx - 1, y1 - 6, 2, 6)
+    ctx.fillStyle = show ? hot : pal.warn
+    for (var gr = 0; gr < wide; gr += 4) {
+      var off = (t * 2 + gr) % 4
+      ctx.fillRect(x0 + gr + (gr < wide / 2 ? off : 3 - off), y1 - 7, 2, live ? 4 : 2)
+    }
+    break
+
+  // --- cycle: never triggers, never stops ---------------------------------
+  case "crusher":
+    // A block on two rams, hanging high or driven down.
+    var drop = live ? tall - 8 : (winding ? 3 : 0)
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0 + 3, y0, 2, 4 + drop)
+    ctx.fillRect(x1 - 5, y0, 2, 4 + drop)
+    ctx.fillStyle = live ? hot : pal.rig
+    ctx.fillRect(x0, y0 + 4 + drop, wide, 7)
+    ctx.fillStyle = pal.warn
+    ctx.fillRect(x0 + 1, y0 + 5 + drop, wide - 2, 1)
+    break
+
+  case "pendulum":
+    // A blade on an arm, swinging from a pivot.
+    var sw = Math.sin(t * 0.06) * (wide / 2 - 2)
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(cx - 2, y0, 4, 3)                     // pivot
+    ctx.fillStyle = pal.rig
+    var bx = Math.round(cx + sw)
+    var by = y0 + tall - 6
+    var an = Math.max(1, Math.round(Math.max(Math.abs(bx - cx), by - y0)))
+    for (var pa = 0; pa <= an; pa++)
+      ctx.fillRect(Math.round(cx + (bx - cx) * pa / an), Math.round(y0 + 3 + (by - y0 - 3) * pa / an), 2, 2)
+    ctx.fillStyle = show ? hot : pal.warn
+    hzTri(ctx, bx, by + 5, 4, 6, -1)                   // the blade
+    break
+
+  case "geyser":
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0, y1 - 3, wide, 3)                  // grate
+    ctx.fillStyle = pal.rigDark
+    for (var gg = x0 + 1; gg < x1 - 1; gg += 3) ctx.fillRect(gg, y1 - 3, 1, 3)
+    if (show) {
+      // A plume that billows wider the higher it gets.
+      for (var pu = 0; pu < (live ? tall - 4 : 4); pu++) {
+        var pw = Math.round((wide / 2) * (0.3 + (pu / tall) * (live ? 1.4 : 0.4)))
+        ctx.fillStyle = (pu + Math.floor(t / 2)) % 4 === 0 ? pal.fireHot : hot
+        ctx.fillRect(cx - pw, y1 - 4 - pu, pw * 2, 1)
       }
     }
+    break
+
+  case "rockfall":
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0, y0, wide, 3)                      // cracked slab
+    ctx.fillStyle = pal.rig
+    for (var cr = 0; cr < wide; cr += 5) ctx.fillRect(x0 + cr, y0 + 3, 3, 1)
+    ctx.fillStyle = pal.warn
+    ctx.fillRect(x0 + 2, y0 + 1, wide - 4, 1)
+    if (show) {
+      // Rocks on their way down, at staggered heights.
+      ctx.fillStyle = live ? pal.rig : pal.warn
+      for (var rk = 0; rk < 4; rk++) {
+        var ry = y0 + 4 + ((t * 3 + rk * 17) % Math.max(1, tall - 6))
+        ctx.fillRect(x0 + 2 + rk * 5, ry, live ? 4 : 2, live ? 4 : 2)
+      }
+    }
+    break
+
+  case "piston":
+    // A ram in a housing, driven out sideways.
+    var ext = live ? wide - 6 : (winding ? 3 : 0)
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0, y0, 5, tall)                      // housing
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0 + 5, y0 + 2, ext, tall - 4)        // the ram
+    ctx.fillStyle = show ? hot : pal.warn
+    ctx.fillRect(x0 + 5 + ext, y0 + 1, 3, tall - 2)    // the head
+    break
+
+  // --- field: always live -------------------------------------------------
+  case "brazier":
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(cx - 4, y1 - 4, 8, 4)                 // bowl
+    ctx.fillRect(cx - 1, y1 - 6, 2, 2)
+    // Flames, flickering on their own clock.
+    for (var fl = 0; fl < tall - 5; fl++) {
+      var fw2 = Math.max(1, Math.round((3 - fl * 0.35) + Math.sin((t + fl * 3) * 0.3)))
+      ctx.fillStyle = fl < 2 ? pal.fireHot : pal.fire
+      ctx.fillRect(cx - fw2, y1 - 6 - fl, fw2 * 2, 1)
+    }
+    break
+
+  case "fence":
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0, y0 + 2, 2, tall - 2)              // posts
+    ctx.fillRect(x1 - 2, y0 + 2, 2, tall - 2)
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0, y1 - 2, wide, 2)
+    // Wires, with a charge running between them.
+    for (var wi = 0; wi < 3; wi++) {
+      var wy = y0 + 4 + wi * Math.max(2, Math.round((tall - 6) / 3))
+      ctx.fillStyle = pal.rigDark
+      ctx.fillRect(x0, wy, wide, 1)
+      if ((Math.floor(t / 3) + wi) % 3 === 0) {
+        ctx.fillStyle = pal.fireHot
+        hzBolt(ctx, x0 + 1, wy, x1 - 1, wy, seed + wi + t, 1)
+      }
+    }
+    break
+
+  default:
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0, y0, wide, 4)
+    if (show) { ctx.fillStyle = hot; ctx.fillRect(x0, y0, wide, tall) }
   }
 
   ctx.globalAlpha = 1

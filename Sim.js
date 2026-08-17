@@ -110,27 +110,62 @@ var BIOMES = ["Cavern", "Ruins", "Frost", "Foundry"]
 //   bridgeAt    drop depth at which it prefers building over stepping off
 //   bashFirst   reaches for the basher before the climber at a wall
 //   blockBias   extra willingness to stand in the way of a bottomless drop
+// bridgeAt      how deep a drop has to be before it lays bricks instead
+// fallMargin     how many cells early the umbrella comes out
+// turnLimit      how long it keeps working the same wall before giving up
+// bashFirst      shoulder into a wall, or go over it
+// blockBias      how readily it stands and blocks
+// buildCap       bridges it will lay in a lifetime
+// noFloat        would rather build a way across than come down under a chute
+// standDown      gives up on itself and becomes furniture once it is this stuck
+// digBias        how much sooner than the others it decides the way on is down
+// mineFirst      cuts a ramp out sideways rather than dropping a shaft
 var TRAITS = {
-  steady:   { label: "steady",   turnLimit: 3, fallMargin: 0, bridgeAt: 8,  bashFirst: false, blockBias: 0 },
-  brave:    { label: "brave",    turnLimit: 4, fallMargin: 0, bridgeAt: 13, bashFirst: true,  blockBias: 0 },
-  cautious: { label: "cautious", turnLimit: 3, fallMargin: 2, bridgeAt: 4,  bashFirst: false, blockBias: 2 },
-  curious:  { label: "curious",  turnLimit: 2, fallMargin: 1, bridgeAt: 9,  bashFirst: false, blockBias: 0 },
-  stubborn: { label: "stubborn", turnLimit: 6, fallMargin: 0, bridgeAt: 9,  bashFirst: true,  blockBias: 0 },
-  tinkerer: { label: "tinkerer", turnLimit: 3, fallMargin: 2, bridgeAt: 3,  bashFirst: false, blockBias: 1 }
+  steady:   { label: "steady",   turnLimit: 3, fallMargin: 0, bridgeAt: 8,  bashFirst: false, blockBias: 0, buildCap: 2, noFloat: false, standDown: 0, digBias: 0 },
+  brave:    { label: "brave",    turnLimit: 5, fallMargin: 0, bridgeAt: 15, bashFirst: true,  blockBias: -1, buildCap: 1, noFloat: false, standDown: 0, digBias: 0 },
+  cautious: { label: "cautious", turnLimit: 2, fallMargin: 3, bridgeAt: 3,  bashFirst: false, blockBias: 2, buildCap: 3, noFloat: false, standDown: 0, digBias: 0 },
+  curious:  { label: "curious",  turnLimit: 2, fallMargin: 1, bridgeAt: 9,  bashFirst: false, blockBias: 0, buildCap: 2, noFloat: false, standDown: 0, digBias: 220 },
+  stubborn: { label: "stubborn", turnLimit: 8, fallMargin: 0, bridgeAt: 9,  bashFirst: true,  blockBias: -1, buildCap: 2, noFloat: false, standDown: 0, digBias: -160 },
+  tinkerer: { label: "tinkerer", turnLimit: 3, fallMargin: 2, bridgeAt: 7,  bashFirst: false, blockBias: 1, buildCap: 2, noFloat: false, standDown: 0, digBias: 150, mineFirst: true },
+
+  // Would rather build a way across than fall down one. Bridges almost any
+  // gap, lays twice as many as anyone else, and reaches for the umbrella only
+  // when there is nothing on the far side to reach. Watching one bridge a drop
+  // that three others have already stepped off is the clearest thing a
+  // personality does on this board.
+  engineer: { label: "engineer", turnLimit: 3, fallMargin: 1, bridgeAt: 1,  bashFirst: false, blockBias: 0, buildCap: 5, noFloat: true,  standDown: 0, digBias: 0 },
+
+  // Stands. Blocks at the first excuse, and when it has been beaten by the
+  // same wall long enough it stops trying and plants itself where it stands —
+  // which is a problem for everyone behind it, and the reason somebody is
+  // about to have to dig.
+  // standDown has to come in UNDER turnLimit: considerEscape zeroes `turns`
+  // the moment it hits the limit, so a stand-down count above it can never be
+  // reached and the sentinel blocked no more often than anybody else.
+  sentinel: { label: "sentinel", turnLimit: 4, fallMargin: 1, bridgeAt: 7,  bashFirst: false, blockBias: 3, buildCap: 1, noFloat: false, standDown: 3, digBias: 0 },
+
+  // Decides the way on is down long before anybody else does.
+  burrower: { label: "burrower", turnLimit: 2, fallMargin: 1, bridgeAt: 11, bashFirst: false, blockBias: 0, buildCap: 1, noFloat: false, standDown: 0, digBias: 340 }
 }
 
 // Weighted so most of the colony is unremarkable and the characters stand out.
 // An even split just reads as noise.
+// Weighted. Steady is still most of any colony — a board where everyone is a
+// character is a board with no characters on it — but the rarer ones are rare
+// enough to be worth spotting and common enough to turn up most levels.
 var TRAIT_POOL = [
-  "steady", "steady", "steady", "steady", "steady", "steady",
+  "steady", "steady", "steady", "steady", "steady",
   "brave", "brave", "brave",
   "cautious", "cautious", "cautious",
   "curious", "curious",
   "stubborn", "stubborn",
-  "tinkerer", "tinkerer"
+  "tinkerer", "tinkerer",
+  "engineer", "engineer",
+  "sentinel",
+  "burrower"
 ]
 
-var TRAIT_ORDER = ["steady", "brave", "cautious", "curious", "stubborn", "tinkerer"]
+var TRAIT_ORDER = ["steady", "brave", "cautious", "curious", "stubborn", "tinkerer", "engineer", "sentinel", "burrower"]
 
 function traitOf(ag) { return TRAITS[ag.trait] || TRAITS.steady }
 
@@ -882,35 +917,37 @@ function placeObstacles(w, rng, c, index, corridors) {
 
 var HAZARDS = [
   // watch: mounted, dormant, wakes when somebody walks into reach
-  { id: "gun",      name: "machine gun",  mech: "watch", mount: "ceiling", look: "burst", reach: 13, charge: 16, fire: 24, rest: 66, w: 5, h: 6 },
-  { id: "sentry",   name: "sentry",       mech: "watch", mount: "wall",    look: "beam",  reach: 16, charge: 34, fire: 14, rest: 74, w: 3, h: 4 },
-  { id: "darts",    name: "dart trap",    mech: "watch", mount: "wall",    look: "beam",  reach: 11, charge: 18, fire: 10, rest: 52, w: 3, h: 3 },
-  { id: "flame",    name: "flame vent",   mech: "watch", mount: "ceiling", look: "flame", reach: 9,  charge: 30, fire: 26, rest: 70, w: 4, h: 6 },
-  { id: "tesla",    name: "tesla coil",   mech: "watch", mount: "floor",   look: "burst", reach: 10, charge: 24, fire: 18, rest: 62, w: 5, h: 5 },
-  { id: "turret",   name: "turret",       mech: "watch", mount: "ceiling", look: "beam",  reach: 15, charge: 18, fire: 20, rest: 68, w: 4, h: 5 },
+  { id: "gun",      name: "machine gun",  mech: "watch", mount: "ceiling", reach: 13, charge: 16, fire: 24, rest: 66, w: 5, h: 6 },
+  { id: "sentry",   name: "sentry",       mech: "watch", mount: "wall",    reach: 16, charge: 34, fire: 14, rest: 74, w: 3, h: 4 },
+  { id: "darts",    name: "dart trap",    mech: "watch", mount: "wall",    reach: 11, charge: 18, fire: 10, rest: 52, w: 3, h: 3 },
+  { id: "flame",    name: "flame vent",   mech: "watch", mount: "ceiling", reach: 9,  charge: 30, fire: 26, rest: 70, w: 4, h: 6 },
+  { id: "tesla",    name: "tesla coil",   mech: "watch", mount: "floor",   reach: 10, charge: 24, fire: 18, rest: 62, w: 5, h: 5 },
+  { id: "turret",   name: "turret",       mech: "watch", mount: "ceiling", reach: 15, charge: 18, fire: 20, rest: 68, w: 4, h: 5 },
+
+  // snipe: picks a target it can actually see, anywhere down the corridor
+  { id: "sniper",   name: "sniper",       mech: "snipe", mount: "wall",    reach: 46, charge: 44, fire: 10, rest: 150, w: 3, h: 3 },
 
   // beam: keeps its own schedule, telegraphs with a sight line
-  { id: "sniper",   name: "sniper",       mech: "beam",  mount: "wall",    look: "beam",  reach: 30, charge: 40, fire: 18, rest: 74, w: 4, h: 4 },
-  { id: "lasergrid",name: "laser grid",   mech: "beam",  mount: "ceiling", look: "beam",  reach: 6,  charge: 30, fire: 30, rest: 60, w: 6, h: 6 },
-  { id: "sweeper",  name: "sweeper",      mech: "beam",  mount: "ceiling", look: "beam",  reach: 10, charge: 26, fire: 34, rest: 56, w: 8, h: 6 },
-  { id: "tripwire", name: "tripwire",     mech: "beam",  mount: "floor",   look: "beam",  reach: 7,  charge: 20, fire: 16, rest: 58, w: 7, h: 2 },
+  { id: "lasergrid",name: "laser grid",   mech: "beam",  mount: "ceiling", reach: 6,  charge: 30, fire: 30, rest: 60, w: 6, h: 6 },
+  { id: "sweeper",  name: "sweeper",      mech: "beam",  mount: "ceiling", reach: 10, charge: 26, fire: 34, rest: 56, w: 8, h: 6 },
+  { id: "tripwire", name: "tripwire",     mech: "beam",  mount: "floor",   reach: 7,  charge: 20, fire: 16, rest: 58, w: 7, h: 2 },
 
   // plate: armed by being stood on
-  { id: "spikes",   name: "floor spikes", mech: "plate", mount: "floor",   look: "spikes", reach: 3, charge: 16, fire: 22, rest: 46, w: 5, h: 3 },
-  { id: "beartrap", name: "bear trap",    mech: "plate", mount: "floor",   look: "spikes", reach: 2, charge: 8,  fire: 18, rest: 40, w: 3, h: 2 },
-  { id: "sawblade", name: "saw blade",    mech: "plate", mount: "floor",   look: "spikes", reach: 3, charge: 20, fire: 26, rest: 50, w: 4, h: 3 },
-  { id: "grinder",  name: "grinder",      mech: "plate", mount: "floor",   look: "spikes", reach: 4, charge: 24, fire: 30, rest: 54, w: 6, h: 3 },
+  { id: "spikes",   name: "floor spikes", mech: "plate", mount: "floor",   reach: 3, charge: 16, fire: 22, rest: 46, w: 5, h: 3 },
+  { id: "beartrap", name: "bear trap",    mech: "plate", mount: "floor",   reach: 2, charge: 8,  fire: 18, rest: 40, w: 3, h: 2 },
+  { id: "sawblade", name: "saw blade",    mech: "plate", mount: "floor",   reach: 3, charge: 20, fire: 26, rest: 50, w: 4, h: 3 },
+  { id: "grinder",  name: "grinder",      mech: "plate", mount: "floor",   reach: 4, charge: 24, fire: 30, rest: 54, w: 6, h: 3 },
 
   // cycle: never triggers, never stops
-  { id: "crusher",  name: "crusher",      mech: "cycle", mount: "ceiling", look: "burst",  reach: 0, charge: 34, fire: 20, rest: 62, w: 5, h: 6 },
-  { id: "pendulum", name: "pendulum",     mech: "cycle", mount: "ceiling", look: "beam",   reach: 0, charge: 28, fire: 24, rest: 48, w: 6, h: 6 },
-  { id: "geyser",   name: "steam vent",   mech: "cycle", mount: "floor",   look: "flame",  reach: 0, charge: 30, fire: 26, rest: 64, w: 4, h: 6 },
-  { id: "rockfall", name: "rockfall",     mech: "cycle", mount: "ceiling", look: "burst",  reach: 0, charge: 36, fire: 18, rest: 72, w: 5, h: 6 },
-  { id: "piston",   name: "piston",       mech: "cycle", mount: "wall",    look: "burst",  reach: 0, charge: 18, fire: 24, rest: 56, w: 5, h: 4 },
+  { id: "crusher",  name: "crusher",      mech: "cycle", mount: "ceiling", reach: 0, charge: 34, fire: 20, rest: 62, w: 5, h: 6 },
+  { id: "pendulum", name: "pendulum",     mech: "cycle", mount: "ceiling", reach: 0, charge: 28, fire: 24, rest: 48, w: 6, h: 6 },
+  { id: "geyser",   name: "steam vent",   mech: "cycle", mount: "floor",   reach: 0, charge: 30, fire: 26, rest: 64, w: 4, h: 6 },
+  { id: "rockfall", name: "rockfall",     mech: "cycle", mount: "ceiling", reach: 0, charge: 36, fire: 18, rest: 72, w: 5, h: 6 },
+  { id: "piston",   name: "piston",       mech: "cycle", mount: "wall",    reach: 0, charge: 18, fire: 24, rest: 56, w: 5, h: 4 },
 
   // field: always live. Narrow, because there is no moment when it isn't.
-  { id: "brazier",  name: "brazier",      mech: "field", mount: "floor",   look: "flame",  reach: 0, charge: 0, fire: 1, rest: 0, w: 2, h: 4 },
-  { id: "fence",    name: "electric fence", mech: "field", mount: "floor", look: "burst",  reach: 0, charge: 0, fire: 1, rest: 0, w: 2, h: 5 }
+  { id: "brazier",  name: "brazier",      mech: "field", mount: "floor",   reach: 0, charge: 0, fire: 1, rest: 0, w: 2, h: 4 },
+  { id: "fence",    name: "electric fence", mech: "field", mount: "floor", reach: 0, charge: 0, fire: 1, rest: 0, w: 2, h: 5 }
 ]
 
 function hazardSpec(id) {
@@ -988,14 +1025,15 @@ function placeHazard(w, rng, corridors, ci) {
     kind: spec.id,
     name: spec.name,
     mount: spec.mount,
-    look: spec.look,
     corridor: ci,
     x: x,
     floorY: c.floorY,
     ceilY: c.floorY - CORR_H,
     phase: spec.mech === "field" ? "fire" : "idle",
     t: 0,
-    fired: 0
+    fired: 0,
+    lineTo: -1,
+    lineY: 0
   }
 
   // The zone that is lethal while it is firing. Anchored to whatever it hangs
@@ -1043,6 +1081,56 @@ function hazardWitnessed(w, h) {
   return false
 }
 
+// Nothing solid between two points. Walked rather than done properly with a
+// Bresenham line — at this grid size the difference is invisible and the loop
+// is read far more often than it runs.
+function lineClear(w, x0, y0, x1, y1) {
+  var steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0))
+  if (steps === 0) return true
+  for (var i = 1; i < steps; i++) {
+    var t = i / steps
+    if (solid(w, Math.round(x0 + (x1 - x0) * t), Math.round(y0 + (y1 - y0) * t))) return false
+  }
+  return true
+}
+
+// The sniper is the one danger that reaches past its own fixture. It picks the
+// nearest agent it can actually see — a long way off, but only in a straight
+// unobstructed line — holds a sight on it while it winds up, and fires once.
+// Then it reloads for five seconds, which is the whole reason it isn't simply
+// a corridor nobody may enter: it gets one, and then everyone else has a
+// window.
+//
+// Nearest rather than furthest, because a sight line drawn across half the
+// board to somebody behind three other agents reads as a bug.
+function sniperAcquire(w, h, spec) {
+  var sx = (h.zx0 + h.zx1) / 2
+  var sy = (h.zy0 + h.zy1) / 2
+  var best = null
+  var bestD = Infinity
+  for (var i = 0; i < w.agents.length; i++) {
+    var ag = w.agents[i]
+    if (ag.gone || ag.state === "saved") continue
+    var d = Math.abs(ag.x - sx)
+    if (d > spec.reach || d < 4) continue
+    if (Math.abs(ag.y - sy) > CORR_H) continue
+    if (!lineClear(w, Math.round(sx), Math.round(sy), Math.floor(ag.x), Math.floor(ag.y) - 1)) continue
+    if (d < bestD) { bestD = d; best = ag }
+  }
+  return best
+}
+
+function sniperTarget(w, h) {
+  if (h.targetId === undefined) return null
+  for (var i = 0; i < w.agents.length; i++) {
+    if (w.agents[i].id === h.targetId) {
+      var ag = w.agents[i]
+      return (ag.gone || ag.state === "saved") ? null : ag
+    }
+  }
+  return null
+}
+
 function stepHazard(w) {
   var h = w.hazard
   if (!h) return
@@ -1053,6 +1141,8 @@ function stepHazard(w) {
     hazardStrike(w, h)
     return
   }
+
+  if (spec.mech === "snipe") { stepSniper(w, h, spec); return }
 
   if (h.phase === "idle") {
     var wake = (spec.mech === "watch") ? hazardWatching(w, h, spec) : h.t >= spec.rest
@@ -1074,6 +1164,57 @@ function stepHazard(w) {
     if (h.t >= spec.fire) { h.phase = "rest"; h.t = 0 }
 
   } else {
+    if (h.t >= spec.rest) { h.phase = "idle"; h.t = 0 }
+  }
+}
+
+function stepSniper(w, h, spec) {
+  var sx = Math.round((h.zx0 + h.zx1) / 2)
+  var sy = Math.round((h.zy0 + h.zy1) / 2)
+
+  if (h.phase === "idle") {
+    var mark = sniperAcquire(w, h, spec)
+    if (!mark) { h.lineTo = -1; return }
+    h.targetId = mark.id
+    h.phase = "charge"
+    h.t = 0
+
+  } else if (h.phase === "charge") {
+    var tgt = sniperTarget(w, h)
+    // The sight follows while it winds up, and drops if the target gets behind
+    // something. Walking out of the line is a real escape, which is what makes
+    // a shot from off-screen survivable rather than simply unfair.
+    if (!tgt || !lineClear(w, sx, sy, Math.floor(tgt.x), Math.floor(tgt.y) - 1)) {
+      h.phase = "idle"; h.t = 0; h.lineTo = -1; h.targetId = undefined
+      return
+    }
+    h.lineTo = tgt.x
+    h.lineY = tgt.y - 1
+    if (h.t >= spec.charge) {
+      h.phase = "fire"
+      h.t = 0
+      h.fired++
+      if (hazardWitnessed(w, h)) w.hazardKnown = true
+    }
+
+  } else if (h.phase === "fire") {
+    var hit = sniperTarget(w, h)
+    if (hit && lineClear(w, sx, sy, Math.floor(hit.x), Math.floor(hit.y) - 1)) {
+      h.lineTo = hit.x
+      h.lineY = hit.y - 1
+      addBlood(w, hit.x, hit.y - 1.5, 16)
+      hit.gone = true
+      hit.state = "dead"
+      w.lost++
+      w.hazardKnown = true
+      w.hazardKills++
+      w.lastEvent = "hazard"
+      h.targetId = undefined
+    }
+    if (h.t >= spec.fire) { h.phase = "rest"; h.t = 0; h.lineTo = -1; h.targetId = undefined }
+
+  } else {
+    // Reloading. Long, deliberately: one shot then a window for everybody else.
     if (h.t >= spec.rest) { h.phase = "idle"; h.t = 0 }
   }
 }
@@ -1109,6 +1250,18 @@ function hazardAhead(w, ag, nx) {
   if (h.phase !== "charge" && h.phase !== "fire") return false
   var ax = Math.floor(nx)
   var footY = Math.floor(ag.y)
+
+  // The sniper's dangerous ground is the sight line, which can be most of a
+  // corridor, so what gets avoided is the stretch it is currently covering
+  // rather than the box the rifle sits in.
+  if (h.kind === "sniper") {
+    if (h.lineTo === undefined || h.lineTo < 0) return false
+    if (Math.abs(footY - h.zy1) > CORR_H) return false
+    var a = Math.min(h.zx0, h.lineTo)
+    var b = Math.max(h.zx1, h.lineTo)
+    return ax >= a - 1 && ax <= b + 1
+  }
+
   if (footY < h.zy0 - 2 || footY > h.zy1 + 2) return false
   return ax >= h.zx0 - 2 && ax <= h.zx1 + 2
 }
@@ -1358,6 +1511,18 @@ function hitWall(w, ag) {
   // whole colony back.
   if (h <= MAX_CLIMB && willBuild(ag) && take(w, "builder")) { startBuild(w, ag); return }
 
+  // Some of them stop trying. A sentinel beaten by the same wall this many
+  // times gives up on getting home and plants itself where it stands, which is
+  // a genuine problem for everybody behind it — they now have a wall in front
+  // and one of their own colleagues behind, and the only way out of a corridor
+  // with both ends shut is down. It is also, unlike every other blocker, a
+  // sacrifice nobody asked for.
+  if (trait.standDown > 0 && ag.turns >= trait.standDown &&
+      countComing(w, ag) >= 1 && take(w, "blocker")) {
+    ag.state = "block"
+    return
+  }
+
   turnAround(w, ag)
 }
 
@@ -1391,6 +1556,11 @@ function edgeAhead(w, ag, nx) {
   // The umbrella comes out early for the ones who like a margin. It can only
   // ever come out EARLIER than the lethal limit, never later — a personality
   // that gets its owner killed isn't a personality, it's a bug.
+  // The engineer's whole character. Anyone else facing a drop this deep reaches
+  // for the umbrella; it looks for something to build to first, and only takes
+  // the chute when there is nothing on the far side worth reaching.
+  if (trait.noFloat && far > 2 && willBuild(ag) && take(w, "builder")) { startBuild(w, ag); return }
+
   var wantsChute = depth > SAFE_FALL - trait.fallMargin
 
   if (!wantsChute) { ag.x = nx; startFall(w, ag); return }
@@ -1451,7 +1621,10 @@ function considerEscape(w, ag) {
     // coin flip, and so both skills actually get used — ordering digger first
     // for everyone meant the miner was a number on the toolbar that never
     // moved, because the digger budget almost never ran out.
-    var ramp = ag.id % 2 === 0
+    // Which way out it cuts. It used to be whether the id was even, which is
+    // as arbitrary as it sounds; a tinkerer takes the ramp, everyone else the
+    // shaft, and the two look completely different on the board.
+    var ramp = traitOf(ag).mineFirst === true || ag.id % 2 === 0
     if (ramp && take(w, "miner")) { ag.state = "mine"; ag.timer = 0; return true }
     if (take(w, "digger")) { ag.state = "dig"; ag.timer = 0; return true }
     if (take(w, "miner")) { ag.state = "mine"; ag.timer = 0; return true }
@@ -1508,7 +1681,7 @@ function startBuild(w, ag) {
 // bridging. Left uncapped, the keen ones spend a whole level constructing a
 // private folly, and the earth they add is what the ones behind them then get
 // stuck on.
-function willBuild(ag) { return ag.built < 2 }
+function willBuild(ag) { return ag.built < traitOf(ag).buildCap }
 
 function spawn(w) {
   // Drawn from the world's own stream so a given level always sends the same
@@ -2034,7 +2207,10 @@ function forceEscape(w, ag) {
   // of the room it was standing in.
   if (exitBelow(w, ag) && solid(w, Math.floor(ag.x), footY + 1)
       && at(w, Math.floor(ag.x), footY + 1) !== STEEL) {
-    var ramp = ag.id % 2 === 0
+    // Which way out it cuts. It used to be whether the id was even, which is
+    // as arbitrary as it sounds; a tinkerer takes the ramp, everyone else the
+    // shaft, and the two look completely different on the board.
+    var ramp = traitOf(ag).mineFirst === true || ag.id % 2 === 0
     if (grant(w, ramp ? "miner" : "digger")) {
       ag.state = ramp ? "mine" : "dig"
       ag.timer = 0
@@ -2213,7 +2389,7 @@ function step(w) {
     // Getting nowhere for long enough: stop waiting for the budget to allow it
     // (see forceEscape). Only from a walk, so it never interrupts work already
     // under way.
-    if (ag.state === "walk" && ag.idle > PATIENCE) forceEscape(w, ag)
+    if (ag.state === "walk" && ag.idle > PATIENCE - traitOf(ag).digBias) forceEscape(w, ag)
 
     // Still nowhere, well after the shovel. Stuck on the spot rather than
     // pacing between two places, which the bucket count above cannot see.

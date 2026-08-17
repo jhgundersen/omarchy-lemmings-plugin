@@ -162,7 +162,10 @@ work:
 | **cautious** | Bridges gaps it could have jumped, gets its umbrella out with cells to spare, and is the one most likely to stand and block. |
 | **curious** | Bored of a corridor soonest, so it's usually the first to decide the way on is *down* and start digging. |
 | **stubborn** | Works the same wall long after the others have turned back. |
-| **tinkerer** | Reaches for bricks first, even where a bash would do. |
+| **tinkerer** | Cuts its way out sideways where the others drop a shaft, and reaches for tools sooner. |
+| **engineer** | Would rather build a way across than fall down one. Bridges almost anything, lays twice as many as anyone else, and takes the umbrella only when there's nothing on the far side to reach. |
+| **sentinel** | Blocks at the first excuse, and when the same wall has beaten it enough times it stops trying and plants itself where it stands — which is a problem for everybody behind it, and the reason somebody is about to have to dig. |
+| **burrower** | Decides the way on is *down* long before anybody else does. |
 
 On top of the personality each one carries its own small variation, so two
 cautious agents aren't the same agent twice: where its bridge-or-jump line
@@ -172,6 +175,28 @@ wall outright.
 The interesting part is watching two of them arrive at the same ledge and
 disagree about it — the cautious one laying a bridge across a drop the brave
 one has already walked off. Turn labels on with `w` to see who's who.
+
+They are measurably different rather than differently labelled. Per hundred
+agents of each, counting how often each one starts doing something:
+
+| | builds | climbs | bashes | mines | digs | blocks | umbrella |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| steady | 24 | 83 | 47 | 5 | 4 | 8 | 51 |
+| brave | 18 | 41 | 66 | 2 | 3 | 9 | 47 |
+| cautious | 94 | 14 | 31 | 16 | 21 | 8 | 193 |
+| curious | 63 | 73 | 50 | 10 | 15 | 8 | 53 |
+| stubborn | 15 | 37 | 64 | 2 | 1 | 12 | 54 |
+| tinkerer | 37 | 83 | 48 | 13 | 1 | 8 | 55 |
+| engineer | 97 | 7 | 26 | 8 | 5 | 12 | 47 |
+| sentinel | 26 | 94 | 42 | 5 | 10 | 20 | 49 |
+| burrower | 82 | 81 | 57 | 20 | 20 | 9 | 48 |
+
+The engineer builds fourteen times more often than it climbs; the cautious one
+gets through nearly two umbrellas each; the sentinel blocks two and a half
+times as often as anybody else. Getting that last one to work took noticing
+that `standDown` has to come in *under* `turnLimit` — the escape check zeroes
+the turn count the moment it hits the limit, so a stand-down threshold above it
+could never be reached and the sentinel blocked no more often than anyone.
 
 Nothing here makes an agent less safe: a personality only ever brings an
 umbrella out *earlier* than the point where a landing would kill, never
@@ -327,6 +352,7 @@ the same five are twenty things to look at:
 | | |
 | --- | --- |
 | **watch** | dormant until somebody comes within reach, then winds up and fires |
+| **snipe** | picks one target it has line of sight to, anywhere down the corridor |
 | **beam** | fires on its own schedule whether or not anyone is there |
 | **plate** | armed by being stood on, and goes off a moment later |
 | **cycle** | never triggers and never stops — just keeps its own time |
@@ -335,6 +361,20 @@ the same five are twenty things to look at:
 Everything except `field` rests between firings for long enough to walk
 through, and everything winds up first, visibly, for long enough to read. Both
 are what make a danger sitting on the route fair rather than arbitrary.
+
+All twenty-one have their own fixture and their own effect. They were built on
+four shared looks, which meant eight of them drew as the same beam — and a
+hazard you cannot tell from the last one is, from where you sit, the same
+hazard. The sniper has a barrel and a scope, the bear trap's jaws are open
+until they aren't, the sawblade rises out of its slot turning, the crusher
+comes down on two rams, the pendulum swings.
+
+The sniper is the only one that reaches past its own fixture. It picks the
+nearest agent it can actually see — a long way off, but only in a straight
+unobstructed line — holds a sight on it while it winds up, and fires once.
+Walking behind something while it aims is a real escape, and the shot is
+followed by a five-second reload, which is what stops it being a corridor
+nobody may enter: it gets one, and everybody else gets a window.
 
 The colony knows nothing about it. A danger is scenery until somebody is
 present when it goes off — that first death is the only thing in the entire
