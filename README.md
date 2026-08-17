@@ -271,6 +271,11 @@ inside a single cell **hops** — three cells of lift, free, no skill, which is
 under the height of everything the level puts in the way on purpose, so it only
 ever gets an agent out of somewhere it should never have been stuck.
 
+A builder also checks the space its next course will occupy. Somebody caught at
+foot height rides the new brick upward; a deeper overlap makes the builder wait,
+then abandon the bridge after three seconds rather than masonry an agent into it
+or deadlock with another builder.
+
 And an agent that re-treads the same few cells five times over with no progress
 between them is condemned and handed a bomb. A bomb rather than simply deleting
 it, because the explosion is the useful part: an agent only paces somewhere it

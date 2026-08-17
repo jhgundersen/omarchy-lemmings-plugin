@@ -235,6 +235,56 @@ function headroom(w, x, footY) {
   return true
 }
 
+// Terrain that is being ADDED must not appear inside an agent. Destructive
+// skills are allowed to remove the ground under somebody; builders and slabs
+// have the opposite responsibility. Agents are about two cells wide, so test
+// the cell centre against their horizontal centre rather than only floor(x).
+function agentOccupiesCell(w, x, y, except) {
+  for (var i = 0; i < w.agents.length; i++) {
+    var ag = w.agents[i]
+    if (ag === except || ag.gone || ag.state === "saved") continue
+    var footY = Math.floor(ag.y)
+    if (Math.abs((x + 0.5) - ag.x) >= 1) continue
+    if (y >= footY - AGENT_H + 1 && y <= footY) return true
+  }
+  return false
+}
+
+// A rising bridge meeting somebody's feet should carry them up, not wait for
+// them to walk through the brick and not entomb them. Work out every lift
+// before moving anybody so the operation is all-or-nothing. Deeper body hits,
+// active workers and blocked headroom are not safe to rearrange; the builder
+// waits for those in stepBuild instead.
+function makeBuildRoom(w, cells, builder) {
+  var lifts = {}
+  for (var ci = 0; ci < cells.length; ci++) {
+    var cell = cells[ci]
+    for (var i = 0; i < w.agents.length; i++) {
+      var ag = w.agents[i]
+      if (ag === builder || ag.gone || ag.state === "saved") continue
+      var footY = Math.floor(ag.y)
+      if (Math.abs((cell.x + 0.5) - ag.x) >= 1) continue
+      if (cell.y < footY - AGENT_H + 1 || cell.y > footY) continue
+      var newFoot = cell.y - 1
+      var rise = footY - newFoot
+      if (rise < 1 || rise > MAX_STEP) return false
+      if (ag.state !== "walk" && ag.state !== "fall") return false
+      var ax = Math.floor(ag.x)
+      if (solid(w, ax, newFoot) || !headroom(w, ax, newFoot)) return false
+      if (!lifts[ag.id] || newFoot < lifts[ag.id].y) lifts[ag.id] = { ag: ag, y: newFoot }
+    }
+  }
+  for (var id in lifts) {
+    var lift = lifts[id]
+    lift.ag.y = lift.y
+    lift.ag.state = "walk"
+    lift.ag.fall = 0
+    lift.ag.floater = false
+    lift.ag.still = 0
+  }
+  return true
+}
+
 // ---------------------------------------------------------------------------
 // Deterministic RNG. Level N always generates the same level, the same way
 // the Snake plugin's obstacle layouts are a pure function of the level number
@@ -1152,7 +1202,8 @@ function specialCut(w, ag, act, dry) {
   } else if (act === "slab") {
     for (i = 1; i <= 6; i++)
       for (j = 1; j <= 3; j++)
-        if (at(w, fx + d * i, fy + j) === EMPTY) {
+        if (at(w, fx + d * i, fy + j) === EMPTY
+            && !agentOccupiesCell(w, fx + d * i, fy + j, ag)) {
           if (dry) return true
           setCell(w, fx + d * i, fy + j, ROCK); moved = true
         }
@@ -1983,6 +2034,7 @@ function startClimb(w, ag) {
 function startBuild(w, ag) {
   ag.state = "build"
   ag.bricks = 12
+  ag.buildWait = 0
   ag.timer = 0
   ag.built++
 }
@@ -2196,6 +2248,24 @@ function stepBuild(w, ag) {
 
   var footY = Math.floor(ag.y)
   var bx = Math.floor(ag.x) + ag.dir
+
+  // Wait for traffic to clear instead of laying a bridge through somebody's
+  // body. This is not theoretical: sloping and crossing bridges put the
+  // builder's floor row through the head or feet of agents on the path below.
+  // Give them three seconds to move; if they do not, abandon this bridge so
+  // two opposing builders cannot wait on each other forever.
+  var cells = []
+  for (var oi = 0; oi < 3; oi++) cells.push({ x: bx + ag.dir * oi, y: footY + 1 })
+  if (!makeBuildRoom(w, cells, ag)) {
+    ag.buildWait++
+    if (ag.buildWait >= 15) {
+      ag.dir = -ag.dir
+      ag.state = "walk"
+      ag.turns++
+    }
+    return
+  }
+  ag.buildWait = 0
 
   // A brick is three cells laid at foot level; the agent then steps along it.
   for (var i = 0; i < 3; i++) setCell(w, bx + ag.dir * i, footY + 1, DIRT)
