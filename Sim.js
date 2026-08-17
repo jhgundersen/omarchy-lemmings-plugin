@@ -31,6 +31,13 @@ var EMPTY = 0
 var DIRT = 1   // soft: bashable, minable, diggable
 var ROCK = 2   // hard-looking but still workable; purely a visual tier
 var STEEL = 3  // permanent: every skill refuses it and the agent turns back
+var ORE = 4    // another visual tier, worked exactly like dirt and rock
+
+// DIRT, ROCK and ORE are the same material as far as anything that thinks is
+// concerned. Nothing in the brain ever compares a cell against one of them:
+// solid() asks whether a cell is not EMPTY, and every skill asks only whether
+// it is STEEL. That is what makes the strata in fillEarth free — the board can
+// be given as much geology as it can carry without moving a single decision.
 
 // An agent is 4 cells (16px) tall and ~2 cells wide.
 var AGENT_H = 4
@@ -145,12 +152,25 @@ function solid(w, x, y) {
   return at(w, x, y) !== EMPTY
 }
 
+// Two counters, because two different things want to know about a change and
+// they do not want the same answer. `terrainVersion` drives the repaint and so
+// has to move whenever a stored cell moves, colour included. `carved` is the
+// director's evidence that anything is actually happening, and so must move
+// only when solid becomes empty or empty becomes solid.
+//
+// They used to be one counter, and with strata in the ground that quietly
+// stopped being harmless: laying a brick of dirt over a cell of rock changes
+// nothing about the shape of the level, but it changed the byte, which read to
+// the stall detector as earth being moved and bought a going-nowhere level
+// another twenty seconds before anyone stepped in.
 function setCell(w, x, y, v) {
   if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return
   var i = y * COLS + x
-  if (w.terrain[i] === v) return
+  var was = w.terrain[i]
+  if (was === v) return
   w.terrain[i] = v
   w.terrainVersion++
+  if ((was === EMPTY) !== (v === EMPTY)) w.carved++
 }
 
 // Every skill routes its terrain removal through here, so "steel is forever"
@@ -162,6 +182,7 @@ function clearCell(w, x, y) {
   if (w.terrain[i] === STEEL) return false
   w.terrain[i] = EMPTY
   w.terrainVersion++
+  w.carved++
   return true
 }
 
@@ -226,7 +247,7 @@ var N_CORR = 4
 // change COLS above and the renderer follows, which a copy in Draw.js wouldn't.
 var K = {
   COLS: COLS, ROWS: ROWS, CELL: CELL, SKY: SKY,
-  EMPTY: EMPTY, DIRT: DIRT, ROCK: ROCK, STEEL: STEEL
+  EMPTY: EMPTY, DIRT: DIRT, ROCK: ROCK, STEEL: STEEL, ORE: ORE
 }
 
 // `attempt` re-runs the SAME level with a different colony. The layout stays a
@@ -246,6 +267,7 @@ function generate(level, attempt) {
     k: K,
     terrain: new Uint8Array(COLS * ROWS),
     terrainVersion: 1,
+    carved: 0,
     agents: [],
     particles: [],
     ticks: 0,
@@ -432,36 +454,126 @@ function generate(level, attempt) {
 
 // Solid everywhere below the sky: a dirt crust over rock, with a wavy boundary
 // and a scatter of pockets so a cross-section doesn't read as two flat bands.
+// The earth before anything is carved out of it. This is the whole of the
+// board's texture: five or six strata with wavy boundaries, veins of ore
+// running through them, lenses of the wrong material, and a gritty scatter
+// along every boundary so no two layers meet on a clean line.
+//
+// All of it is free. DIRT, ROCK and ORE are one material to everything that
+// makes a decision (see the note where they're declared), so this can be as
+// busy as it likes without changing what any agent does — which is worth
+// knowing, because a corridor cut through six layers is dramatically more
+// interesting to watch than the same corridor cut through one.
 function fillEarth(w, rng) {
-  var phase = rng() * 6.28
-  var phase2 = rng() * 6.28
+  // Each stratum gets its own thickness, its own material and its own pair of
+  // sine waves, so boundaries roll independently instead of the whole stack
+  // undulating together like a stretched accordion.
+  var bands = []
+  var y0 = SKY
+  var seq = [DIRT, ROCK, DIRT, ORE, ROCK, DIRT, ROCK]
+  var seqAt = irand(rng, 0, seq.length - 1)
+  while (y0 < ROWS) {
+    // Ore turns up as a seam, never as a stratum in its own right: a band of it
+    // several cells thick reads as a third kind of ground, where a thin one
+    // reads as something running through the ground.
+    var mat = seq[seqAt % seq.length]
+    seqAt++
+    var thick = mat === ORE ? irand(rng, 1, 2) : irand(rng, 6, 12)
+    bands.push({
+      top: y0,
+      mat: mat,
+      amp1: 1 + rng() * 3.5, freq1: 0.05 + rng() * 0.1, phase1: rng() * 6.28,
+      amp2: rng() * 2, freq2: 0.17 + rng() * 0.2, phase2: rng() * 6.28
+    })
+    y0 += thick
+  }
+
+  // A cell belongs to the last band whose (wavy) top edge is above it.
+  function bandAt(x, y) {
+    var found = bands[0]
+    for (var i = 0; i < bands.length; i++) {
+      var b = bands[i]
+      var edge = b.top + b.amp1 * Math.sin(x * b.freq1 + b.phase1)
+                       + b.amp2 * Math.sin(x * b.freq2 + b.phase2)
+      if (y >= edge) found = b
+      else break
+    }
+    return found
+  }
+
   for (var y = 0; y < ROWS; y++) {
     for (var x = 0; x < COLS; x++) {
       var t
       if (y < SKY) t = EMPTY
       else if (y >= ROWS - 2) t = STEEL          // bedrock
       else if (x < 3 || x >= COLS - 3) t = STEEL // side walls: nothing leaves the board
-      else {
-        var crust = SKY + 20 + Math.round(5 * Math.sin(x * 0.11 + phase) + 3 * Math.sin(x * 0.27 + phase2))
-        t = y < crust ? DIRT : ROCK
-      }
+      else t = bandAt(x, y).mat
       w.terrain[y * COLS + x] = t
     }
   }
 
-  // Texture: rock blobs riding in the dirt and dirt pockets down in the rock.
-  // Fewer and bigger than they were — a scatter of small ones just reads as
-  // noise at this scale, where a handful of large ones read as strata.
-  for (var b = 0; b < 15; b++) {
+  // Lenses: a pocket of one material sitting inside another, which is what
+  // stops the strata reading as a layer cake. Fewer and bigger than a scatter
+  // of small ones, which at this scale is just noise.
+  for (var b2 = 0; b2 < 12; b2++) {
     var bx = irand(rng, 5, COLS - 6)
     var by = irand(rng, SKY + 2, ROWS - 5)
     var br = irand(rng, 3, 6)
-    var mat = at(w, bx, by) === DIRT ? ROCK : DIRT
+    var here = at(w, bx, by)
+    var lens = here === DIRT ? ROCK : (here === ROCK ? DIRT : ROCK)
     for (var dy = -br; dy <= br; dy++) {
       for (var dx = -br; dx <= br; dx++) {
-        if (dx * dx + dy * dy > br * br) continue
+        // Squashed flat: a lens in rock is a lens, not a ball.
+        if (dx * dx + (dy * 2.2) * (dy * 2.2) > br * br) continue
         if (at(w, bx + dx, by + dy) === STEEL) continue
-        setCell(w, bx + dx, by + dy, mat)
+        setCell(w, bx + dx, by + dy, lens)
+      }
+    }
+  }
+
+  // Ore veins: a wandering one-cell line, occasionally two, drawn as a walk
+  // rather than a curve so it kinks the way a real seam does.
+  var veins = irand(rng, 3, 6)
+  for (var v = 0; v < veins; v++) {
+    var vx = irand(rng, 6, COLS - 7)
+    var vy = irand(rng, SKY + 4, ROWS - 6)
+    var len = irand(rng, 18, 44)
+    var slope = rng() < 0.5 ? -1 : 1
+    // Thickness is held for a stretch rather than rerolled per cell. Rerolling
+    // it gives a dotted line — the seam reads as speckle instead of as one
+    // continuous thing running through the rock.
+    var thickRun = 0
+    var vthick = 1
+    for (var s = 0; s < len; s++) {
+      vx += 1
+      if (rng() < 0.3) vy += slope
+      if (rng() < 0.08) slope = -slope
+      if (thickRun-- <= 0) { vthick = rng() < 0.4 ? 2 : 1; thickRun = irand(rng, 3, 7) }
+      if (vx >= COLS - 4 || vy < SKY + 1 || vy + vthick >= ROWS - 3) break
+      for (var vt = 0; vt < vthick; vt++)
+        if (at(w, vx, vy + vt) !== STEEL) setCell(w, vx, vy + vt, ORE)
+    }
+  }
+
+  // Grit along the boundaries. Every cell that sits directly under a different
+  // material has a chance of taking that material instead, which frays the
+  // seam between two layers into something granular. This is the cheapest line
+  // in the function and the one that does the most: without it every stratum
+  // meets the next on a clean sine wave and the earth looks printed.
+  // Flipped in short runs, never cell by cell. A per-cell coin toss along a
+  // diagonal boundary produces a checkerboard, which is a very legible way of
+  // announcing that a random number generator was here; runs of two or three
+  // crumble instead.
+  for (var gy = SKY + 1; gy < ROWS - 2; gy++) {
+    for (var gx = 3; gx < COLS - 3; gx++) {
+      var above = at(w, gx, gy - 1)
+      var self = at(w, gx, gy)
+      if (above === self || above === STEEL || self === STEEL || above === EMPTY) continue
+      if (rng() >= 0.34) continue
+      var run = irand(rng, 2, 4)
+      for (var gr = 0; gr < run && gx < COLS - 3; gr++, gx++) {
+        if (at(w, gx, gy) === STEEL) break
+        setCell(w, gx, gy, above)
       }
     }
   }
@@ -492,8 +604,9 @@ function placeObstacles(w, rng, c, index, corridors) {
   // as walking, climbing and falling.
   var lastOne = index === N_CORR - 1
   var kinds = lastOne
-    ? ["wall", "pillars", "pillars", "step"]
-    : ["wall", "wall", "pillars", "pillars", "chasm", "chasm", "gap", "pit", "step"]
+    ? ["wall", "collapse", "pillars", "towers", "step"]
+    : ["wall", "collapse", "collapse", "pillars", "towers", "towers",
+       "chasm", "chasm", "gap", "gap", "pit", "pit", "step"]
   // The floater needs a drop taller than SAFE_FALL, and the only landing far
   // enough down to be one is the corridor TWO floors below — see the cliff
   // case for why it has to be a real corridor and not just a deep hole.
@@ -561,6 +674,58 @@ function placeObstacles(w, rng, c, index, corridors) {
       var floorBelow = index + 1 < N_CORR ? corridors[index + 1].floorY : ROWS - 3
       for (var gx2 = x; gx2 < x + span2 && gx2 <= hi; gx2++)
         for (var gy2 = c.floorY; gy2 < floorBelow; gy2++) clearCell(w, gx2, gy2)
+
+    } else if (kind === "collapse") {
+      // A cave-in: the same answer as `wall` — bash through it — with a shape
+      // worth looking at. A full-height plug with a spill of debris ramping up
+      // to it on both sides.
+      //
+      // The shoulders are capped at two cells, and that cap is load-bearing
+      // rather than cosmetic. An agent standing on debris h high has its head
+      // in the ceiling once h > 2 (CORR_H is 6 and it needs 4), so anything
+      // taller stops being a slope it walks up and becomes more wall to chew
+      // through — and the width it would then have to bash through is the
+      // shoulders plus the core, which runs past BASH_REACH and turns the
+      // whole corridor into something the colony gives up on and paces.
+      var core = irand(rng, 3, 5)
+      var spill = irand(rng, 3, 6)
+      var debris = [ROCK, ORE, ROCK, DIRT]
+
+      for (var kx = x; kx < x + core && kx <= hi; kx++)
+        for (var ky = c.floorY - CORR_H; ky < c.floorY; ky++)
+          setCell(w, kx, ky, debris[(kx + ky) % debris.length])
+
+      for (var sp = 1; sp <= spill; sp++) {
+        var hgt = sp <= spill / 2 ? 2 : 1
+        for (var lx = 0; lx < 1; lx++) {
+          for (var sh = 0; sh < hgt; sh++) {
+            setCell(w, x - sp, c.floorY - 1 - sh, debris[(x + sp + sh) % debris.length])
+            setCell(w, x + core - 1 + sp, c.floorY - 1 - sh, debris[(x + sp + sh + 1) % debris.length])
+          }
+        }
+      }
+
+    } else if (kind === "towers") {
+      // Pillars of two minds: some reach the ceiling and have to be bashed,
+      // some are stubs low enough to walk over in stride. One obstacle, two
+      // answers, and which is which changes every level — where a run of
+      // identical pillars is the same decision made four times.
+      var tn = irand(rng, 4, 6)
+      var tpitch = irand(rng, 5, 8)
+      var tthick = irand(rng, 2, 3)
+      var solidCount = 0
+      for (var tc = 0; tc < tn; tc++) {
+        var tx = x + tc * tpitch
+        if (tx + tthick > hi) break
+        // At least two of them are real, so this never degenerates into a
+        // decorative row of bumps the colony strolls over.
+        var full = solidCount < 2 || rng() < 0.5
+        if (full) solidCount++
+        var top = full ? c.floorY - CORR_H : c.floorY - irand(rng, 1, 2)
+        for (var tw = tx; tw < tx + tthick; tw++)
+          for (var th = top; th < c.floorY; th++)
+            setCell(w, tw, th, full ? (tc % 2 === 0 ? DIRT : ROCK) : ORE)
+      }
 
     } else if (kind === "pillars") {
       // A run of narrow columns rather than one thick wall. Each is only a few
@@ -1516,7 +1681,7 @@ function forceEscape(w, ag) {
 }
 
 function runDirector(w) {
-  var mark = w.saved * 1000 + w.lost * 100 + w.terrainVersion
+  var mark = w.saved * 1000 + w.lost * 100 + w.carved
   if (mark !== w.progressMark) {
     w.progressMark = mark
     w.stallTicks = 0

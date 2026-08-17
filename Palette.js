@@ -100,6 +100,12 @@ function build(theme, level) {
     dirt: css(mix(bg, tint, 0.46)),
     dirtEdge: css(mix(bg, tint, 0.86)),
     dirtShade: css(mix(bg, tint, 0.30)),
+    // Ore is the one material pulled off both of the others: brighter than
+    // dirt and warmer than rock, because it appears as thin seams and a seam
+    // that doesn't separate from what it runs through isn't a seam.
+    ore: css(mix(mix(bg, tint, 0.58), fg, 0.22)),
+    oreEdge: css(mix(mix(bg, tint, 0.95), fg, 0.30)),
+    oreShade: css(mix(mix(bg, tint, 0.40), fg, 0.14)),
     rock: css(mix(bg, fg, 0.19)),
     rockEdge: css(mix(bg, fg, 0.38)),
     rockShade: css(mix(bg, fg, 0.12)),

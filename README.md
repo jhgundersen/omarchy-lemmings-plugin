@@ -11,7 +11,7 @@ the drop is too far.
 They are agents in the strict sense. No supervisor, no plan beyond the next two
 body-lengths, no memory of the last wall, no idea where the exit is. Each one
 looks at what's in front of it, picks the cheapest tool that fits, and commits
-completely. About two thirds of them make it. The rest are a learning
+completely. About three quarters of them make it. The rest are a learning
 experience for nobody in particular.
 
 You don't play it. You watch it. That's the whole thing.
@@ -189,15 +189,25 @@ opposite direction to the one above. Each corridor's floor simply stops at the
 handoff, so the way on is over the edge.
 
 Two or three obstacles sit along each corridor, every one a shape with a known
-answer — a plug wall for the basher, a raised face for the climber, a run of
-pillars that has to be bashed through one at a time, a drop past two floors for
-the floater, and a chasm with the far side at the same height, which is the
-builder's. The mix is weighted rather than even, and every level is guaranteed
-a chasm — left to the dice, the most distinctive thing any of them does turned
-up in barely half of levels, and a mix with as many climbable faces as anything
-else made the whole board read as walking, climbing and falling.
+answer:
 
-Dirt and rock both give way to tools; steel never does. The last few paces to
+| | |
+| --- | --- |
+| **wall** | A plug spanning the corridor. Bash through it |
+| **collapse** | The same answer with a better shape: a cave-in, debris ramping up to a full-height plug |
+| **pillars** | Narrow columns, each its own separate bash |
+| **towers** | Columns of two minds — some reach the ceiling, some are stubs you stride over |
+| **chasm** | Floor gone, far side at the same height. The builder's |
+| **gap** / **pit** | Floor removed, with a soft landing or steep sides |
+| **step** | The floor rises more than a stride, ceiling lifted to match. The climber's |
+| **cliff** | A drop past two floors. Umbrellas |
+
+The mix is weighted rather than even, and every level is guaranteed a chasm —
+left to the dice, the most distinctive thing any of them does turned up in
+barely half of levels, and a mix with as many climbable faces as anything else
+made the whole board read as walking, climbing and falling.
+
+Dirt, rock and ore all give way to tools; steel never does. The last few paces to
 the exit are walled off with plain dirt, so every level ends with something to
 get through — and that wall stops two rows short of the ceiling, so it has two
 answers rather than one.
@@ -218,15 +228,34 @@ board: green hair, blue robe, orange umbrella, fixed. At sixteen pixels tall
 that silhouette is the only thing making them read as a doomed colony rather
 than as animated debris.
 
-Measured over 200 levels played the way the panel plays them, retries and all:
-**92% reach their target**, 64% of every agent released gets home, over an
-average attempt of about 74 seconds. Of 299 attempts you'd see something bashed
-through in every one, a blocker standing in 245, a bridge built in 233, a climb
-in 219, digging in 137, mining in 120, and the nuke go off in 118.
+### The earth itself
 
-No single skill carries a level any more. Per attempt it works out at roughly
-eight umbrellas, eight bridges, seven walls bashed, five climbs, a blocker and a
-couple of shafts.
+The board is built as strata: five or six layers with wavy boundaries, seams of
+ore running through them, lenses of the wrong material, and a crumbled scatter
+along every boundary so no two layers meet on a clean line. A corridor cut
+through six layers is worth more to look at than the same corridor cut through
+one, and a fresh tunnel exposes whatever it happens to pass through.
+
+All of it is free. Dirt, rock and ore are one material to everything that makes
+a decision — nothing in the brain compares a cell against any of them, since
+solidity asks only whether a cell is empty and every skill asks only whether it
+is steel. That is checked rather than assumed: every level is played twice, once
+as built and once with all three flattened to dirt, and across 300 runs the two
+agree on every agent saved, every one lost, the tick they finished on, and the
+shape of the ground they left behind.
+
+Getting that to hold took a fix. `terrainVersion` drove both the repainting and
+the director's sense that anything was happening, so laying a brick of dirt over
+a cell of rock — which changes nothing about the level — read as earth being
+moved and bought a stalled level another twenty seconds. Those are two counters
+now: one moves on any change, the other only when solid becomes empty or empty
+becomes solid.
+
+Measured over 200 levels played the way the panel plays them, retries and all:
+**98% reach their target**, 75% of every agent released gets home, over an
+average attempt of about 67 seconds. Of 258 attempts you'd see something bashed
+through in every one, a blocker standing in 226, a bridge built in 186, a climb
+in 173, an umbrella in 153, digging in 79 and mining in 71.
 
 ### The blocker
 

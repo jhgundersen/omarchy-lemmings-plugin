@@ -28,18 +28,21 @@ var SPRITE_PX = 16
 function materialFill(k, pal, m) {
   if (m === k.DIRT) return pal.dirt
   if (m === k.ROCK) return pal.rock
+  if (m === k.ORE) return pal.ore
   return pal.steel
 }
 
 function materialEdge(k, pal, m) {
   if (m === k.DIRT) return pal.dirtEdge
   if (m === k.ROCK) return pal.rockEdge
+  if (m === k.ORE) return pal.oreEdge
   return pal.steelEdge
 }
 
 function materialShade(k, pal, m) {
   if (m === k.DIRT) return pal.dirtShade
   if (m === k.ROCK) return pal.rockShade
+  if (m === k.ORE) return pal.oreShade
   return pal.steelShade
 }
 
