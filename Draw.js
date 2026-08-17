@@ -288,54 +288,54 @@ function drawActors(ctx, w, pal, opts) {
 // you come back to level 42 — the same rule the rest of the level runs on.
 var SPECIAL_FACTS = {
   buckshot: [
-    "does not clear a path. It suggests one, loudly.",
-    "reloads out of spite.",
-    "has never bashed a wall twice."
+    "does not aim. Aiming is a form of doubt.",
+    "solved it in one shot and cannot say which one.",
+    "was asked for a door and delivered a doorway."
   ],
   roundhouse: [
     "does not destroy the wall. The wall relocates.",
-    "counted to infinity. Twice.",
-    "does not do push-ups. It pushes the level down."
+    "moved the problem. That counts as solving it.",
+    "roundhouse kicks in 512 dimensions."
   ],
   spider: [
-    "considers the ceiling a floor with better views.",
-    "has never once looked down.",
-    "walks upside down out of principle."
+    "indexed the ceiling. Nobody asked it to.",
+    "respects no robots.txt.",
+    "went up there to think and never came down."
   ],
   lumberjack: [
-    "does not remove the wall. It lies it down.",
-    "shouts nothing. The wall knows.",
-    "turns a problem into a floor."
+    "turns every wall into a floor, eventually.",
+    "is an ensemble of one, and overfits badly.",
+    "asked no permission and felled it anyway."
   ],
   pyro: [
-    "solves geometry with heat.",
-    "leaves the roundest holes on the board.",
-    "has opinions about dirt."
+    "converges on the answer at 900 degrees.",
+    "cools slowly. The level does not.",
+    "calls this an optimisation."
   ],
   sapper: [
-    "plants it, walks away, does not look back.",
-    "reads the room, then removes it.",
-    "is the only one here who survives the bang."
+    "ignores everything above and does what the wall says.",
+    "was told to be helpful, harmless and honest. Two out of three.",
+    "hid the instruction in the rock. The rock complied."
   ],
   piledriver: [
-    "only ever knows one direction, and it is down.",
-    "has never taken a staircase.",
-    "considers the floor a suggestion."
+    "only knows one direction and is very confident about it.",
+    "found a local minimum and moved in.",
+    "has never once considered going up."
   ],
   quarryman: [
-    "does not dig tunnels. It opens rooms.",
-    "takes the biggest single bite on the board.",
-    "measures twice, removes everything."
+    "needed one cell of room and took two hundred.",
+    "does not summarise. It attends to everything at once.",
+    "opened the whole thing to be sure."
   ],
   glazier: [
-    "is the only one here who adds anything.",
-    "lays a bridge nobody has to ration.",
-    "builds where the others break."
+    "is the only one here that adds anything.",
+    "lays a rail nobody asked for and everybody uses.",
+    "cannot be talked into going round."
   ],
   wraith: [
-    "walks through the wall and helps nobody.",
-    "leaves the level exactly as it found it.",
-    "is not stuck. Everyone else is."
+    "walked through the wall and reported it as solved.",
+    "sees a corridor. There is no corridor.",
+    "is not stuck. Everyone else is stuck."
   ]
 }
 
@@ -812,15 +812,22 @@ function drawHazard(ctx, w, pal) {
     if (show) { ctx.fillStyle = hot; ctx.fillRect(x0, y0, wide, tall) }
   }
 
+  spriteFlip = false
   ctx.globalAlpha = 1
 }
 
 // One 8x16 sprite, mirrored by facing, with per-action limb changes. The
 // helper takes coordinates in right-facing sprite space and flips them for a
 // left-facing agent, so every pose below is written once.
+// Set while drawing an agent that is upside down. A module-level flag rather
+// than another parameter because every pose in this file goes through blit and
+// none of them should have to know which way up they are.
+var spriteFlip = false
+
 function blit(ctx, ox, oy, dir, x, y, bw, bh) {
   var sx = dir > 0 ? ox + x : ox + (SPRITE_W - x - bw)
-  ctx.fillRect(Math.round(sx), Math.round(oy + y), bw, bh)
+  var sy = spriteFlip ? oy + (SPRITE_PX - y - bh) : oy + y
+  ctx.fillRect(Math.round(sx), Math.round(sy), bw, bh)
 }
 
 function drawAgent(ctx, w, pal, ag, opts) {
@@ -917,6 +924,10 @@ function drawAgent(ctx, w, pal, ag, opts) {
     }
     ctx.globalAlpha = 1
   }
+
+  // Upside down: the whole sprite is mirrored vertically, so the one that
+  // walks on ceilings reads as hanging rather than as floating.
+  spriteFlip = (st === "ceil")
 
   var bodyDrop = (st === "dig" || st === "mine") ? 2 : 0
 
@@ -1029,5 +1040,8 @@ function actionLabel(st) {
   if (st === "dig") return "dig"
   if (st === "block") return "block"
   if (st === "bomb") return "bomb"
+  if (st === "jump") return "hop"
+  if (st === "ceil") return "ceiling"
+  if (st === "trick") return "!"
   return ""
 }

@@ -211,16 +211,16 @@ make forever, rationed by a cooldown instead of by a meter.
 
 | | |
 | --- | --- |
-| **Buckshot** | A basher's tunnel, punched through in a single shot |
-| **Roundhouse** | Does not destroy the wall. Picks it up and puts it down four cells further on |
-| **Spider** | Goes up the wall, onto the ceiling, and walks upside down until the roof runs out |
-| **Lumberjack** | Topples the column rather than deleting it: what was a wall lies down and becomes a floor |
-| **Pyro** | Melts a disc, the roundest hole on the board |
-| **Sapper** | Places a charge with a bomb's reach and none of the dying |
-| **Piledriver** | Straight down, and only when down is where home is |
-| **Quarryman** | Opens a whole room in one go |
-| **Glazier** | The only one that adds: a slab laid straight out |
-| **Wraith** | Steps through the wall instead of removing it, and helps nobody |
+| **Max Tokens** | Empties the entire magazine into the wall. A basher's tunnel, in one shot |
+| **Vector Van Damme** | Does not destroy the wall. Picks it up and puts it down further along |
+| **Web Crawler** | Goes up the wall, onto the ceiling, and walks upside down until the roof runs out |
+| **Random Forrest** | Fells the wall: everything above knee height comes down and what's left is a step |
+| **Sim Anneal** | Melts a disc, the roundest hole on the board |
+| **Prompt Injection** | Plants a charge in the rock and the rock does as it's told |
+| **Gradient Descent** | Straight down, and only when down is where home is |
+| **Context Window** | Needed one cell of room and opens two hundred |
+| **Guard Rails** | The only one that adds: a slab laid straight out |
+| **Hal Lucination** | Steps through the wall, reports it solved, helps nobody |
 
 It is known by its colour. Every other agent is the same green and blue on
 purpose, so the one that isn't reads as the one that isn't from across the room
@@ -239,6 +239,16 @@ The cooldown runs whether or not the move achieved anything, which is not an
 implementation detail: charging it only on success left a special swinging at
 steel free to swing again immediately, and that alone was the difference
 between about a dozen moves a level and eighty-five.
+
+None of them winds up on a move that cannot work. Every move can be asked the
+question before it is committed to — is there anything here this would actually
+shift — so Vector Van Damme looks at a block too big to move and walks away
+rather than kicking it and whiffing.
+
+That check has to be honest in both directions. Written too strictly it stopped
+Random Forrest doing anything at all: its move only worked on a free-standing
+pillar, of which this generator makes almost none, so it refused ninety-seven
+times out of a hundred. A move nobody ever sees is the same as no move.
 
 Every one also keeps a shovel for when the wall was never the problem. Most
 moves cut sideways, so a special boxed into a pocket with the way on underneath
@@ -489,6 +499,26 @@ It fires on 45% of attempts, about one and a half agents each time. That is not
 free — it kills agents who occasionally would have come good — but it takes the
 share of attempts that run all the way into the nuke from 39% down to 30%, and
 a level ends about two seconds sooner on average.
+
+### The hop
+
+Agents can stride two cells, and climb with a skill, and between those two there
+was nothing at all. So a two-cell pocket, a ledge three high, or a blocker with
+a wall a stride behind it were all places to bounce back and forth in forever.
+Counted, four percent of all agent-time was spent frozen inside a single cell,
+and a special could hit a wall a hundred and fifty times in a level without ever
+getting anywhere.
+
+They can hop now: three cells of lift, free, no skill, no budget. It is not a
+solution to anything the level puts in the way on purpose — three cells is under
+the height of every obstacle here — it only gets an agent out of somewhere it
+should never have been stuck in. And an agent still in the same cell well after
+a hop would have been tried stops waiting for the patience timer, which is
+twenty-eight seconds away, and digs.
+
+Frozen time went from 4.4% to 2.6%. What is left is mostly an agent pinned
+between a drop it will not take and something it will not pass, which is a
+decision rather than a bug.
 
 ## When it goes wrong
 
