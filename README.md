@@ -16,10 +16,9 @@ experience for nobody in particular.
 
 You don't play it. You watch it. That's the whole thing.
 
-It lives in the bar next to [Snake](https://github.com/jhgundersen/omarchy-snake-plugin)
-for the same reason Snake does: the build is compiling, the *other* agent is
+The build is compiling, the *other* agent is
 still thinking, and staring at a progress bar is worse for you than staring at
-this. Snake is for when you want something to do. This is for when you don't.
+this. 
 
 A self-contained `bar-widget` plugin for [Omarchy](https://omarchy.org)'s
 shell, in the same style as the built-in Audio, Network and Bluetooth widgets:
