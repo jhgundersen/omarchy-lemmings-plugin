@@ -2026,6 +2026,8 @@ function spawn(w) {
     cell: "",         // last integer cell, for the stuck-on-the-spot check
     still: 0,
     jvy: 0,
+    ceilX: 0,
+    ceilTo: 0,
     markD: Infinity,   // closest it has ever been; see goalDist()
     fuse: 0,
     anim: Math.floor(Math.random() * 8),
@@ -2416,19 +2418,51 @@ function specialAtWall(w, ag) {
   ag.timer = 0
 }
 
-// Up the wall and onto the roof. Finds the first solid ceiling overhead with
-// room to hang from it, and sticks there.
+// Up the wall and onto the roof — but only if the roof goes somewhere. It went
+// up at any wall at all before, which is how you get something that appears to
+// be on the ceiling for its own entertainment. Now it wants a run of ceiling
+// ahead of it: the point of being up there is to cross a thing, so if the roof
+// stops before the obstacle does, there is no point leaving the floor.
 function startCeiling(w, ag) {
   var fx = Math.floor(ag.x)
   for (var cy = Math.floor(ag.y) - AGENT_H; cy > SKY; cy--) {
     if (!solid(w, fx, cy)) continue
-    // Room to hang: the body occupies the rows under whatever it grabbed.
+
+    // Room to hang from it.
     var room = true
     for (var b = 1; b <= AGENT_H; b++) if (solid(w, fx, cy + b)) { room = false; break }
     if (!room) return turnAround(w, ag)
+
+    // And somewhere to go along it. Five cells of continuous ceiling with
+    // clear air beneath, which is the shortest crossing worth the climb.
+    var run = 0
+    for (var q = 1; q <= 10; q++) {
+      var qx = fx + ag.dir * q
+      if (!solid(w, qx, cy)) break
+      if (solid(w, qx, cy + 1)) break
+      run++
+    }
+    if (run < 5) return turnAround(w, ag)
+
+    // Where it intends to come down: the first place ahead, at the height it
+    // set off from, that is actually standable. That is the far side of
+    // whatever it went up to cross.
+    //
+    // Coming down after a fixed few cells instead — which is what the first
+    // attempt did — meant it dropped straight back onto the near side of the
+    // obstacle and was up there for under a second. Aiming at a landing is the
+    // difference between crossing something and popping up for a look.
+    var fy = Math.floor(ag.y)
+    ag.ceilTo = fx + ag.dir * 14
+    for (var t2 = 3; t2 <= 22; t2++) {
+      var tx = fx + ag.dir * t2
+      if (solid(w, tx, fy + 1) && !solid(w, tx, fy) && !solid(w, tx, fy - 1)) { ag.ceilTo = tx; break }
+    }
+
     ag.y = cy + 1
     ag.state = "ceil"
     ag.timer = 0
+    ag.ceilX = ag.x
     ag.cool = specOf(ag).cool
     return
   }
@@ -2464,6 +2498,18 @@ function stepCeiling(w, ag) {
   for (var b = 0; b < AGENT_H; b++) {
     if (solid(w, cx, y + b)) { turnAround(w, ag); return }
   }
+
+  // Over the landing it set off for, with ground under it: down.
+  var arrived = ag.dir > 0 ? ag.x >= ag.ceilTo : ag.x <= ag.ceilTo
+  if (arrived) {
+    for (var d2 = AGENT_H; d2 <= AGENT_H + SAFE_FALL; d2++) {
+      if (!solid(w, cx, y + d2)) continue
+      ag.y = y + AGENT_H - 1
+      beginUncontrolledFall(w, ag)
+      return
+    }
+  }
+
   ag.x = nx
   ag.anim++
 }
@@ -2474,6 +2520,16 @@ function stepCeiling(w, ag) {
 // one, exactly like everybody else.
 function specialAtEdge(w, ag, nx, depth, far) {
   var spec = specOf(ag)
+
+  // The crossing it is actually for. A gap with a roof over it is exactly what
+  // walking upside down solves, and going over one is a great deal more useful
+  // than turning round at it.
+  if (spec.act === "ceiling" && ag.cool <= 0 && depth > SAFE_FALL) {
+    var before = ag.state
+    startCeiling(w, ag)
+    if (ag.state === "ceil") return
+    ag.state = before
+  }
 
   if (spec.act === "slab" && ag.cool <= 0 && depth > 2) {
     if (specialCut(w, ag, "slab")) { ag.cool = spec.cool; return }
@@ -2506,7 +2562,13 @@ function specialEscape(w, ag) {
   if (moved) {
     w.terrainVersion++
     addDust(w, fx, fy + 2, 10)
-    ag.idle = 0
+    // Deliberately does NOT reset the patience counter. Digging is not progress
+    // — getting closer to home is — and zeroing it here meant a special that
+    // dug, fell, walked, got stuck and dug again never accumulated any idle
+    // time at all, so it never reached the point of being written off. It could
+    // loop like that for the whole level, which is the one agent on the board
+    // you would definitely notice doing it.
+    ag.still = 0
   } else {
     specialAtWall(w, ag)
   }

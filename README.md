@@ -213,7 +213,7 @@ make forever, rationed by a cooldown instead of by a meter.
 | --- | --- |
 | **Max Tokens** | Empties the entire magazine into the wall. A basher's tunnel, in one shot |
 | **Vector Van Damme** | Does not destroy the wall. Picks it up and puts it down further along |
-| **Web Crawler** | Goes up the wall, onto the ceiling, and walks upside down until the roof runs out |
+| **Web Crawler** | Goes up the wall and crosses upside down — but only where the roof actually leads past the thing in the way |
 | **Random Forrest** | Fells the wall: everything above knee height comes down and what's left is a step |
 | **Sim Anneal** | Melts a disc, the roundest hole on the board |
 | **Prompt Injection** | Plants a charge in the rock and the rock does as it's told |
@@ -240,6 +240,15 @@ implementation detail: charging it only on success left a special swinging at
 steel free to swing again immediately, and that alone was the difference
 between about a dozen moves a level and eighty-five.
 
+A move has to be worth making, not just possible. The Web Crawler is the clearest
+case: it will not leave the floor unless there is a run of ceiling ahead of it,
+and before it climbs it picks out where it means to come down — the first place
+ahead, at the height it set off from, that is actually standable. So it goes up
+to cross something and comes down on the far side of it, about ten cells later,
+rather than being on the ceiling for its own entertainment. It also takes to the
+roof at a gap now, which is the crossing it was always for and the one situation
+it was never offered.
+
 None of them winds up on a move that cannot work. Every move can be asked the
 question before it is committed to — is there anything here this would actually
 shift — so Vector Van Damme looks at a block too big to move and walks away
@@ -250,7 +259,12 @@ Random Forrest doing anything at all: its move only worked on a free-standing
 pillar, of which this generator makes almost none, so it refused ninety-seven
 times out of a hundred. A move nobody ever sees is the same as no move.
 
-Every one also keeps a shovel for when the wall was never the problem. Most
+Every one also keeps a shovel for when the wall was never the problem — and
+digging with it does **not** count as getting somewhere. Treating it as progress
+reset the patience counter every time, so a special that dug, fell, walked, got
+stuck and dug again never accumulated any idle time and could never be written
+off. It could loop like that for a whole level, which is the one agent on the
+board you would definitely notice doing it. Most
 moves cut sideways, so a special boxed into a pocket with the way on underneath
 it fired into the same steel wall until the level timed out — two thirds ended
 up condemned rather than home. The move is for walls; the shovel is for
