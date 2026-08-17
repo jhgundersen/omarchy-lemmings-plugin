@@ -272,7 +272,7 @@ everything else.
 
 ## Levels
 
-![All of them home](screenshot-complete.png)
+![Eleven of thirteen home](screenshot-complete.png)
 
 Levels are a pure function of their number — level 42 always generates the
 same level, with the same agents in the same order — so `←` and `→` walk a
