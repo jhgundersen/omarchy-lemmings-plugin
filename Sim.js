@@ -303,6 +303,8 @@ function generate(level, attempt) {
     decor: [],
     acting: null,
     special: null,
+    specialSpec: null,
+    factPick: 0,
     hazard: null,
     hazardKnown: false,
     hazardKills: 0,
@@ -517,6 +519,16 @@ function generate(level, attempt) {
   // that fires once or twice a visit meant a given special was a rare sight.
   if (rng() < 0.75) {
     w.special = pick(rng, SPECIALS).id
+    // Resolved here and carried on the world, exactly like `w.k`. Draw.js has
+    // no imports and no way to reach into this file — in a browser both are in
+    // one global scope so calling specialSpec() from there appeared to work,
+    // and in QML each .js is its own scope, where it threw a ReferenceError
+    // inside drawActors and took every agent on the board down with it.
+    w.specialSpec = specialSpec(w.special)
+    // Which line about it gets shown. Drawn here rather than derived from the
+    // level number so it reads as random, and stored so it is stable for the
+    // level — level 42 is always level 42, down to the joke.
+    w.factPick = Math.floor(rng() * 997)
     w.specialAt = irand(rng, 1, Math.max(1, w.toRelease - 2))
   }
 

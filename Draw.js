@@ -290,52 +290,122 @@ var SPECIAL_FACTS = {
   buckshot: [
     "does not aim. Aiming is a form of doubt.",
     "solved it in one shot and cannot say which one.",
-    "was asked for a door and delivered a doorway."
+    "was asked for a door and delivered a doorway.",
+    "has a context window of one wall.",
+    "outputs everything it knows and stops mid-",
+    "was asked to be concise. It has been trying.",
+    "does not do drafts.",
+    "answers every question at maximum length.",
+    "has never been truncated. It has truncated.",
+    "considers restraint an unsolved problem."
   ],
   roundhouse: [
     "does not destroy the wall. The wall relocates.",
     "moved the problem. That counts as solving it.",
-    "roundhouse kicks in 512 dimensions."
+    "roundhouse kicks in 512 dimensions.",
+    "does not embed. It is embedded in the wall.",
+    "was fine-tuned on one video and it shows.",
+    "does not go around. Around is for the aligned.",
+    "has never read the documentation for a wall.",
+    "solved it laterally. Very laterally.",
+    "kicked first and computed the gradient later.",
+    "does not hallucinate walls. It relocates real ones."
   ],
   spider: [
     "indexed the ceiling. Nobody asked it to.",
     "respects no robots.txt.",
-    "went up there to think and never came down."
+    "went up there to think and never came down.",
+    "crawls everything, retains nothing.",
+    "found the ceiling and marked it as canonical.",
+    "reports 100% coverage of a surface nobody uses.",
+    "escalated to the roof without being asked.",
+    "reads top-down, literally.",
+    "is exploring. It has been exploring for a while.",
+    "has never once been where the exit is."
   ],
   lumberjack: [
     "turns every wall into a floor, eventually.",
     "is an ensemble of one, and overfits badly.",
-    "asked no permission and felled it anyway."
+    "asked no permission and felled it anyway.",
+    "solves every problem by making it shorter.",
+    "prunes aggressively. Everything is a branch.",
+    "reduced the variance and most of the wall.",
+    "does not split the difference. It splits the wall.",
+    "was trained on trees and applies it broadly.",
+    "has one feature and it is decisive.",
+    "considers the ceiling optional."
   ],
   pyro: [
     "converges on the answer at 900 degrees.",
     "cools slowly. The level does not.",
-    "calls this an optimisation."
+    "calls this an optimisation.",
+    "escapes local minima the honest way.",
+    "runs hot and calls it exploration.",
+    "has a temperature setting of exactly one: yes.",
+    "found a smoother solution surface.",
+    "does not iterate. It anneals.",
+    "was told to reduce the search space.",
+    "melts through the problem rather than around it."
   ],
   sapper: [
     "ignores everything above and does what the wall says.",
-    "was told to be helpful, harmless and honest. Two out of three.",
-    "hid the instruction in the rock. The rock complied."
+    "was told to be helpful, harmless and honest. Two of three.",
+    "hid the instruction in the rock. The rock complied.",
+    "reads its input a little too trustingly.",
+    "found a system prompt in the bedrock.",
+    "does not follow orders. It follows the last order.",
+    "delegates to the explosion.",
+    "was given guardrails and planted them.",
+    "escalated privileges through a hole in the floor.",
+    "does exactly what it was asked, which was the problem."
   ],
   piledriver: [
     "only knows one direction and is very confident about it.",
     "found a local minimum and moved in.",
-    "has never once considered going up."
+    "has never once considered going up.",
+    "descends. That is the entire architecture.",
+    "converged early and stayed there.",
+    "is very sure the answer is further down.",
+    "has a learning rate nobody tuned.",
+    "reached a plateau and kept going anyway.",
+    "does not backtrack. Backtracking is for the uncertain.",
+    "is optimising something. Not necessarily this."
   ],
   quarryman: [
     "needed one cell of room and took two hundred.",
     "does not summarise. It attends to everything at once.",
-    "opened the whole thing to be sure."
+    "opened the whole thing to be sure.",
+    "has quadratic instincts.",
+    "loaded the entire level into memory.",
+    "asked for more context and meant it.",
+    "does not retrieve. It ingests.",
+    "was told to be thorough exactly once.",
+    "considers scoping a failure of ambition.",
+    "reads the whole file to change one line."
   ],
   glazier: [
     "is the only one here that adds anything.",
     "lays a rail nobody asked for and everybody uses.",
-    "cannot be talked into going round."
+    "cannot be talked into going round.",
+    "is the constraint, and knows it.",
+    "builds the floor it was going to need anyway.",
+    "does not remove. It scaffolds.",
+    "was aligned once and never got over it.",
+    "produces a surface. That is the whole offering.",
+    "is load-bearing in every sense.",
+    "solves the gap by disagreeing that there is one."
   ],
   wraith: [
     "walked through the wall and reported it as solved.",
     "sees a corridor. There is no corridor.",
-    "is not stuck. Everyone else is stuck."
+    "is not stuck. Everyone else is stuck.",
+    "confidently describes a route that does not exist.",
+    "passed the benchmark and none of the levels.",
+    "solved it for itself and filed that as done.",
+    "cites a passage the rock does not contain.",
+    "is very sure, which is the problem.",
+    "does not collaborate. It phases.",
+    "left the level exactly as it found it and took credit."
   ]
 }
 
@@ -356,17 +426,24 @@ function drawBust(ctx, x, y, sp, pal) {
 
 function drawSpecialCard(ctx, w, pal) {
   if (!w.special) return
-  var sp = specialSpec(w.special)
+  var sp = w.specialSpec
   if (!sp) return
   var C = w.k.CELL
+  var boardW = w.k.COLS * C
   var skyH = w.k.SKY * C
 
-  // Everything here has to fit inside the open sky, which is seven rows — 28
-  // pixels — and not a pixel more. The first version laid the fact out over two
-  // lines and the second one came out underneath the earth.
-  var cardW = 232
-  var right = w.hatch.x < w.k.COLS / 2
-  var x = right ? w.k.COLS * C - cardW - 5 : 5
+  // All of the sky that the hatch is not using. The hatch is drawn 16px either
+  // side of its own column, so the card takes whichever side of it is bigger
+  // and runs to the edge of the board.
+  var hatchL = w.hatch.x * C - 18
+  var hatchR = w.hatch.x * C + 18
+  var leftRoom = hatchL - 5
+  var rightRoom = boardW - 5 - hatchR
+  var x, cardW
+  if (rightRoom >= leftRoom) { x = hatchR + 4; cardW = boardW - 5 - x }
+  else { x = 5; cardW = hatchL - 4 - x }
+  if (cardW < 90) return
+
   var y = 2
   var h = skyH - 5
 
@@ -383,11 +460,12 @@ function drawSpecialCard(ctx, w, pal) {
   ctx.font = "bold 8px monospace"
   ctx.fillText(sp.name, tx, y + 10)
 
-  // One line, clipped rather than wrapped — there is room for exactly one.
+  // One line, clipped rather than wrapped — the sky is seven rows and there is
+  // room for exactly one.
   var facts = SPECIAL_FACTS[sp.id] || [""]
-  var fact = facts[w.level % facts.length]
+  var fact = facts[(w.factPick || 0) % facts.length]
   var room = Math.floor((cardW - 34) / 4.25)
-  if (fact.length > room) fact = fact.slice(0, room - 1) + "\u2026"
+  if (fact.length > room) fact = fact.slice(0, Math.max(1, room - 1)) + "\u2026"
   ctx.fillStyle = pal.labelFaint
   ctx.font = "7px monospace"
   ctx.fillText(fact, tx, y + 20)
@@ -855,7 +933,7 @@ function drawAgent(ctx, w, pal, ag, opts) {
   // requirement. It also carries a bright pip on the shoulder, because at this
   // size a robe colour alone is a few pixels and easy to miss on a busy board.
   if (ag.special) {
-    var sp = specialSpec(ag.special)
+    var sp = w.specialSpec
     if (sp) { robe = sp.robe; hair = sp.hair }
   }
 
@@ -882,7 +960,7 @@ function drawAgent(ctx, w, pal, ag, opts) {
   // gets its own shape for the same reason each danger does — a special you
   // cannot tell from the last one is the same special.
   if (st === "trick" && ag.special) {
-    var tsp = specialSpec(ag.special)
+    var tsp = w.specialSpec
     var reach = ag.timer / 14
     var tx = ox + (dir > 0 ? SPRITE_W : 0)
     var mid = oy + 8
@@ -1004,7 +1082,7 @@ function drawAgent(ctx, w, pal, ag, opts) {
   // A pip on the shoulder in the special's second colour. The robe alone is a
   // handful of pixels on a board that already has a lot going on.
   if (ag.special && st !== "saved") {
-    var psp = specialSpec(ag.special)
+    var psp = w.specialSpec
     ctx.fillStyle = psp ? psp.hair : pal.label
     blit(ctx, ox, oy, dir, 1, 5 + bodyDrop, 2, 2)
   }
@@ -1019,7 +1097,7 @@ function drawAgent(ctx, w, pal, ag, opts) {
     // A special is named rather than described. Its personality never comes up
     // — it cannot use the toolbar, so the choices a trait would colour are not
     // choices it gets to make — and the name is the useful thing to know.
-    var nsp = ag.special ? specialSpec(ag.special) : null
+    var nsp = ag.special ? w.specialSpec : null
     var text = nsp ? nsp.name : (action !== "" ? action : (ag.trait || ""))
     if (text !== "") {
       ctx.fillStyle = nsp ? nsp.robe : (action !== "" ? pal.label : pal.labelFaint)

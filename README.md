@@ -553,6 +553,30 @@ closes.
 - `preview.png`, `screenshot-complete.png`, `screenshot-floaters.png`
 - `LICENSE` — MIT
 
+## The one real hazard of sharing files
+
+The three `.js` files carry no imports, which is what lets them run in both
+places — and it also means they **cannot call each other**. In a browser all
+three land in one global scope, so a call from one into another resolves and
+looks perfectly correct. In QML each `.js` is its own scope, and the same call
+throws a `ReferenceError` at runtime.
+
+That cost a real bug. `Draw.js` called `Sim.js`'s `specialSpec()` to look up a
+special agent's colours. The web version was flawless. The bar plugin drew **no
+agents at all** on any level that had a special — the exception came out of
+`drawActors` before the loop that draws them — which looked for all the world
+like a level-number bug, since levels without a special were fine.
+
+Anything one file needs from another travels on the world object now: `w.k` for
+the geometry constants, `w.specialSpec` for that one. `check-core-refs.py`,
+which `sync-agents.sh` runs on every sync, refuses to copy a core file that
+reaches into another. And Qt can be run headlessly, which is how it was
+actually found:
+
+```sh
+QT_ASSUME_STDERR_HAS_CONSOLE=1 QT_QPA_PLATFORM=offscreen qml6 main.qml
+```
+
 ## It also runs in a browser
 
 The three `.js` files carry no QML directives — no `.pragma library`, no
