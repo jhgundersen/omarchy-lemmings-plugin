@@ -265,6 +265,7 @@ function generate(level, attempt) {
     attempt: attempt,
     biome: BIOMES[(level - 1) % BIOMES.length],
     k: K,
+    decor: [],
     terrain: new Uint8Array(COLS * ROWS),
     terrainVersion: 1,
     carved: 0,
@@ -311,9 +312,13 @@ function generate(level, attempt) {
 
   // Corridor floors, top to bottom. floorY is the topmost SOLID row, so a
   // agent standing on it has its feet at floorY - 1.
+  // Which way the serpentine runs. It was fixed, which put the hatch in the
+  // top-left corner and the exit in the bottom-left of every level ever
+  // generated — the one thing a viewer would notice was always the same.
+  var flip = rng() < 0.5 ? 1 : -1
   var corridors = []
   for (var k = 0; k < N_CORR; k++) {
-    var dir = (k % 2 === 0) ? 1 : -1
+    var dir = ((k % 2 === 0) ? 1 : -1) * flip
     corridors.push({
       floorY: SKY + 9 + k * CORR_GAP,
       dir: dir,
@@ -328,7 +333,10 @@ function generate(level, attempt) {
   for (var i = 0; i < corridors.length; i++) {
     var c = corridors[i]
     c.startX = c.dir > 0 ? c.x0 + 3 : c.x1 - 3
-    c.handoffX = c.dir > 0 ? c.x1 - 10 : c.x0 + 10
+    // Where the floor stops varies, so corridors aren't all the same length
+    // and the obstacles along them aren't all at the same three positions.
+    var hj = irand(rng, 0, 7)
+    c.handoffX = c.dir > 0 ? c.x1 - 10 - hj : c.x0 + 10 + hj
     carveCorridor(w, c)
   }
 
@@ -349,10 +357,11 @@ function generate(level, attempt) {
   // a short shaft — 12 cells, comfortably inside SAFE_FALL, so the opening
   // moments are never a scramble.
   var first = corridors[0]
-  var hx = first.startX
+  var hx = first.dir > 0 ? first.startX + irand(rng, 0, 6) : first.startX - irand(rng, 0, 6)
   for (var sy = SKY - 2; sy < first.floorY; sy++)
     for (var sx = hx - 2; sx <= hx + 2; sx++) clearCell(w, sx, sy)
   w.hatch = { x: hx, y: 3 }
+  w.startDir = first.dir
 
   // Steel under the landing pad. The hatch goes on dropping agents onto this
   // spot for the whole level, so it's the one piece of floor that must still
@@ -440,7 +449,9 @@ function generate(level, attempt) {
     // exit any more.
     climber: irand(rng, 5, 9) + attempt * 2,
     floater: w.toRelease + 2 + attempt * 2,
-    bomber: irand(rng, 1, 2),
+    // Bombs have a second job now — see countPass() — so there are enough
+    // to condemn a few pacers and still have one left for a boxed-in agent.
+    bomber: irand(rng, 3, 5) + attempt,
     blocker: irand(rng, 2, 4) + attempt,
     builder: irand(rng, 10, 16) + attempt * 3,
     basher: irand(rng, 6, 12) + attempt * 3,
@@ -448,6 +459,10 @@ function generate(level, attempt) {
     digger: irand(rng, 6, 10) + attempt * 2
   }
   for (var s = 0; s < SKILL_ORDER.length; s++) w.granted[SKILL_ORDER[s]] = 0
+
+  // Last, once every wall, shaft and doorway is where it is going to be, so
+  // nothing gets furnished and then carved away before anyone sees it.
+  placeDecor(w, rng, corridors)
 
   return w
 }
@@ -574,6 +589,42 @@ function fillEarth(w, rng) {
       for (var gr = 0; gr < run && gx < COLS - 3; gr++, gx++) {
         if (at(w, gx, gy) === STEEL) break
         setCell(w, gx, gy, above)
+      }
+    }
+  }
+}
+
+// Things standing on the floor and hanging from the ceiling. Purely something
+// to look at: decor lives in its own list and never touches the terrain grid,
+// so an agent walks straight through a stalagmite and nothing in the brain can
+// see one. That is the only reason it can be scattered this freely — anything
+// put in the grid is a wall to somebody.
+//
+// Draw.js checks the cell underneath is still solid before drawing each one,
+// so a corridor that gets dug out loses its furniture on the way.
+function placeDecor(w, rng, corridors) {
+  var floorKinds = ["spire", "clump", "tuft", "tuft"]
+  for (var i = 0; i < corridors.length; i++) {
+    var c = corridors[i]
+    for (var x = c.x0 + 2; x < c.x1 - 2; x++) {
+      // Standing on the floor, where there is floor and room above it.
+      if (solid(w, x, c.floorY) && !solid(w, x, c.floorY - 1) && rng() < 0.13) {
+        w.decor.push({
+          x: x, y: c.floorY - 1, kind: pick(rng, floorKinds),
+          size: irand(rng, 1, 3), seed: Math.floor(rng() * 1000)
+        })
+        x += irand(rng, 1, 4)   // never a continuous hedge of the stuff
+        continue
+      }
+      // Hanging from the ceiling, which is what makes a corridor read as cut
+      // through rock rather than as a shelf with things on it.
+      var ceil = c.floorY - CORR_H - 1
+      if (solid(w, x, ceil) && !solid(w, x, ceil + 1) && rng() < 0.07) {
+        w.decor.push({
+          x: x, y: ceil + 1, kind: "hang",
+          size: irand(rng, 1, 2), seed: Math.floor(rng() * 1000)
+        })
+        x += irand(rng, 2, 5)
       }
     }
   }
@@ -1212,7 +1263,9 @@ function spawn(w) {
     contrary: whim < 0.2,
     x: w.hatch.x + 0.5,
     y: w.hatch.y + AGENT_H,
-    dir: 1,
+    // Facing the way the first corridor runs. Levels mirror now, so a fixed
+    // facing sent half of every colony marching at the nearest wall.
+    dir: w.startDir,
     state: "fall",
     // Not a flag an agent keeps. `floater` means "umbrella is out for THIS
     // fall" and is folded away on landing; there is no climber flag at all,
@@ -1224,6 +1277,9 @@ function spawn(w) {
     built: 0,          // bridges laid; see willBuild()
     turns: 0,
     idle: 0,           // ticks since it last got closer to home
+    passes: {},        // cells re-tread since then; see countPass()
+    bucket: "",
+    condemned: false,
     markD: Infinity,   // closest it has ever been; see goalDist()
     fuse: 0,
     anim: Math.floor(Math.random() * 8),
@@ -1602,6 +1658,18 @@ function grant(w, skill) {
 // more levels than it saves.
 var PATIENCE = 600
 
+// Going round in circles. An agent's recent positions are counted into buckets
+// this many cells wide, and re-treading one this many times condemns it.
+//
+// The counter is wiped every time the agent gets closer to home, which is what
+// makes it safe: reaching the threshold means five passes over the same few
+// cells with no progress at all between them, not five passes in the course of
+// a long level. A tight pace between two walls trips it in about six seconds;
+// a wide lap of a whole corridor takes nearer twenty-five, by which time
+// PATIENCE has usually already offered it a shovel.
+var LOOP_BUCKET = 5
+var LOOP_PASSES = 5
+
 // The other half of the director, and the more important one. The global stall
 // check can't see this case: one agent bashing away keeps terrainVersion
 // moving, so the level looks busy while fifteen others tramp a corridor they
@@ -1743,6 +1811,33 @@ function runDirector(w) {
 // Main step
 // ---------------------------------------------------------------------------
 
+// Counting where an agent has been since it last made progress. Buckets are
+// keyed by corridor as well as by column, so walking the same stretch of two
+// different floors doesn't read as pacing one of them.
+function countPass(w, ag) {
+  var key = Math.floor(ag.x / LOOP_BUCKET) + "@" + Math.floor((ag.y + 1) / CORR_GAP)
+  if (key === ag.bucket) return
+  ag.bucket = key
+  ag.passes[key] = (ag.passes[key] || 0) + 1
+  if (ag.passes[key] < LOOP_PASSES) return
+
+  // Condemned. A bomb rather than simply deleting it, because the explosion is
+  // the useful part: it takes a bite out of the level, and an agent only ever
+  // paces somewhere it could not get past, so the hole it leaves is in exactly
+  // the wall that stopped it. Nobody is told about it — the others just find
+  // the terrain different next time they walk into it, which is the whole
+  // premise working in its favour for once.
+  //
+  // It costs a bomber from the level's budget like everything else. When that
+  // budget is empty the agent goes on pacing, and PATIENCE handles it with a
+  // shovel instead.
+  if (ag.state === "bomb" || ag.state === "block" || ag.state === "saved") return
+  if (!take(w, "bomber")) return
+  ag.state = "bomb"
+  ag.fuse = BOMB_FUSE
+  ag.condemned = true
+}
+
 function step(w) {
   w.ticks++
   w.lastEvent = ""
@@ -1797,8 +1892,13 @@ function step(w) {
       ag.markD = dist
       ag.idle = 0
       ag.turns = 0
+      // Progress wipes the pacing record. Everything the loop check knows is
+      // about the stretch since the agent last got anywhere.
+      ag.passes = {}
+      ag.bucket = ""
     } else {
       ag.idle++
+      countPass(w, ag)
     }
 
     // Getting nowhere for long enough: stop waiting for the budget to allow it

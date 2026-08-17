@@ -126,6 +126,13 @@ function build(theme, level) {
     hatchLip: css(mix(bg, theme.accent, 0.8)),
     hatchMouth: css(bg),
 
+    // Decor sits a little above the earth it stands on, so a stalagmite reads
+    // as a thing in the room rather than as a bump in the floor, but stays
+    // well under the agents — it is scenery and must never compete with them.
+    decor: css(mix(mix(bg, tint, 0.52), fg, 0.18)),
+    decorLit: css(mix(mix(bg, tint, 0.80), fg, 0.34)),
+    decorDim: css(mix(bg, tint, 0.34)),
+
     dust: css(mix(bg, fg, 0.7)),
     label: css(mix(bg, fg, 0.85)),
     // Personality names sit behind action names: with labels on, every agent

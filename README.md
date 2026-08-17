@@ -11,7 +11,7 @@ the drop is too far.
 They are agents in the strict sense. No supervisor, no plan beyond the next two
 body-lengths, no memory of the last wall, no idea where the exit is. Each one
 looks at what's in front of it, picks the cheapest tool that fits, and commits
-completely. About three quarters of them make it. The rest are a learning
+completely. About two thirds of them make it. The rest are a learning
 experience for nobody in particular.
 
 You don't play it. You watch it. That's the whole thing.
@@ -188,6 +188,13 @@ earth and the level is *carved* out of it: four corridors, each walked in the
 opposite direction to the one above. Each corridor's floor simply stops at the
 handoff, so the way on is over the edge.
 
+Which way the serpentine runs is a coin toss, so about half of levels mirror:
+the hatch is as often in the top right as the top left, and the exit follows it.
+That was fixed for a long time, which meant the two things a viewer looks at
+first were in the same two corners of every level ever generated. Where each
+corridor's floor gives out varies too, so corridors are not all the same length
+and the obstacles along them are not all at the same three positions.
+
 Two or three obstacles sit along each corridor, every one a shape with a known
 answer:
 
@@ -221,6 +228,15 @@ Four biomes cycle with the level number — **Cavern**, **Ruins**, **Frost**,
 **Foundry** — each pulling the earth, sky and portal toward a different tone
 of the active Omarchy theme. Change your theme and the board changes with it.
 
+Each biome also furnishes its corridors: stalagmites and grass in the cavern,
+fallen columns in the ruins, ice needles in the frost, pipes and sparks in the
+foundry, with things hanging from the ceilings. None of it is in the terrain
+grid — decor lives in its own list, so an agent walks straight through a
+stalagmite and nothing in the brain can see one. That is the only reason it can
+be scattered this freely; anything put in the grid is a wall to somebody. The
+renderer checks the cell underneath is still there before drawing each piece,
+so a corridor that gets dug out loses its furniture along the way.
+
 ![Umbrellas out](screenshot-floaters.png)
 
 The agents themselves are the one deliberately un-themed thing on the
@@ -252,10 +268,8 @@ now: one moves on any change, the other only when solid becomes empty or empty
 becomes solid.
 
 Measured over 200 levels played the way the panel plays them, retries and all:
-**98% reach their target**, 75% of every agent released gets home, over an
-average attempt of about 67 seconds. Of 258 attempts you'd see something bashed
-through in every one, a blocker standing in 226, a bridge built in 186, a climb
-in 173, an umbrella in 153, digging in 79 and mining in 71.
+**95% reach their target**, 68% of every agent released gets home, over an
+average attempt of about 65 seconds. Three in ten attempts run into the nuke.
 
 ### The blocker
 
@@ -292,6 +306,35 @@ as solid steel to everything else in the simulation, so a hole through the
 bedrock still reported a floor at the bottom of it and the drop was never
 bottomless. One line, and the skill went from never appearing to standing in
 about half of all levels.
+
+### Going in circles
+
+An agent that has stopped getting anywhere tends to pace, and pacing is the
+least interesting thing on the board — it also burns the level's clock while
+the rest of the colony waits for something to happen. So positions are counted
+into buckets five cells wide, and an agent that re-treads one five times is
+condemned and handed a bomb.
+
+The counter is wiped every time an agent gets closer to home, which is what
+makes it safe to be this quick: hitting the threshold means five passes over
+the same few cells with *no progress at all* in between, never five passes in
+the ordinary course of a long level. A tight pace between two walls trips it in
+about six seconds. A wide lap of a whole corridor takes nearer twenty-five, by
+which time the patience timer has usually already offered it a shovel.
+
+A bomb rather than simply deleting it, because the explosion is the useful
+part. An agent only ever paces somewhere it could not get past, so the hole it
+leaves is in exactly the wall that stopped it. Nobody is told; the others walk
+into the same place later and find it different, which is the first time the
+"no memory, no plan, no communication" premise has worked in their favour.
+
+It costs a bomber from the same budget as everything else, and when that is
+empty the agent goes on pacing and the patience timer handles it instead.
+
+It fires on 45% of attempts, about one and a half agents each time. That is not
+free — it kills agents who occasionally would have come good — but it takes the
+share of attempts that run all the way into the nuke from 39% down to 30%, and
+a level ends about two seconds sooner on average.
 
 ## When it goes wrong
 

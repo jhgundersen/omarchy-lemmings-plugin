@@ -119,7 +119,100 @@ function drawTerrain(ctx, w, pal) {
   ctx.fillStyle = wash
   ctx.fillRect(0, k.SKY * C, cols * C, (rows - k.SKY) * C)
 
+  drawDecor(ctx, w, pal)
   drawExitBack(ctx, w, pal)
+}
+
+// Scenery: things standing on the floor and hanging from the ceiling. Drawn on
+// the terrain layer, because it changes exactly when the terrain does and
+// there is no reason to pay for it every tick.
+//
+// Each piece checks the cell it stands on is still there. Sim.js keeps decor
+// out of the terrain grid entirely so it can never be an obstacle, which means
+// nothing removes a stalagmite when the floor under it is dug away — so the
+// renderer simply stops drawing one that is standing on nothing.
+function drawDecor(ctx, w, pal) {
+  var k = w.k
+  var C = k.CELL
+  for (var i = 0; i < w.decor.length; i++) {
+    var d = w.decor[i]
+    var px = d.x * C
+    var py = d.y * C
+
+    if (d.kind === "hang") {
+      if (w.terrain[(d.y - 1) * k.COLS + d.x] === k.EMPTY) continue
+      if (w.terrain[d.y * k.COLS + d.x] !== k.EMPTY) continue
+    } else {
+      if (w.terrain[(d.y + 1) * k.COLS + d.x] === k.EMPTY) continue
+      if (w.terrain[d.y * k.COLS + d.x] !== k.EMPTY) continue
+    }
+
+    // The biome decides what the same four shapes are made of. A spire is a
+    // stalagmite in a cavern, a fallen column in ruins, an ice needle in the
+    // frost and a length of pipe in the foundry — same silhouette, and the
+    // palette plus a detail or two does the rest.
+    var ruins = w.biome === "Ruins"
+    var frost = w.biome === "Frost"
+    var foundry = w.biome === "Foundry"
+
+    if (d.kind === "spire") {
+      var h = 3 + d.size * 3
+      ctx.fillStyle = pal.decor
+      if (foundry) {
+        // A pipe: straight sides, a collar near the top.
+        ctx.fillRect(px + 1, py + C - h, 3, h)
+        ctx.fillStyle = pal.decorLit
+        ctx.fillRect(px, py + C - h + 2, 5, 2)
+      } else if (ruins) {
+        // A broken column: parallel sides, snapped off at an angle.
+        ctx.fillRect(px, py + C - h, 5, h)
+        ctx.fillStyle = pal.decorDim
+        ctx.fillRect(px + 3, py + C - h, 2, 2)
+        ctx.fillStyle = pal.decorLit
+        ctx.fillRect(px, py + C - h, 3, 1)
+      } else {
+        // A cone, drawn as courses that narrow toward the tip.
+        for (var r = 0; r < h; r++) {
+          var half = Math.max(0, Math.round((h - r) / (frost ? 3.2 : 2.4)))
+          ctx.fillRect(px + 2 - half, py + C - 1 - r, half * 2 + 1, 1)
+        }
+        ctx.fillStyle = pal.decorLit
+        ctx.fillRect(px + 2, py + C - h, 1, Math.min(3, h))
+      }
+
+    } else if (d.kind === "hang") {
+      var hh = 2 + d.size * 3
+      ctx.fillStyle = frost ? pal.decorLit : pal.decorDim
+      for (var g = 0; g < hh; g++) {
+        var gw = Math.max(0, Math.round((hh - g) / 2.6))
+        ctx.fillRect(px + 2 - gw, py + g, gw * 2 + 1, 1)
+      }
+
+    } else if (d.kind === "clump") {
+      // A mound of loose material: rubble, a snow drift, a heap of slag.
+      var cw = 3 + d.size * 2
+      ctx.fillStyle = pal.decorDim
+      ctx.fillRect(px, py + C - 2, cw, 2)
+      ctx.fillStyle = pal.decor
+      ctx.fillRect(px + 1, py + C - 3, cw - 2, 1)
+      if (d.seed % 3 === 0) {
+        ctx.fillStyle = pal.decorLit
+        ctx.fillRect(px + 1 + (d.seed % 2), py + C - 4, 1, 1)
+      }
+
+    } else {
+      // Tufts: grass in a cavern, crystals in the frost, weeds in ruins,
+      // a spray of sparks in the foundry. Three blades at different heights.
+      ctx.fillStyle = foundry ? pal.decorLit : pal.decor
+      var blades = 2 + (d.seed % 2)
+      for (var bl = 0; bl <= blades; bl++) {
+        var bh = 2 + ((d.seed >> bl) % 3) + d.size
+        var bxo = bl * 2
+        ctx.fillRect(px + bxo, py + C - bh, 1, bh)
+        if (frost) ctx.fillRect(px + bxo, py + C - bh, 1, 1)
+      }
+    }
+  }
 }
 
 // The portal's static half sits on the terrain layer so the pulsing light on
