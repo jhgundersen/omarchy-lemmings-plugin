@@ -61,6 +61,13 @@ going.
   doing when it's doing something, and who it is the rest of the time
 - **Esc** — close the panel
 
+A level that doesn't get everyone home is attempted again, up to three times,
+before it moves on. A retry keeps the same ground and sends a different colony
+at it, with a little more in the toolbar — replaying it unchanged would be
+pointless, since everything here is deterministic and the run would fail again
+tick for tick. Roughly two in five failed levels come good on a second or third
+go; the header shows which try you're watching.
+
 Nothing in here assigns a skill. There's no cursor, no toolbar you can click,
 no way to help. The toolbar under the board is a read-out, not a control: it
 shows what this level was issued and what's left of it, and flashes when one
@@ -112,6 +119,11 @@ work:
 | **stubborn** | Works the same wall long after the others have turned back. |
 | **tinkerer** | Reaches for bricks first, even where a bash would do. |
 
+On top of the personality each one carries its own small variation, so two
+cautious lemmings aren't the same lemming twice: where its bridge-or-jump line
+sits shifts a little either way, and one in five reverses its instinct at a
+wall outright.
+
 The interesting part is watching two of them arrive at the same ledge and
 disagree about it — the cautious one laying a bridge across a drop the brave
 one has already walked off. Turn labels on with `l` to see who's who.
@@ -132,11 +144,18 @@ opposite direction to the one above. Each corridor's floor simply stops at the
 handoff, so the way on is over the edge.
 
 Two or three obstacles sit along each corridor, every one a shape with a known
-answer — a plug wall for the basher, a raised face for the climber, a gap for
-the builder, a run of pillars that has to be bashed through one at a time, a
-drop past two floors for the floater. Dirt and rock both give way to tools;
-steel never does. The last few paces to the exit are walled off with plain
-dirt, so every level ends with something to get through.
+answer — a plug wall for the basher, a raised face for the climber, a run of
+pillars that has to be bashed through one at a time, a drop past two floors for
+the floater, and a chasm with the far side at the same height, which is the
+builder's. The mix is weighted rather than even, and every level is guaranteed
+a chasm: climber is a trait a lemming keeps for life, so one climbable face
+early turns every wall after it into another climb, and left to the dice the
+most distinctive thing any of them does turned up in barely half of levels.
+
+Dirt and rock both give way to tools; steel never does. The last few paces to
+the exit are walled off with plain dirt, so every level ends with something to
+get through — and that wall stops two rows short of the ceiling, so it has two
+answers rather than one.
 
 The last corridor is deliberately lighter than the others — at most one
 obstacle besides that wall. Every other corridor has a way onward, so failing
@@ -154,19 +173,29 @@ board: green hair, blue robe, orange umbrella, fixed. At sixteen pixels tall
 that silhouette is the only thing making them read as lemmings rather than as
 animated debris.
 
-Measured over 400 generated levels: everyone gets home on about 8 in 10, the
-median level saves all of them and the average saves 91%, nothing dies, and a
-level takes about 50 seconds.
+Measured over 200 levels played the way the panel plays them, retries and all:
+**83% end with everyone home, 90% of all lemmings get home, nothing dies at
+all**, and an attempt takes about 50 seconds. Across those, you'd see a bridge
+built in three quarters of them, a blocker standing in over half, and something
+bashed through in every single one.
 
 ### The blocker
 
-Of the eight, the blocker is the one you'll rarely see. It wants a drop with
-no bottom, and a level whose route is sound doesn't present one. Moving the
-hazards somewhere they'd be met was tried and measured: all-home levels fell
-from 90% to 65%, because a lemming that meets a void has already solved its
-own problem by turning round, and standing there mostly just walls off the
-ones behind it. It's implemented and it fires when the conditions genuinely
-occur. They mostly don't.
+Most corridors have a hole cut clean through the bedrock at the near end —
+behind where the colony drops in, on the opposite side from the handoff
+they're walking towards. Lemmings land facing away from it, so the only ones
+who ever meet it are those who turned back from an obstacle, and for them it
+is genuinely lethal. The first to reach it stands and turns the rest around,
+which costs the level nothing because the way on was always the other way.
+
+It took two goes to get right. Putting the same hazard *on* the route is much
+worse — a blocker at a void the colony has to cross walls off the only way
+forward, and all-home fell from 90% to 65%. And for a long time it couldn't
+fire at all: the rule keys off a drop with no bottom, but out-of-bounds reads
+as solid steel to everything else in the simulation, so a hole through the
+bedrock still reported a floor at the bottom of it and the drop was never
+bottomless. One line, and the skill went from never appearing to standing in
+about half of all levels.
 
 ## When it goes wrong
 

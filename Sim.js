@@ -91,7 +91,7 @@ var BIOMES = ["Cavern", "Ruins", "Frost", "Foundry"]
 var TRAITS = {
   steady:   { label: "steady",   turnLimit: 3, fallMargin: 0, bridgeAt: 8,  bashFirst: false, blockBias: 0 },
   brave:    { label: "brave",    turnLimit: 4, fallMargin: 0, bridgeAt: 13, bashFirst: true,  blockBias: 0 },
-  cautious: { label: "cautious", turnLimit: 3, fallMargin: 5, bridgeAt: 4,  bashFirst: false, blockBias: 2 },
+  cautious: { label: "cautious", turnLimit: 3, fallMargin: 2, bridgeAt: 4,  bashFirst: false, blockBias: 2 },
   curious:  { label: "curious",  turnLimit: 2, fallMargin: 1, bridgeAt: 9,  bashFirst: false, blockBias: 0 },
   stubborn: { label: "stubborn", turnLimit: 6, fallMargin: 0, bridgeAt: 9,  bashFirst: true,  blockBias: 0 },
   tinkerer: { label: "tinkerer", turnLimit: 3, fallMargin: 2, bridgeAt: 3,  bashFirst: false, blockBias: 1 }
@@ -203,10 +203,19 @@ var CORR_H = 6           // carved headroom above a corridor floor
 var CORR_GAP = 12        // vertical distance between corridor floors
 var N_CORR = 4
 
-function generate(level) {
+// `attempt` re-runs the SAME level with a different colony. The layout stays a
+// pure function of the level number — level 42 is always level 42 — but the
+// personalities and the skill budget come off the attempt as well, because a
+// retry that reproduces the run exactly is not a retry: everything here is
+// deterministic, so replaying a failed level unchanged fails it again, tick for
+// tick. Same problem, different lemmings, and a little more to work with each
+// time round.
+function generate(level, attempt) {
+  attempt = attempt || 0
   var rng = makeRng(level)
   var w = {
     level: level,
+    attempt: attempt,
     biome: BIOMES[(level - 1) % BIOMES.length],
     terrain: new Uint8Array(COLS * ROWS),
     terrainVersion: 1,
@@ -234,7 +243,7 @@ function generate(level) {
 
     // Personalities are drawn from their own stream, kept separate from the
     // generator's so that changing level layout doesn't reshuffle who is who.
-    traitRng: makeRng(level * 7919 + 13),
+    traitRng: makeRng(level * 7919 + 13 + attempt * 104729),
     traitCounts: {},
 
     // Stall detection: the director watches these three numbers and steps in
@@ -273,6 +282,9 @@ function generate(level) {
   for (var j = 0; j < corridors.length; j++) {
     var cur = corridors[j]
     placeObstacles(w, rng, cur, j, corridors)
+    // Middle corridors only: not the first (its near end is the hatch's
+    // landing pad) and not the last (its near end is where the exit goes).
+    if (j > 0 && j < corridors.length - 1 && rng() < 0.85) placeVoid(w, cur, corridors[j - 1])
     if (j < corridors.length - 1) {
       carveDescent(w, rng, cur, corridors[j + 1])
       // (No hazard call: carveDescent now takes the whole stretch past the
@@ -355,11 +367,11 @@ function generate(level) {
     climber: w.toRelease + 4,
     floater: w.toRelease + 4,
     bomber: irand(rng, 1, 2),
-    blocker: irand(rng, 2, 4),
-    builder: irand(rng, 10, 16),
-    basher: irand(rng, 6, 12),
-    miner: irand(rng, 4, 8),
-    digger: irand(rng, 6, 10)
+    blocker: irand(rng, 2, 4) + attempt,
+    builder: irand(rng, 10, 16) + attempt * 3,
+    basher: irand(rng, 6, 12) + attempt * 3,
+    miner: irand(rng, 4, 8) + attempt * 2,
+    digger: irand(rng, 6, 10) + attempt * 2
   }
   for (var s = 0; s < SKILL_ORDER.length; s++) w.granted[SKILL_ORDER[s]] = 0
 
@@ -422,10 +434,15 @@ function placeObstacles(w, rng, c, index, corridors) {
   // underneath the only room that matters. A lemming that falls in has the exit
   // overhead and no corridor below to move on to, and that hole held every
   // stranded lemming in a 120-level run.
+  // Weighted, not uniform. A flat list put a climbable face in the mix as often
+  // as anything else, and since climber is a trait a lemming keeps for life,
+  // one climbable obstacle early turns every wall after it into another climb.
+  // Bashing and bridging have to be the common answers or the whole level reads
+  // as walking, climbing and falling.
   var lastOne = index === N_CORR - 1
   var kinds = lastOne
-    ? ["wall", "step", "pillars"]
-    : ["wall", "step", "gap", "pit", "pillars"]
+    ? ["wall", "pillars", "pillars", "step"]
+    : ["wall", "wall", "pillars", "pillars", "chasm", "chasm", "gap", "pit", "step"]
   // The floater needs a drop taller than SAFE_FALL, and the only landing far
   // enough down to be one is the corridor TWO floors below — see the cliff
   // case for why it has to be a real corridor and not just a deep hole.
@@ -442,11 +459,17 @@ function placeObstacles(w, rng, c, index, corridors) {
   // stretch is the pay-off.
   var count = lastOne ? irand(rng, 0, 1) : irand(rng, 2, 3)
   if (count === 0) return
+
+  // One corridor per level is guaranteed a chasm. Left to the dice, a bridge
+  // being built — the most distinctive thing any of them does — turned up on
+  // barely half of levels, which is easily few enough to watch for a while and
+  // conclude the builder doesn't exist.
+  var forced = (lastOne || index > 1) ? -1 : 1
   var slot = span / (count + 1)
 
   for (var n = 1; n <= count; n++) {
     var x = Math.round(lo + slot * n)
-    var kind = pick(rng, kinds)
+    var kind = n === forced ? "chasm" : pick(rng, kinds)
 
     if (kind === "wall") {
       // A plug spanning the full corridor height: climbing it just buries the
@@ -476,6 +499,17 @@ function placeObstacles(w, rng, c, index, corridors) {
         for (var fy = c.floorY - rise; fy < c.floorY; fy++) setCell(w, sx, fy, DIRT)
         for (var cy = topCeil; cy < c.floorY - rise; cy++) clearCell(w, sx, cy)
       }
+
+    } else if (kind === "chasm") {
+      // Floor gone, far side at the same height, and the bottom of it is the
+      // corridor below. Whoever bridges it stays on this floor; whoever walks
+      // in carries on a storey down. Both are fine outcomes, which is what
+      // makes it the clearest showcase of who's who on the board — and the
+      // reason there's now a build to watch on nearly every level.
+      var span2 = irand(rng, 10, 17)
+      var floorBelow = index + 1 < N_CORR ? corridors[index + 1].floorY : ROWS - 3
+      for (var gx2 = x; gx2 < x + span2 && gx2 <= hi; gx2++)
+        for (var gy2 = c.floorY; gy2 < floorBelow; gy2++) clearCell(w, gx2, gy2)
 
     } else if (kind === "pillars") {
       // A run of narrow columns rather than one thick wall. Each is only a few
@@ -561,6 +595,11 @@ function carveDescent(w, rng, c, next) {
   var x = c.handoffX
   var farX = c.dir > 0 ? c.x1 + 1 : c.x0 - 1
 
+  // Always open. Leaving two in five sealed, so the colony had to work out that
+  // the way on was down, sounded like the cure for how much of this is falling
+  // and measured out as the opposite: frustration is counted in turnarounds,
+  // a corridor is ninety cells long, and a round trip is twenty seconds — so
+  // a sealed end bought pacing, not digging, and cost a tenth of all levels.
   if (rng() < 0.6) {
     for (var sx = Math.min(x, farX); sx <= Math.max(x, farX); sx++)
       for (var sy = c.floorY; sy < next.floorY; sy++) clearCell(w, sx, sy)
@@ -573,6 +612,32 @@ function carveDescent(w, rng, c, next) {
       for (var my = top; my < next.floorY; my++) clearCell(w, mx, my)
     }
   }
+}
+
+// A hole with no bottom at the corridor's NEAR end — the short stretch behind
+// where lemmings drop in, on the opposite side from the handoff they're headed
+// for. This is the one place a blocker earns its keep.
+//
+// Everything about the placement is about not standing on the route. Lemmings
+// land facing away from it and walk off toward the handoff, so the only ones
+// who ever meet it are those who turned back from an obstacle — and for them
+// it is genuinely lethal, being open all the way through the bedrock. The
+// first one to reach it stands and turns the rest around, which costs the
+// level nothing because the way on was always the other way.
+//
+// Putting the same hazard on the route was tried and is much worse: a blocker
+// at a void the colony has to cross walls off the only way forward, and
+// all-home fell from 90% to 65%.
+function placeVoid(w, c, prev) {
+  // Hard against the side wall. There is less room back here than it looks —
+  // the drop from the corridor above lands about ten cells off the wall, and
+  // the hole has to sit beyond that without being where anyone arrives.
+  var nearX = c.dir > 0 ? c.x0 + 3 : c.x1 - 3
+  var landing = prev ? prev.handoffX : (c.dir > 0 ? c.x1 : c.x0)
+  if (Math.abs(landing - nearX) < 4) return
+
+  for (var vx = nearX - 1; vx <= nearX + 1; vx++)
+    for (var vy = c.floorY; vy < ROWS; vy++) setCell(w, vx, vy, EMPTY)
 }
 
 // A steel pillar (a wall no skill touches, so they simply turn back) or a shaft
@@ -629,7 +694,12 @@ function wallThickness(w, x, footY, dir) {
 // Distance straight down to the first solid cell, or Infinity for a shaft
 // that runs off the bottom of the world.
 function dropDepth(w, x, footY) {
-  for (var d = 1; d < ROWS; d++) {
+  // Only rows that exist. at() reports everything below the world as STEEL —
+  // which is right for walking and digging, and wrong here: it meant a hole cut
+  // clean through the bedrock still reported a floor at the bottom of it, so
+  // this never once returned Infinity and the blocker rule, which is the only
+  // thing that reads it, could never fire in the first place.
+  for (var d = 1; footY + d < ROWS; d++) {
     if (solid(w, x, footY + d)) return d - 1
   }
   return Infinity
@@ -704,8 +774,19 @@ function exitBelow(w, L) { return exitFloor(w) > L.y + 2 }
 // climbing a wall it can't top, and falling off it again cleared its patience
 // timer on every state change, so the one mechanism meant to rescue a stuck
 // lemming never fired for the lemmings that were most stuck.
+// Depth is the only thing that counts until they're on the exit's own floor.
+//
+// Counting horizontal distance everywhere sounds more informative and is
+// actively misleading on a serpentine: the exit sits at the bottom of the last,
+// leftward corridor, so in the top corridor "closer to the exit" means the left
+// wall — the dead end — while the only way down is the far right. Every
+// leftward leg of a lemming pacing that corridor therefore looked like progress
+// and cleared the frustration it had built up, so it never reached the count
+// that makes it dig, and a corridor with no open descent simply stalled.
 function goalDist(w, L) {
-  return Math.abs(L.x - (w.exit.x + w.exit.w / 2)) + Math.abs(L.y - exitFloor(w)) * 2
+  var dy = Math.abs(L.y - exitFloor(w))
+  if (dy <= 3) return Math.abs(L.x - (w.exit.x + w.exit.w / 2))
+  return 1000 + dy * 4
 }
 function exitAbove(w, L) { return exitFloor(w) < L.y - 2 }
 
@@ -740,13 +821,14 @@ function hitWall(w, L) {
   var h = wallHeight(w, ax, footY)
   var t = wallThickness(w, ax, footY, L.dir)
   var trait = traitOf(L)
+  var bashFirst = L.contrary ? !trait.bashFirst : trait.bashFirst
   // Climbable means: short enough to be worth it, and the top is somewhere
   // inside the level rather than out on the open surface above the earth.
   var climbable = h <= MAX_CLIMB && footY - h >= SKY
 
   // Already a climber? Then this isn't a decision — it's just what they do.
   // Unless it's one of the ones that would rather go straight through.
-  if (L.climber && h > MAX_STEP && climbable && !trait.bashFirst) { startClimb(w, L); return }
+  if (L.climber && h > MAX_STEP && climbable && !bashFirst) { startClimb(w, L); return }
 
   // Over, or through. Both work on a short wall, and which one a lemming
   // reaches for first is most of what its personality looks like from outside:
@@ -754,7 +836,7 @@ function hitWall(w, L) {
   // round. A tinkerer would rather lay bricks than do either.
   if (trait.bridgeAt <= 3 && h <= 6 && willBuild(L) && take(w, "builder")) { startBuild(w, L); return }
 
-  if (trait.bashFirst) {
+  if (bashFirst) {
     if (t <= BASH_REACH && take(w, "basher")) { L.state = "bash"; L.timer = 0; return }
     if (climbable && take(w, "climber")) { L.climber = true; startClimb(w, L); return }
   } else {
@@ -794,7 +876,7 @@ function edgeAhead(w, L, nx) {
   // personality does to a lemming's behaviour: a cautious one bridges a drop a
   // brave one walks straight off, and you can watch them disagree about the
   // same ledge, one after the other.
-  if (far > 2 && depth > trait.bridgeAt && willBuild(L) && take(w, "builder")) { startBuild(w, L); return }
+  if (far > 2 && depth > trait.bridgeAt + L.bridgeBias && willBuild(L) && take(w, "builder")) { startBuild(w, L); return }
 
   // The umbrella comes out early for the ones who like a margin. It can only
   // ever come out EARLIER than the lethal limit, never later — a personality
@@ -849,12 +931,12 @@ function considerEscape(w, L) {
 
   if (exitBelow(w, L)) {
     if (!solid(w, Math.floor(L.x), footY + 1)) return false
-    // Roughly a third of them cut a diagonal ramp instead of sinking a shaft.
+    // Half of them cut a diagonal ramp instead of sinking a shaft.
     // Keyed off the lemming's own id so it's a settled trait rather than a
     // coin flip, and so both skills actually get used — ordering digger first
     // for everyone meant the miner was a number on the toolbar that never
     // moved, because the digger budget almost never ran out.
-    var ramp = L.id % 3 === 0
+    var ramp = L.id % 2 === 0
     if (ramp && take(w, "miner")) { L.state = "mine"; L.timer = 0; return true }
     if (take(w, "digger")) { L.state = "dig"; L.timer = 0; return true }
     if (take(w, "miner")) { L.state = "mine"; L.timer = 0; return true }
@@ -921,9 +1003,15 @@ function spawn(w) {
   // lemmings out in the same order — level 42 has the same stubborn one at the
   // same point in the queue every time you come back to it.
   var trait = TRAIT_POOL[Math.floor(w.traitRng() * TRAIT_POOL.length) % TRAIT_POOL.length]
+  var whim = w.traitRng()
   return {
     id: w.nextId++,
     trait: trait,
+    // Individual variation inside the personality, so two cautious lemmings
+    // aren't the same lemming twice. Shifts where its bridge-or-jump line
+    // sits, and one in five reverses its instinct at a wall outright.
+    bridgeBias: Math.round(whim * 5) - 2,
+    contrary: whim < 0.2,
     x: w.hatch.x + 0.5,
     y: w.hatch.y + LEM_H,
     dir: 1,
@@ -1352,7 +1440,7 @@ function forceEscape(w, L) {
   // of the room it was standing in.
   if (exitBelow(w, L) && solid(w, Math.floor(L.x), footY + 1)
       && at(w, Math.floor(L.x), footY + 1) !== STEEL) {
-    var ramp = L.id % 3 === 0
+    var ramp = L.id % 2 === 0
     grant(w, ramp ? "miner" : "digger")
     L.state = ramp ? "mine" : "dig"
     L.timer = 0
@@ -1410,7 +1498,7 @@ function runDirector(w) {
     best.state = "bash"
     best.timer = 0
   } else if (exitBelow(w, best) && solid(w, Math.floor(best.x), footY + 1) && at(w, Math.floor(best.x), footY + 1) !== STEEL) {
-    var rampy = best.id % 3 === 0
+    var rampy = best.id % 2 === 0
     grant(w, rampy ? "miner" : "digger")
     best.state = rampy ? "mine" : "dig"
     best.timer = 0

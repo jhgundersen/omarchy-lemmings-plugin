@@ -48,6 +48,7 @@ Panel {
   property var stats: ({ level: 1, biome: "", saved: 0, out: 0, total: 0, lost: 0, active: 0, skills: {}, used: {}, done: false })
 
   property int level: 1
+  property int attempt: 0
   property bool running: false
   property bool showLabels: false
   property int speedIndex: 1
@@ -75,6 +76,14 @@ Panel {
     "Umbrellas up, and down they went.",
     "Somebody had to stand still so the rest could pass.",
     "No plan, no map, no fuss."
+  ]
+  // Shown when the level is about to be attempted again rather than left.
+  readonly property var retryLines: [
+    "Not this time. Sending a fresh lot in.",
+    "That didn't work. Again, with different lemmings.",
+    "Some levels take two goes.",
+    "Round two. Same ground, new colony.",
+    "They'll have another crack at it."
   ]
   readonly property var partialLines: [
     "Most of them made it. That's how it goes.",
@@ -178,9 +187,15 @@ Panel {
   // Level lifecycle
   // ---------------------------------------------------------------------
 
-  function newLevel(n) {
+  // Up to three goes at a level before moving on. A retry keeps the same
+  // ground and sends a different colony at it — see Sim.generate(level,
+  // attempt) for why replaying it unchanged would be pointless.
+  readonly property int maxAttempts: 3
+
+  function newLevel(n, tryNumber) {
     level = Math.max(1, n)
-    world = Sim.generate(level)
+    attempt = tryNumber || 0
+    world = Sim.generate(level, attempt)
     completionLine = ""
     publish()
     terrainCanvas.requestPaint()
@@ -188,8 +203,12 @@ Panel {
   }
 
   function advance(delta) {
-    newLevel(level + delta)
+    newLevel(level + delta, 0)
     saveState()
+  }
+
+  function retryLevel() {
+    newLevel(level, attempt + 1)
   }
 
   function publish() {
@@ -200,6 +219,7 @@ Panel {
       saved: world.saved,
       out: world.released,
       total: world.toRelease,
+      attempt: world.attempt || 0,
       lost: world.lost,
       active: world.active || 0,
       done: world.done,
@@ -223,17 +243,22 @@ Panel {
     publish()
 
     if (world.done && completionLine === "") {
-      var pool = world.saved >= world.toRelease ? completionLines : partialLines
+      var everyone = world.saved >= world.toRelease
+      var willRetry = !everyone && attempt + 1 < maxAttempts
+      var pool = everyone ? completionLines : (willRetry ? retryLines : partialLines)
       completionLine = pool[Math.floor(Math.random() * pool.length)]
       lifetimeSaved += world.saved
       if (world.saved > 0) levelsCleared += 1
       saveState()
     }
 
-    // A pause on the finished level long enough to read the result, then the
-    // next one carves itself. The loop is the point: this is meant to be left
-    // open in the corner of a screen.
-    if (world.done && world.doneTicks > 110) advance(1)
+    // A pause on the finished level long enough to read the result, then either
+    // another go at it or the next one. The loop is the point: this is meant to
+    // be left open in the corner of a screen.
+    if (world.done && world.doneTicks > 110) {
+      if (world.saved >= world.toRelease || attempt + 1 >= maxAttempts) advance(1)
+      else retryLevel()
+    }
   }
 
   function togglePause() { running = !running }
@@ -421,6 +446,7 @@ Panel {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
             text: "Level " + root.stats.level + "  ·  " + root.stats.biome
+                  + ((root.stats.attempt || 0) > 0 ? "  ·  try " + ((root.stats.attempt || 0) + 1) : "")
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.title
