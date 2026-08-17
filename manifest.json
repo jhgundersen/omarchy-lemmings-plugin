@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "jhgundersen.lemmings",
+  "name": "Lemmings",
+  "version": "1.0.0",
+  "author": "Jon Håvard Gundersen",
+  "description": "An ambient Lemmings simulation in your top bar. A level carves itself, twenty lemmings work out how to get through it, and you watch.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Lemmings",
+    "description": "Something to watch, not something to play",
+    "category": "Fun",
+    "allowMultiple": false
+  }
+}
