@@ -251,8 +251,8 @@ function drawExitBack(ctx, w, pal) {
 function drawActors(ctx, w, pal, opts) {
   var k = w.k
   ctx.reset()
-  drawHatch(ctx, w, pal)
   drawSpecialCard(ctx, w, pal)
+  drawHatch(ctx, w, pal)
   drawExitGlow(ctx, w, pal)
 
   drawHazard(ctx, w, pal)
@@ -432,45 +432,46 @@ function drawSpecialCard(ctx, w, pal) {
   var boardW = w.k.COLS * C
   var skyH = w.k.SKY * C
 
-  // All of the sky that the hatch is not using. The hatch is drawn 16px either
-  // side of its own column, so the card takes whichever side of it is bigger
-  // and runs to the edge of the board.
-  // Flush with the edge of the board and the full depth of the sky. It is a
-  // panel belonging to the frame, not a sign standing in the middle of it, so
-  // it takes whichever side of the hatch has more room and runs from there to
-  // the wall.
-  var hatchL = w.hatch.x * C - 18
-  var hatchR = w.hatch.x * C + 18
-  var x, cardW
-  if (boardW - hatchR >= hatchL) { x = hatchR; cardW = boardW - x }
-  else { x = 0; cardW = hatchL }
-  if (cardW < 90) return
-
-  var y = 0
-  var h = skyH
-
+  // The whole sky, edge to edge. Panelling only the part the hatch was not
+  // using left a notch of bare sky around it that read as a mistake — the band
+  // is one surface, and the hatch is a thing standing on it.
   ctx.fillStyle = pal.cardBack
-  ctx.fillRect(x, y, cardW, h)
+  ctx.fillRect(0, 0, boardW, skyH)
+
+  // The portrait goes to the outside: hard against whichever wall is furthest
+  // from the hatch, with the text between it and the middle of the board. So
+  // the two of them never crowd each other, and the layout mirrors when the
+  // level does.
+  var onRight = w.hatch.x * C < boardW / 2
+  var bustW = 16
+  var bustX = onRight ? boardW - 8 - bustW : 8
+
   ctx.fillStyle = sp.robe
-  ctx.fillRect(x, y, 2, h)          // a spine in the special's own colour
+  ctx.fillRect(onRight ? boardW - 2 : 0, 0, 2, skyH)   // spine, on the outside
 
-  drawBust(ctx, x + 6, y + 3, sp, pal)
+  drawBust(ctx, bustX, 3, sp, pal)
 
-  var tx = x + 28
-  ctx.textAlign = "left"
+  var tx = onRight ? bustX - 8 : bustX + bustW + 8
+  ctx.textAlign = onRight ? "right" : "left"
+
   ctx.fillStyle = sp.robe
   ctx.font = "bold 8px monospace"
-  ctx.fillText(sp.name, tx, y + 12)
+  ctx.fillText(sp.name, tx, 12)
 
   // One line, clipped rather than wrapped — the sky is seven rows and there is
-  // room for exactly one.
+  // room for exactly one. The space is whatever is left between the portrait
+  // and the hatch.
   var facts = SPECIAL_FACTS[sp.id] || [""]
   var fact = facts[(w.factPick || 0) % facts.length]
-  var room = Math.floor((cardW - 34) / 4.25)
+  var hatchEdge = onRight ? w.hatch.x * C + 20 : w.hatch.x * C - 20
+  var room = Math.floor((onRight ? tx - hatchEdge : hatchEdge - tx) / 4.25)
+  if (room < 8) return
   if (fact.length > room) fact = fact.slice(0, Math.max(1, room - 1)) + "\u2026"
+
   ctx.fillStyle = pal.labelFaint
   ctx.font = "7px monospace"
-  ctx.fillText(fact, tx, y + 22)
+  ctx.fillText(fact, tx, 22)
+  ctx.textAlign = "left"
 }
 
 function drawHatch(ctx, w, pal) {
