@@ -78,6 +78,11 @@ var MINE_RADIUS = 6      // just wider than the carried bomb
 var SPRAY_BURST = 12
 var SPRAY_SHOT_TICKS = 2
 var SPRAY_SLOPES = [-0.16, 0.10, -0.06, 0.14, 0, -0.12, 0.06, -0.18, 0.12, -0.03, 0.17, -0.09]
+var ENEMY_WALK_SPEED = 0.24
+var GUN_AIM = 24
+var GUN_RELOAD = 80
+var ENEMY_JET_SPEED = 0.30
+var ENEMY_JET_SINK = 0.10
 
 // How long a level gets before the nuke goes off. Levels that are going to
 // work are usually done well inside this; the ones that trip it are stuck for
@@ -388,6 +393,13 @@ function generate(level, attempt) {
     terrainVersion: 1,
     carved: 0,
     agents: [],
+    enemies: [],
+    enemyHatch: null,
+    enemyRoster: [],
+    enemyReleased: 0,
+    enemyReleaseTimer: 0,
+    enemiesKilled: 0,
+    nextEnemyId: 1,
     mines: [],
     particles: [],
     buildSites: [],
@@ -494,6 +506,29 @@ function generate(level, attempt) {
     for (var sx = hx - 2; sx <= hx + 2; sx++) clearCell(w, sx, sy)
   w.hatch = { x: hx, y: 3 }
   w.startDir = first.dir
+
+  // A separate deterministic stream keeps the red team optional without
+  // reshuffling the established terrain, hazards, specials or personalities.
+  var enemyRng = makeRng(level * 65537 + 4049)
+  var guardPlan = null
+  if (level >= 12 && enemyRng() < 0.22) {
+    // Hide the post on a deeper corridor. Its exact depth and position use a
+    // separate stream, so neither the established map nor the enemy roster is
+    // reshuffled. Starting down-route means the guards must patrol and fly to
+    // meet the colony instead of opening fire beside the friendly hatch.
+    var guardIndex = irand(enemyRng, 1, Math.max(1, corridors.length - 2))
+    if (guardIndex === hazardCorridor && corridors.length > 3)
+      guardIndex = guardIndex === corridors.length - 2 ? 1 : guardIndex + 1
+    var guardCorridor = corridors[guardIndex]
+    var guardFraction = 0.35 + enemyRng() * 0.30
+    var desiredEnemyX = Math.round(guardCorridor.startX
+      + (guardCorridor.handoffX - guardCorridor.startX) * guardFraction)
+    guardPlan = { corridor: guardCorridor, index: guardIndex, desiredX: desiredEnemyX }
+    // One or two Trigger Warnings are more legible and more dangerous than a
+    // pile of mixed melee/ranged enemies. Every red agent gets the jetpack.
+    var enemyCount = irand(enemyRng, 1, 2)
+    for (var er = 0; er < enemyCount; er++) w.enemyRoster.push("gun")
+  }
 
   // Steel under the landing pad. The hatch goes on dropping agents onto this
   // spot for the whole level, so it's the one piece of floor that must still
@@ -629,6 +664,51 @@ function generate(level, attempt) {
 
   placeDecor(w, rng, corridors)
   if (hazardCorridor >= 0) w.hazard = placeHazard(w, rng, corridors, hazardCorridor)
+
+  // Place the booth only after terrain roughening, decoration and hazards are
+  // final. Earlier placement could pass a clear-space test and then have a
+  // grate, hanging prop or hazard drawn straight through its roof.
+  if (guardPlan) {
+    var gc = guardPlan.corridor
+    var enemyX = guardPlan.desiredX, enemyBest = Infinity
+    for (var egx = gc.x0 + 4; egx <= gc.x1 - 4; egx++) {
+      var guardClear = true
+      // Seven cells wide and eight high covers even the Ice Cave roof spikes
+      // and the Spaceship booth's side antennae.
+      for (var ewx = egx - 3; ewx <= egx + 3 && guardClear; ewx++) {
+        if (!solid(w, ewx, gc.floorY)) guardClear = false
+        for (var ehy = 1; ehy <= 8 && guardClear; ehy++)
+          if (solid(w, ewx, gc.floorY - ehy)) guardClear = false
+      }
+      for (var edi = 0; edi < w.decor.length && guardClear; edi++) {
+        var ed = w.decor[edi]
+        if (Math.abs(ed.x - egx) <= 4 && ed.y >= gc.floorY - 10 && ed.y <= gc.floorY + 2)
+          guardClear = false
+      }
+      if (w.hazard && Math.abs(w.hazard.floorY - gc.floorY) < 3
+          && egx + 5 >= w.hazard.zx0 && egx - 5 <= w.hazard.zx1) guardClear = false
+      var enemyDistance = Math.abs(egx - guardPlan.desiredX)
+      if (guardClear && enemyDistance < enemyBest) { enemyX = egx; enemyBest = enemyDistance }
+    }
+    if (enemyBest === Infinity) {
+      enemyX = Math.max(gc.x0 + 4, Math.min(gc.x1 - 4, guardPlan.desiredX))
+      // Absolute fallback: cut a booth-sized alcove. A rare tiny terrain edit
+      // is preferable to ever drawing a building inside solid earth.
+      for (var ecx = enemyX - 3; ecx <= enemyX + 3; ecx++)
+        for (var ecy = gc.floorY - 8; ecy < gc.floorY; ecy++) clearCell(w, ecx, ecy)
+    }
+    // There is normally ample room; if a particularly furnished corridor has
+    // none, remove only overlapping decor at the best terrain-safe fallback.
+    w.decor = w.decor.filter(function(ed) {
+      return !(Math.abs(ed.x - enemyX) <= 4 && ed.y >= gc.floorY - 10 && ed.y <= gc.floorY + 2)
+    })
+    w.enemyHatch = {
+      x: enemyX, y: gc.floorY - 1, biome: w.biome,
+      corridor: guardPlan.index, dir: -gc.dir
+    }
+    for (var epadY = gc.floorY; epadY < gc.floorY + 2; epadY++)
+      for (var epadX = enemyX - 2; epadX <= enemyX + 2; epadX++) setCell(w, epadX, epadY, STEEL)
+  }
 
   return w
 }
@@ -1364,6 +1444,15 @@ function sprayBullet(w, ag, shot, dry) {
     var bx = fx + d * i
     var by = Math.round(fy - 2 + slope * i)
 
+    for (var rei = 0; rei < w.enemies.length; rei++) {
+      var red = w.enemies[rei]
+      if (red.gone || Math.abs(red.x - (bx + 0.5)) >= 0.9 || Math.abs((red.y - 2) - by) >= 2.5) continue
+      if (dry) return true
+      ag.shotTo = red.x; ag.shotY = red.y - 2; ag.shotFor = SPRAY_SHOT_TICKS
+      killEnemy(w, red)
+      return true
+    }
+
     // Hazards are targets in the same ray, not a separate magical range
     // check. Terrain in front absorbs the round before it can reach them.
     if (h && !h.wrecked && bx >= h.zx0 && bx <= h.zx1 && by >= h.zy0 && by <= h.zy1) {
@@ -2075,6 +2164,10 @@ function hazardStrike(w, h) {
     w.hazardKills++
     w.lastEvent = "hazard"
   }
+  for (var ei = 0; ei < w.enemies.length; ei++) {
+    var en = w.enemies[ei]
+    if (!en.gone && hazardCatches(w, h, en)) killEnemy(w, en)
+  }
 }
 
 // Is the next step into somewhere known to be lethal *right now*? Two things
@@ -2623,6 +2716,9 @@ function spawn(w) {
     limitedFor: 0,
     limitedBy: 0,
     flipTicks: 0,
+    wounds: 0,
+    stunFor: 0,
+    shoveCool: 0,
     shotTo: 0,        // where a camped sniper's last shot went, for the tracer
     shotY: 0,
     shotFor: 0,
@@ -2908,6 +3004,11 @@ function stepMines(w) {
       for (var dx = -MINE_RADIUS; dx <= MINE_RADIUS; dx++)
         if (dx * dx + dy * dy <= MINE_RADIUS * MINE_RADIUS)
           clearCell(w, mine.x + dx, mine.y + dy)
+    for (var ei = 0; ei < w.enemies.length; ei++) {
+      var en = w.enemies[ei]
+      if (!en.gone && Math.abs(en.x - mine.x) <= MINE_RADIUS
+          && Math.abs(en.y - mine.y) <= MINE_RADIUS) killEnemy(w, en)
+    }
     addDust(w, mine.x, mine.y, 28)
     w.mines.splice(i, 1)
     w.lastEvent = "mine boom"
@@ -2985,6 +3086,12 @@ function stepBomb(w, ag) {
   for (var dy = -BOMB_RADIUS; dy <= BOMB_RADIUS; dy++)
     for (var dx = -BOMB_RADIUS; dx <= BOMB_RADIUS; dx++)
       if (dx * dx + dy * dy <= BOMB_RADIUS * BOMB_RADIUS) clearCell(w, cx + dx, cy + dy)
+
+  for (var ei = 0; ei < w.enemies.length; ei++) {
+    var enemy = w.enemies[ei]
+    if (!enemy.gone && Math.abs(enemy.x - ag.x) <= BOMB_RADIUS
+        && Math.abs(enemy.y - ag.y) <= BOMB_RADIUS) killEnemy(w, enemy)
+  }
 
   addDust(w, ag.x, ag.y - 1, 22)
   ag.gone = true
@@ -3078,6 +3185,27 @@ function stepCamp(w, ag) {
   var spec = specOf(ag)
   var fx = Math.floor(ag.x)
   var fy = Math.floor(ag.y)
+
+  // Red-team agents are live targets just like machinery, but bodies are
+  // nearer and smaller: take the closest visible one before returning to the
+  // slow work of opening terrain.
+  var redTarget = null, redDist = Infinity
+  for (var rei = 0; rei < w.enemies.length; rei++) {
+    var red = w.enemies[rei]
+    if (red.gone || Math.abs(red.y - ag.y) > 3) continue
+    var rd = Math.abs(red.x - ag.x)
+    if (rd >= redDist || !lineClear(w, fx, fy - 2, Math.floor(red.x), Math.floor(red.y) - 2)) continue
+    redTarget = red; redDist = rd
+  }
+  if (redTarget) {
+    ag.dir = redTarget.x >= ag.x ? 1 : -1
+    ag.shotTo = redTarget.x
+    ag.shotY = redTarget.y - 2
+    ag.shotFor = 12
+    killEnemy(w, redTarget)
+    ag.cool = spec.cool
+    return
+  }
 
   // The danger, at any distance, provided the line is clear.
   var h = w.hazard
@@ -3601,6 +3729,285 @@ function stepLimited(w, ag) {
   else ag.state = "walk"
 }
 
+function stepStunned(w, ag) {
+  ag.stunFor--
+  if (ag.stunFor > 0) return
+  ag.stunFor = 0
+  if (unsupported(w, ag)) beginUncontrolledFall(w, ag)
+  else ag.state = "walk"
+}
+
+// ---------------------------------------------------------------------------
+// Red team — deliberately much simpler than the colony. They cannot edit the
+// level or use skills; they only patrol, acquire a visible target and attack.
+// ---------------------------------------------------------------------------
+
+function spawnEnemy(w, kind) {
+  var dropOffsets = [-0.7, 0.7]
+  var offset = dropOffsets[w.enemyReleased % dropOffsets.length]
+  return {
+    id: w.nextEnemyId++, kind: kind,
+    x: w.enemyHatch.x + 0.5 + offset, y: w.enemyHatch.y,
+    dir: w.enemyHatch.dir || (w.startDir > 0 ? -1 : 1),
+    state: "walk", timer: 0, fall: 0, anim: 0, shoves: 0,
+    targetId: 0, lineTo: 0, lineY: 0, shotFor: 0,
+    gone: false
+  }
+}
+
+function enemyTarget(w, en, reach) {
+  var best = null, bestScore = Infinity
+  for (var i = 0; i < w.agents.length; i++) {
+    var ag = w.agents[i]
+    if (ag.gone || ag.state === "saved" || ag.state === "bomb") continue
+    if (Math.abs(ag.y - en.y) > 3) continue
+    var d = Math.abs(ag.x - en.x)
+    if (d > reach) continue
+    if (!lineClear(w, Math.floor(en.x), Math.floor(en.y) - 2,
+                   Math.floor(ag.x), Math.floor(ag.y) - 2)) continue
+    var claimed = 0
+    for (var ei = 0; ei < w.enemies.length; ei++) {
+      var other = w.enemies[ei]
+      if (other !== en && !other.gone && other.targetId === ag.id) claimed++
+    }
+    // Distance still matters, but an already-pursued target is expensive.
+    // The small id preference breaks ties deterministically so a red team
+    // spreads across the approaching queue instead of sharing one victim.
+    // Once selected, keep a victim unless somebody clearly better appears.
+    // Without this hysteresis two equally placed agents can trade scores every
+    // frame, making the pursuer swivel in place instead of committing.
+    var loyalty = en.targetId === ag.id ? 7 : 0
+    var score = d + claimed * 10 + Math.abs((ag.id % 4) - (en.id % 4)) * 1.5 - loyalty
+    if (score >= bestScore) continue
+    best = ag; bestScore = score
+  }
+  return best
+}
+
+function enemyTargetById(w, id) {
+  for (var i = 0; i < w.agents.length; i++)
+    if (w.agents[i].id === id && !w.agents[i].gone && w.agents[i].state !== "saved") return w.agents[i]
+  return null
+}
+
+function visibleEnemyAhead(w, ag, reach) {
+  for (var i = 0; i < w.enemies.length; i++) {
+    var en = w.enemies[i]
+    if (en.gone || Math.abs(en.y - ag.y) > 3) continue
+    var ahead = (en.x - ag.x) * ag.dir
+    if (ahead > 0 && ahead <= reach
+        && lineClear(w, Math.floor(ag.x), Math.floor(ag.y) - 2,
+                     Math.floor(en.x), Math.floor(en.y) - 2)) return true
+  }
+  return false
+}
+
+function woundFriendly(w, ag, fromX) {
+  if (!ag || ag.gone || ag.state === "saved") return
+  ag.wounds = (ag.wounds || 0) + 1
+  addBlood(w, ag.x, ag.y - 1.5, ag.wounds >= 2 ? 16 : 7)
+  if (ag.wounds >= 2) {
+    ag.gone = true
+    ag.state = "dead"
+    w.lost++
+    w.lastEvent = "red team"
+    return
+  }
+  ag.dir = ag.x >= fromX ? 1 : -1
+  ag.x += ag.dir * 0.8
+  ag.state = "stunned"
+  ag.stunFor = 18
+  w.lastEvent = "wounded"
+}
+
+function killEnemy(w, en) {
+  if (!en || en.gone) return
+  en.gone = true
+  en.state = "dead"
+  w.enemiesKilled++
+  addBlood(w, en.x, en.y - 1.5, 12)
+  w.lastEvent = "red team down"
+}
+
+function stepEnemyFall(w, en) {
+  var ny = en.y + FALL_SPEED
+  if (ny >= ROWS) { en.gone = true; return }
+  var cx = Math.floor(en.x)
+  for (var yy = Math.floor(en.y) + 1; yy <= Math.floor(ny) + 1; yy++) {
+    if (!solid(w, cx, yy)) continue
+    en.y = yy - 1
+    en.state = "walk"
+    en.fall = 0
+    return
+  }
+  en.y = ny
+  en.fall += FALL_SPEED
+}
+
+function stepEnemyWalk(w, en) {
+  // Give each hostile a little personal space. Later arrivals otherwise catch
+  // the first patrol and merge into one red blob even though they left the
+  // hatch separately.
+  for (var pi = 0; pi < w.enemies.length; pi++) {
+    var peer = w.enemies[pi]
+    if (peer === en || peer.gone || Math.abs(peer.y - en.y) > 1.5
+        || Math.abs(peer.x - en.x) >= 1) continue
+    en.dir = en.x !== peer.x ? (en.x > peer.x ? 1 : -1) : (en.id > peer.id ? 1 : -1)
+    en.state = "recover"
+    en.timer = 45
+    en.targetId = 0
+    return
+  }
+
+  var target = enemyTarget(w, en, 24)
+  if (target) {
+    en.targetId = target.id
+    var delta = target.x - en.x
+    en.dir = delta >= 0 ? 1 : -1
+    if (target.state === "walk" && Math.abs(delta) < 7) target.dir = -en.dir
+
+    if (Math.abs(delta) >= 6) {
+      en.state = "aim"
+      en.timer = 0
+      en.targetId = target.id
+      en.lineTo = target.x
+      en.lineY = target.y - 2
+      return
+    }
+    if (Math.abs(delta) < 6) {
+      // A gunner retreats for a beat when rushed. Simply reversing its walk
+      // direction let two moving bodies cross every frame and made it twitch
+      // left/right on exactly the same patch of floor.
+      en.dir = delta >= 0 ? -1 : 1
+      en.state = "recover"
+      en.timer = 40
+      return
+    }
+  } else en.targetId = 0
+
+  var speed = ENEMY_WALK_SPEED
+  var nx = en.x + en.dir * speed
+  var cx = Math.floor(nx), fy = Math.floor(en.y)
+  var targetY = fy
+  if (solid(w, cx, fy)) {
+    var rise = 1
+    while (rise <= MAX_STEP && solid(w, cx, fy - rise)) rise++
+    if (rise > MAX_STEP || !headroom(w, cx, fy - rise)) { en.dir = -en.dir; return }
+    targetY = fy - rise
+  } else if (!solid(w, cx, fy + 1)) {
+    if (solid(w, cx, fy + 2)) targetY = fy + 1
+    else {
+      // Gaps are launch ramps. The red team crosses them under power instead
+      // of gathering at the lip or blindly falling behind the colony.
+      en.x = nx; en.state = "jet"; en.timer = 0; en.jetVy = 0; return
+    }
+  }
+  if (!headroom(w, cx, targetY)) { en.dir = -en.dir; return }
+  en.x = nx
+  en.y = targetY
+  en.anim++
+}
+
+function fireEnemyGun(w, en) {
+  var fy = Math.floor(en.y) - 2
+  for (var step = 1; step <= 28; step++) {
+    var x = Math.floor(en.x) + en.dir * step
+    for (var ai = 0; ai < w.agents.length; ai++) {
+      var ag = w.agents[ai]
+      if (ag.gone || ag.state === "saved") continue
+      if (Math.abs(ag.x - (x + 0.5)) < 0.8 && Math.abs((ag.y - 2) - fy) < 2.5) {
+        en.lineTo = ag.x; en.lineY = ag.y - 2; en.shotFor = 8
+        woundFriendly(w, ag, en.x)
+        return
+      }
+    }
+    // Friendly fire is intentional: the first body in the ray owns the shot.
+    for (var ei = 0; ei < w.enemies.length; ei++) {
+      var other = w.enemies[ei]
+      if (other === en || other.gone) continue
+      if (Math.abs(other.x - (x + 0.5)) < 0.8 && Math.abs((other.y - 2) - fy) < 2.5) {
+        en.lineTo = other.x; en.lineY = other.y - 2; en.shotFor = 8
+        killEnemy(w, other)
+        return
+      }
+    }
+    if (solid(w, x, fy)) { en.lineTo = x; en.lineY = fy; en.shotFor = 8; return }
+  }
+  en.lineTo = en.x + en.dir * 28
+  en.lineY = fy
+  en.shotFor = 8
+}
+
+function stepEnemy(w, en) {
+  if (en.gone) return
+  if (en.shotFor > 0) en.shotFor--
+  if (en.state === "fall") { stepEnemyFall(w, en); return }
+  if (en.state === "walk") { stepEnemyWalk(w, en); return }
+
+  if (en.state === "jet") {
+    en.timer++
+    var jetX = en.x + en.dir * ENEMY_JET_SPEED
+    var jetY = en.y + ENEMY_JET_SINK
+    var jetCellX = Math.floor(jetX)
+    if (solid(w, jetCellX, Math.floor(en.y)) || !headroom(w, jetCellX, Math.floor(en.y))) {
+      en.dir = -en.dir
+    } else en.x = jetX
+    // Touching any lower platform cuts the thrusters and resumes the patrol.
+    var oldFeet = Math.floor(en.y)
+    var newFeet = Math.floor(jetY)
+    for (var jy = oldFeet + 1; jy <= newFeet + 1; jy++) {
+      if (!solid(w, Math.floor(en.x), jy)) continue
+      en.y = jy - 1; en.state = "walk"; en.timer = 0; en.jetVy = 0; return
+    }
+    en.y = jetY
+    en.anim++
+    if (en.y >= ROWS - 1 || en.timer > 360) { en.state = "fall"; en.fall = 0 }
+    return
+  }
+
+  en.timer++
+
+  if (en.state === "aim") {
+    var aimed = enemyTargetById(w, en.targetId)
+    if (!aimed || Math.abs(aimed.y - en.y) > 3
+        || (aimed.x - en.x) * en.dir <= 0
+        || !lineClear(w, Math.floor(en.x), Math.floor(en.y) - 2,
+                      Math.floor(aimed.x), Math.floor(aimed.y) - 2)) {
+      // Do not reacquire the same impossible shot on the next tick and pivot
+      // forever. Move on after half a reload instead.
+      en.state = "reload"; en.timer = Math.round(GUN_RELOAD / 2); return
+    }
+    en.lineTo = aimed.x; en.lineY = aimed.y - 2
+    if (en.timer >= GUN_AIM) {
+      fireEnemyGun(w, en)
+      en.state = "reload"; en.timer = 0
+    }
+    return
+  }
+
+  if (en.state === "reload" && en.timer >= GUN_RELOAD) {
+    en.state = "walk"; en.timer = 0
+  }
+  if (en.state === "recover") {
+    var retreatX = en.x + en.dir * ENEMY_WALK_SPEED * 0.55
+    var retreatCell = Math.floor(retreatX)
+    var retreatY = Math.floor(en.y)
+    var peerBlocked = false
+    for (var ri = 0; ri < w.enemies.length; ri++) {
+      var retreatPeer = w.enemies[ri]
+      if (retreatPeer !== en && !retreatPeer.gone
+          && Math.abs(retreatPeer.y - en.y) < 1.5
+          && Math.abs(retreatPeer.x - retreatX) < 1) { peerBlocked = true; break }
+    }
+    if (!peerBlocked && !solid(w, retreatCell, retreatY)
+        && solid(w, retreatCell, retreatY + 1) && headroom(w, retreatCell, retreatY)) en.x = retreatX
+    // At an edge or another body, hold the pose. Flipping on every blocked
+    // retreat tick looked like indecision and achieved no movement anyway.
+    en.anim++
+    if (en.timer >= 75) { en.state = "walk"; en.timer = 0; en.targetId = 0 }
+  }
+}
+
 function stepParticles(w) {
   for (var i = w.particles.length - 1; i >= 0; i--) {
     var p = w.particles[i]
@@ -3925,6 +4332,17 @@ function step(w) {
     }
   }
 
+  // Four or five friendlies are already on the board when the guard-house
+  // door opens, but the leading group has not yet left the top corridor.
+  if (w.enemyHatch && w.ticks >= 75 && w.enemyReleased < w.enemyRoster.length) {
+    w.enemyReleaseTimer++
+    if (w.enemyReleaseTimer >= 55) {
+      w.enemyReleaseTimer = 0
+      w.enemies.push(spawnEnemy(w, w.enemyRoster[w.enemyReleased]))
+      w.enemyReleased++
+    }
+  }
+
   // Out of time. Everybody left gets a fuse, a few ticks apart so they go up
   // in a ripple rather than all at once — the original's nuke, and the only
   // ending that reads as deliberate rather than as the simulation giving up.
@@ -3964,16 +4382,20 @@ function step(w) {
     w.acting = ag
     if (ag.cool > 0) ag.cool--
     if (ag.shotFor > 0) ag.shotFor--
+    if (ag.shoveCool > 0) ag.shoveCool--
 
     // A sniper takes a position it can see something from. Camping at the first
     // wall it happened to meet put it on a different floor from the danger on
     // nearly every level, where it could never see the one thing it is for.
-    if (ag.special && ag.state === "walk" && sightsHazard(w, ag)) {
+    if (ag.special && ag.state === "walk") {
       var sact = specOf(ag).act
-      if (sact === "camp") {
+      var seesDanger = sightsHazard(w, ag)
+      var seesRed = visibleEnemyAhead(w, ag, 30)
+      if (sact === "camp" && (seesDanger || seesRed)) {
         ag.state = "camp"
         ag.cool = 0
-      } else if (sact === "spray" && ag.cool <= 0 && hazardIsAhead(w, ag, 30)) {
+      } else if (sact === "spray" && ag.cool <= 0
+                 && ((seesDanger && hazardIsAhead(w, ag, 30)) || seesRed)) {
         // It opens up the moment it has the thing in view. Waiting for a wall
         // meant it fired once or twice a level, always at the map edge, and
         // never once at the danger — which is half of what it is for.
@@ -4068,6 +4490,7 @@ function step(w) {
       case "rappel": stepRappel(w, ag); break
       case "webup": stepWebEscape(w, ag); break
       case "limited": stepLimited(w, ag); break
+      case "stunned": stepStunned(w, ag); break
       case "jump":  stepJump(w, ag); break
       case "camp":  stepCamp(w, ag); break
     }
@@ -4105,6 +4528,9 @@ function step(w) {
     if (ag.state === "block" || ag.state === "camp") blockers++
     if (ag.state !== "walk" || ag.idle < 300) moving++
   }
+
+
+  for (var red = 0; red < w.enemies.length; red++) stepEnemy(w, w.enemies[red])
 
   // Everyone who was going to get home has, and the only ones left standing are
   // the ones holding the door. They light their own fuses — which is exactly

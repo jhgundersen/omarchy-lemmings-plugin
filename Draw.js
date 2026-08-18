@@ -423,6 +423,7 @@ function drawActors(ctx, w, pal, opts) {
   ctx.reset()
   drawSpecialCard(ctx, w, pal)
   drawHatch(ctx, w, pal)
+  drawEnemyHatch(ctx, w, pal, opts)
   drawExitGlow(ctx, w, pal)
 
   drawHazard(ctx, w, pal)
@@ -465,6 +466,10 @@ function drawActors(ctx, w, pal, opts) {
     var ag = w.agents[i]
     if (ag.gone) continue
     drawAgent(ctx, w, pal, ag, opts)
+  }
+  for (var ei = 0; ei < w.enemies.length; ei++) {
+    var enemy = w.enemies[ei]
+    if (!enemy.gone) drawEnemy(ctx, w, pal, enemy, opts)
   }
 }
 
@@ -757,6 +762,53 @@ function drawHatch(ctx, w, pal) {
   ctx.fillRect(x - 16, y - 2, 32, 4)
   ctx.fillStyle = pal.hatchMouth
   ctx.fillRect(x - 9, y + 2, 18, 3)
+}
+
+function drawEnemyHatch(ctx, w, pal, opts) {
+  if (!w.enemyHatch) return
+  var C = w.k.CELL
+  var x = w.enemyHatch.x * C
+  var y = (w.enemyHatch.y + 1) * C
+  var biome = w.enemyHatch.biome || w.biome
+  var wall = pal.steel, roof = pal.steelShade, edge = pal.steelEdge, sign = "GUARD PROCESS"
+  if (biome === "Cavern") { wall = pal.rock; roof = pal.rockShade; edge = pal.rockEdge; sign = "CAVEAT EMPTOR" }
+  else if (biome === "Ruins") { wall = pal.dirt; roof = pal.dirtShade; edge = pal.dirtEdge; sign = "LEGACY SUPPORT" }
+  else if (biome === "Frost") { wall = pal.decor; roof = pal.rock; edge = pal.decorLit; sign = "ICE SECURITY" }
+  else if (biome === "Foundry") { wall = pal.steelShade; roof = pal.rigDark; edge = pal.steelEdge; sign = "FIREWALL" }
+  else if (biome === "Jungle") { wall = pal.decor; roof = pal.decorDim; edge = pal.decorLit; sign = "BRANCH OFFICE" }
+  else if (biome === "Ice Cave") { wall = pal.ore; roof = pal.rockShade; edge = pal.oreEdge; sign = "COLD STORAGE" }
+  else if (biome === "Spaceship") { wall = pal.steel; roof = pal.rigDark; edge = pal.steelEdge; sign = "REMOTE OFFICE" }
+
+  // Barely larger than an agent: a sentry booth, not a second landmark. Its
+  // materials come from the current theme; biome identity is in the roofline.
+  ctx.fillStyle = wall
+  ctx.fillRect(x - 9, y - 15, 18, 15)
+  ctx.fillStyle = roof
+  if (biome === "Frost") {
+    ctx.fillRect(x - 6, y - 19, 12, 2); ctx.fillRect(x - 9, y - 17, 18, 2)
+  } else if (biome === "Jungle") {
+    ctx.fillRect(x - 11, y - 19, 22, 3); ctx.fillRect(x - 7, y - 22, 14, 3)
+  } else if (biome === "Ice Cave") {
+    hzTri(ctx, x - 5, y - 15, 4, 7, -1); hzTri(ctx, x + 4, y - 15, 5, 10, -1)
+  } else {
+    ctx.fillRect(x - 10, y - 18, 20, 3)
+    if (biome === "Foundry") ctx.fillRect(x + 5, y - 24, 3, 6)
+    if (biome === "Ruins") { ctx.fillRect(x - 8, y - 21, 4, 3); ctx.fillRect(x + 4, y - 20, 4, 2) }
+    if (biome === "Spaceship") { ctx.fillRect(x - 12, y - 16, 2, 11); ctx.fillRect(x + 10, y - 16, 2, 11) }
+  }
+  ctx.fillStyle = edge
+  ctx.fillRect(x - 9, y - 15, 18, 2)
+  ctx.fillStyle = pal.hatchMouth
+  ctx.fillRect(x - 3, y - 10, 7, 10)                // deployment door
+  ctx.fillStyle = pal.urgent
+  ctx.fillRect(x + 1, y - 8, 1, 1)                  // one hostile status LED
+  if (opts && opts.labels) {
+    ctx.fillStyle = pal.warn
+    ctx.font = "bold 6px monospace"
+    ctx.textAlign = "center"
+    ctx.fillText(sign, x, y - 23)
+    ctx.textAlign = "left"
+  }
 }
 
 function drawExitGlow(ctx, w, pal) {
@@ -1319,6 +1371,82 @@ function blit(ctx, ox, oy, dir, x, y, bw, bh) {
   ctx.fillRect(Math.round(sx), Math.round(sy), bw, bh)
 }
 
+function drawEnemy(ctx, w, pal, en, opts) {
+  var C = w.k.CELL
+  var ox = Math.round(en.x * C) - SPRITE_W / 2
+  var oy = Math.round((en.y + 1) * C) - SPRITE_PX
+  var dir = en.dir
+  var red = "#8f1f35"
+  var redLit = "#ff5268"
+  var pale = "#d9d7cf"
+
+  // Trigger Warning announces the shot before it happens. The thin blinking
+  // sight is an instruction to flee; the bright tracer is the consequence.
+  if (en.kind === "gun" && en.state === "aim") {
+    ctx.globalAlpha = 0.35 + ((en.timer >> 2) % 2) * 0.35
+    ctx.fillStyle = redLit
+    var aimX = Math.round(en.lineTo * C)
+    var aimY = Math.round((en.lineY + 0.5) * C)
+    var aimSteps = Math.max(1, Math.round(Math.abs(aimX - (ox + 4)) / 3))
+    for (var ai = 0; ai <= aimSteps; ai++)
+      ctx.fillRect(Math.round(ox + 4 + (aimX - ox - 4) * ai / aimSteps),
+                   Math.round(oy + 7 + (aimY - oy - 7) * ai / aimSteps), 1, 1)
+    ctx.globalAlpha = 1
+  }
+  if (en.kind === "gun" && en.shotFor > 0) {
+    ctx.globalAlpha = Math.min(1, en.shotFor / 4)
+    ctx.fillStyle = "#ffe68a"
+    var shotX = Math.round(en.lineTo * C)
+    var shotY = Math.round((en.lineY + 0.5) * C)
+    var shotSteps = Math.max(1, Math.round(Math.abs(shotX - (ox + 4)) / 3))
+    for (var si = 0; si <= shotSteps; si++)
+      ctx.fillRect(Math.round(ox + 4 + (shotX - ox - 4) * si / shotSteps),
+                   Math.round(oy + 8 + (shotY - oy - 8) * si / shotSteps), 2, 1)
+    ctx.globalAlpha = 1
+  }
+
+  spriteFlip = false
+  ctx.fillStyle = pale
+  blit(ctx, ox, oy, dir, 1, 0, 6, 3)               // pale, hostile crest
+  ctx.fillStyle = "#b9a59a"
+  blit(ctx, ox, oy, dir, 2, 3, 4, 4)
+  ctx.fillStyle = redLit
+  blit(ctx, ox, oy, dir, 5, 4, 1, 1)               // angular red eye
+  ctx.fillStyle = "#303039"
+  blit(ctx, ox, oy, dir, 0, 7, 2, 7)               // hostile hot-deploy pack
+  ctx.fillStyle = red
+  blit(ctx, ox, oy, dir, 1, 7, 6, 6)
+
+  ctx.fillStyle = "#25252b"
+  blit(ctx, ox, oy, dir, 6, 7, 5, 3)                // pistol
+  blit(ctx, ox, oy, dir, 7, 10, 2, 3)
+  if (en.shotFor > 5) {
+    ctx.fillStyle = "#ffe68a"
+    hzTri(ctx, dir > 0 ? ox + 13 : ox - 5, oy + 8, 3, 5, dir)
+  }
+  if (en.state === "jet") {
+    // Two uneven exhaust tongues make the tiny pack read even at panel scale.
+    var flame = (en.anim >> 1) % 2
+    ctx.fillStyle = "#ff8a35"
+    blit(ctx, ox, oy, dir, 0, 14, 1, 3 + flame)
+    ctx.fillStyle = "#ffe68a"
+    blit(ctx, ox, oy, dir, 1, 14, 1, 2 + (1 - flame))
+  }
+
+  ctx.fillStyle = red
+  var stride = (en.anim >> 2) % 2
+  blit(ctx, ox, oy, dir, 1 + stride, 13, 2, 3)
+  blit(ctx, ox, oy, dir, 5 - stride, 13, 2, 3)
+
+  if (opts && opts.labels) {
+    ctx.fillStyle = redLit
+    ctx.font = "7px monospace"
+    ctx.textAlign = "center"
+    ctx.fillText(en.state === "jet" ? "Air-gapped" : "Trigger Warning", ox + 4, oy - 4)
+  }
+  ctx.globalAlpha = 1
+}
+
 function drawAgent(ctx, w, pal, ag, opts) {
   var k = w.k
   var C = k.CELL
@@ -1376,6 +1504,12 @@ function drawAgent(ctx, w, pal, ag, opts) {
     ctx.fillRect(ox - 2, oy + 3, SPRITE_W + 4, 1)
     ctx.fillStyle = pal.label
     ctx.fillRect(ox - 1, oy, Math.max(1, Math.min(10, Math.ceil(ag.limitedFor / 8))), 2)
+  }
+
+  if (st === "stunned") {
+    ctx.fillStyle = pal.warn
+    ctx.fillRect(ox + 1 + ((ag.stunFor >> 2) % 6), oy - 3, 2, 2)
+    ctx.fillRect(ox + 6 - ((ag.stunFor >> 3) % 5), oy - 6, 1, 1)
   }
 
   if (ag.special && w.specialSpec && w.specialSpec.act === "complete" && ag.shotFor > 0) {
@@ -1607,6 +1741,11 @@ function drawAgent(ctx, w, pal, ag, opts) {
     blit(ctx, ox, oy, dir, 0, 12, 3, 2)             // legs trailing in the swing
     blit(ctx, ox, oy, dir, 5, 14, 3, 2)
 
+  } else if (st === "stunned") {
+    blit(ctx, ox, oy, dir, 0, 9, 7, 4)
+    blit(ctx, ox, oy, dir, 1, 13, 3, 2)
+    blit(ctx, ox, oy, dir, 5, 13, 3, 2)
+
   } else if (st === "block") {
     blit(ctx, ox, oy, dir, 1, 7, 6, 6)
     blit(ctx, ox, oy, dir, -2, 8, 3, 2)
@@ -1660,6 +1799,11 @@ function drawAgent(ctx, w, pal, ag, opts) {
     blit(ctx, ox, oy, dir, 1, 5 + bodyDrop, 2, 2)
   }
 
+  if (ag.wounds > 0 && st !== "saved") {
+    ctx.fillStyle = pal.blood
+    blit(ctx, ox, oy, dir, 5, 8, 2, 3)
+  }
+
   // --- optional label ----------------------------------------------------
   // What it's doing when it's doing something, and who it is the rest of the
   // time. The trait is the more interesting half: watching two agents reach
@@ -1694,6 +1838,7 @@ function actionLabel(st) {
   if (st === "ceil") return "ceiling"
   if (st === "rappel") return "rappel"
   if (st === "webup") return "web climb"
+  if (st === "stunned") return "wounded"
   if (st === "limited") return "rate limited"
   if (st === "trick") return "!"
   if (st === "camp") return "camped"
