@@ -1297,6 +1297,16 @@ function drawAgent(ctx, w, pal, ag, opts) {
     skin = on ? "#ffffff" : pal.skin
   }
 
+  // The crawler's web stays fixed to the roof while the sprite descends. Draw
+  // it behind the body so the raised hand appears to be holding the line.
+  if (st === "rappel") {
+    ctx.fillStyle = ag.special ? hair : pal.umbrellaStem
+    var ropeX = Math.round(ag.x * C)
+    var ropeTop = Math.round((ag.ropeY + 1) * C)
+    var ropeBottom = oy + 7
+    ctx.fillRect(ropeX, ropeTop, 1, Math.max(1, ropeBottom - ropeTop))
+  }
+
   // --- umbrella, drawn behind nothing and above everything --------------
   if (ag.floater && st === "fall" && ag.fall > 2) {
     ctx.fillStyle = pal.umbrella
@@ -1413,6 +1423,12 @@ function drawAgent(ctx, w, pal, ag, opts) {
     blit(ctx, ox, oy, dir, 2, 13, 2, 3)
     blit(ctx, ox, oy, dir, 4, 13, 2, 3)
 
+  } else if (st === "rappel") {
+    blit(ctx, ox, oy, dir, 1, 7, 6, 6)
+    blit(ctx, ox, oy, dir, 3, 3, 2, 5)             // hand on the web
+    blit(ctx, ox, oy, dir, 1, 12, 3, 2)            // feet braced apart
+    blit(ctx, ox, oy, dir, 5, 13, 3, 2)
+
   } else if (st === "block") {
     blit(ctx, ox, oy, dir, 1, 7, 6, 6)
     blit(ctx, ox, oy, dir, -2, 8, 3, 2)
@@ -1498,6 +1514,7 @@ function actionLabel(st) {
   if (st === "bomb") return "bomb"
   if (st === "jump") return "hop"
   if (st === "ceil") return "ceiling"
+  if (st === "rappel") return "rappel"
   if (st === "trick") return "!"
   if (st === "camp") return "camped"
   return ""

@@ -53,6 +53,7 @@ var WALK_SPEED = 0.28    // ~34 px/s — a stroll, not a sprint
 var FALL_SPEED = 0.55
 var FLOAT_SPEED = 0.22
 var CLIMB_SPEED = 0.16
+var RAPPEL_SPEED = 0.18
 
 var MAX_STEP = 2         // cells of rise a walker takes in stride
 var SAFE_FALL = 14       // cells; beyond this an unprotected landing splats
@@ -2414,6 +2415,7 @@ function spawn(w) {
     jvy: 0,
     ceilX: 0,
     ceilTo: 0,
+    ropeY: 0,
     shotTo: 0,        // where a camped sniper's last shot went, for the tracer
     shotY: 0,
     shotFor: 0,
@@ -3010,6 +3012,76 @@ function startCeiling(w, ag) {
 // for a minute and a half, which is what the longest run measured before this.
 var CEILING_GRIP = 260
 
+// Let go without falling: the crawler leaves a web fixed to the last piece of
+// roof it held and lowers itself from there. Ceiling movement stores `y` as
+// the top of the hanging body; every other vertical state stores the feet, so
+// convert between the two here once rather than teaching the rest of the
+// simulation a second coordinate convention.
+function startRappel(w, ag) {
+  ag.ropeY = Math.floor(ag.y) - 1
+  ag.y = Math.floor(ag.y) + AGENT_H - 1
+  ag.state = "rappel"
+  ag.timer = 0
+}
+
+function stepRappel(w, ag) {
+  var cx = Math.floor(ag.x)
+  var ny = ag.y + RAPPEL_SPEED
+
+  // A web needs an anchor. If somebody removes the roof while the crawler is
+  // descending, it becomes an ordinary fall from its current position.
+  if (!solid(w, cx, ag.ropeY)) {
+    beginUncontrolledFall(w, ag)
+    return
+  }
+
+  if (ny >= ROWS) {
+    ag.gone = true
+    w.lost++
+    w.lastEvent = "fell"
+    return
+  }
+
+  for (var yy = Math.floor(ag.y) + 1; yy <= Math.floor(ny) + 1; yy++) {
+    if (!solid(w, cx, yy)) continue
+    ag.y = yy - 1
+    ag.state = "walk"
+    ag.timer = 0
+    return
+  }
+
+  ag.y = ny
+  ag.timer++
+  ag.anim++
+}
+
+// Cast a line from the lip of a drop to the roof directly above the open
+// column. This is separate from startCeiling(): rappelling is how the crawler
+// goes down, not another terrain-crossing trick, so an earlier roof walk must
+// not leave it stranded at a shaft while that move's cooldown expires.
+function rappelAtEdge(w, ag, nx, depth) {
+  if (depth === Infinity || depth <= SAFE_FALL) return false
+  var cx = Math.floor(nx)
+  var footY = Math.floor(ag.y)
+
+  for (var cy = footY - AGENT_H; cy > SKY; cy--) {
+    if (!solid(w, cx, cy)) continue
+
+    // The web needs a clear vertical line from its anchor to the crawler and
+    // the crawler needs a clear body-width column over the drop.
+    for (var y = cy + 1; y <= footY; y++)
+      if (solid(w, cx, y)) return false
+
+    ag.x = nx
+    ag.ropeY = cy
+    ag.state = "rappel"
+    ag.timer = 0
+    ag.cool = specOf(ag).cool
+    return true
+  }
+  return false
+}
+
 function stepCeiling(w, ag) {
   var nx = ag.x + ag.dir * WALK_SPEED
   var cx = Math.floor(nx)
@@ -3017,15 +3089,14 @@ function stepCeiling(w, ag) {
 
   ag.timer++
   if (ag.timer > CEILING_GRIP) {
-    ag.y = y + AGENT_H - 1
-    beginUncontrolledFall(w, ag)
+    startRappel(w, ag)
     return
   }
 
   if (!solid(w, cx, y - 1)) {
-    // Roof gone. Let go, and fall from where its feet actually are.
-    ag.y = y + AGENT_H - 1
-    beginUncontrolledFall(w, ag)
+    // Roof gone ahead. The current cell is still an anchor, so lower from it
+    // instead of dropping off the far side of the crossing.
+    startRappel(w, ag)
     return
   }
   for (var b = 0; b < AGENT_H; b++) {
@@ -3035,10 +3106,9 @@ function stepCeiling(w, ag) {
   // Over the landing it set off for, with ground under it: down.
   var arrived = ag.dir > 0 ? ag.x >= ag.ceilTo : ag.x <= ag.ceilTo
   if (arrived) {
-    for (var d2 = AGENT_H; d2 <= AGENT_H + SAFE_FALL; d2++) {
+    for (var d2 = AGENT_H; d2 < ROWS - y; d2++) {
       if (!solid(w, cx, y + d2)) continue
-      ag.y = y + AGENT_H - 1
-      beginUncontrolledFall(w, ag)
+      startRappel(w, ag)
       return
     }
   }
@@ -3053,6 +3123,12 @@ function stepCeiling(w, ag) {
 // one, exactly like everybody else.
 function specialAtEdge(w, ag, nx, depth, far) {
   var spec = specOf(ag)
+
+  // A deep shaft with a roof over it is a rappel, even if the crawler has
+  // only just used its horizontal ceiling walk. Treating both movements as
+  // one cooldown is what made level 55's crawler turn away from the central
+  // drop and eventually dig itself through several floors instead.
+  if (spec.act === "ceiling" && rappelAtEdge(w, ag, nx, depth)) return
 
   // The crossing it is actually for. A gap with a roof over it is exactly what
   // walking upside down solves, and going over one is a great deal more useful
@@ -3661,6 +3737,7 @@ function step(w) {
       case "bomb": stepBomb(w, ag); break
       case "trick": stepTrick(w, ag); break
       case "ceil":  stepCeiling(w, ag); break
+      case "rappel": stepRappel(w, ag); break
       case "jump":  stepJump(w, ag); break
       case "camp":  stepCamp(w, ag); break
     }
