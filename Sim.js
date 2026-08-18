@@ -387,6 +387,7 @@ function generate(level, attempt) {
     specialSpec: null,
     factPick: 0,
     hazard: null,
+    hazards: [],
     hazardKnown: false,
     hazardKills: 0,
     terrain: new Uint8Array(COLS * ROWS),
@@ -476,10 +477,18 @@ function generate(level, attempt) {
     carveCorridor(w, c)
   }
 
-  // At most one danger, and only on about half of levels. It takes over that
-  // corridor's bottomless drop rather than sitting alongside it — one piece of
-  // dead ground, one thing on it.
-  var hazardCorridor = rng() < 0.6 ? irand(rng, 1, corridors.length - 2) : -1
+  // Zero to three dangers, weighted toward one. Corridors are unique so even
+  // the busiest roll distributes them through the level instead of stacking
+  // three machines into one unavoidable knot.
+  var hazardRoll = rng()
+  var hazardCount = hazardRoll < 0.28 ? 0 : (hazardRoll < 0.68 ? 1 : (hazardRoll < 0.91 ? 2 : 3))
+  var hazardCandidates = []
+  for (var hc = 1; hc < corridors.length - 1; hc++) hazardCandidates.push(hc)
+  for (var hs = hazardCandidates.length - 1; hs > 0; hs--) {
+    var hj2 = irand(rng, 0, hs)
+    var ht = hazardCandidates[hs]; hazardCandidates[hs] = hazardCandidates[hj2]; hazardCandidates[hj2] = ht
+  }
+  var hazardCorridors = hazardCandidates.slice(0, Math.min(hazardCount, hazardCandidates.length))
 
   for (var j = 0; j < corridors.length; j++) {
     var cur = corridors[j]
@@ -488,7 +497,7 @@ function generate(level, attempt) {
     // landing pad) and not the last (its near end is where the exit goes).
     // Last corridor only — see placeVoid for why anywhere else holes the
     // floors underneath it.
-    if (j === corridors.length - 1 && j !== hazardCorridor && rng() < 0.85)
+    if (j === corridors.length - 1 && hazardCorridors.indexOf(j) < 0 && rng() < 0.85)
       placeVoid(w, cur, corridors[j - 1])
     if (j < corridors.length - 1) {
       carveDescent(w, rng, cur, corridors[j + 1])
@@ -517,8 +526,12 @@ function generate(level, attempt) {
     // reshuffled. Starting down-route means the guards must patrol and fly to
     // meet the colony instead of opening fire beside the friendly hatch.
     var guardIndex = irand(enemyRng, 1, Math.max(1, corridors.length - 2))
-    if (guardIndex === hazardCorridor && corridors.length > 3)
-      guardIndex = guardIndex === corridors.length - 2 ? 1 : guardIndex + 1
+    if (hazardCorridors.indexOf(guardIndex) >= 0 && corridors.length > 3) {
+      var foundGuardCorridor = false
+      for (var gci = 1; gci < corridors.length - 1; gci++)
+        if (hazardCorridors.indexOf(gci) < 0) { guardIndex = gci; foundGuardCorridor = true; break }
+      if (!foundGuardCorridor) guardIndex = corridors.length - 1
+    }
     var guardCorridor = corridors[guardIndex]
     var guardFraction = 0.35 + enemyRng() * 0.30
     var desiredEnemyX = Math.round(guardCorridor.startX
@@ -529,6 +542,11 @@ function generate(level, attempt) {
     var enemyCount = irand(enemyRng, 1, 2)
     for (var er = 0; er < enemyCount; er++) w.enemyRoster.push("gun")
   }
+
+  // A roaming armed squad is already the level's threat. Mixing it with up to
+  // three fixed hazards made the board unreadable and turned freezing effects
+  // into effortless executions, so enemy and hazard encounters alternate.
+  if (guardPlan) hazardCorridors = []
 
   // Steel under the landing pad. The hatch goes on dropping agents onto this
   // spot for the whole level, so it's the one piece of floor that must still
@@ -663,7 +681,11 @@ function generate(level, attempt) {
   for (var rf = 0; rf < corridors.length; rf++) roughFloor(w, corridors[rf], rng, w.biome)
 
   placeDecor(w, rng, corridors)
-  if (hazardCorridor >= 0) w.hazard = placeHazard(w, rng, corridors, hazardCorridor)
+  for (var hpi = 0; hpi < hazardCorridors.length; hpi++) {
+    var placedHazard = placeHazard(w, rng, corridors, hazardCorridors[hpi])
+    if (placedHazard) w.hazards.push(placedHazard)
+  }
+  w.hazard = w.hazards.length ? w.hazards[0] : null
 
   // Place the booth only after terrain roughening, decoration and hazards are
   // final. Earlier placement could pass a clear-space test and then have a
@@ -685,8 +707,13 @@ function generate(level, attempt) {
         if (Math.abs(ed.x - egx) <= 4 && ed.y >= gc.floorY - 10 && ed.y <= gc.floorY + 2)
           guardClear = false
       }
-      if (w.hazard && Math.abs(w.hazard.floorY - gc.floorY) < 3
-          && egx + 5 >= w.hazard.zx0 && egx - 5 <= w.hazard.zx1) guardClear = false
+      for (var ghi = 0; ghi < w.hazards.length && guardClear; ghi++) {
+        var gh = w.hazards[ghi]
+        if (Math.abs(gh.floorY - gc.floorY) < 3
+            && egx + 5 >= gh.zx0 && egx - 5 <= gh.zx1) guardClear = false
+      }
+      if (gc === last && egx + 5 >= w.exit.x - 2 && egx - 5 <= w.exit.x + w.exit.w + 2)
+        guardClear = false
       var enemyDistance = Math.abs(egx - guardPlan.desiredX)
       if (guardClear && enemyDistance < enemyBest) { enemyX = egx; enemyBest = enemyDistance }
     }
@@ -1438,7 +1465,6 @@ function sprayBullet(w, ag, shot, dry) {
   var fy = Math.floor(ag.y)
   var d = ag.dir
   var slope = SPRAY_SLOPES[shot % SPRAY_SLOPES.length]
-  var h = w.hazard
 
   for (var i = 1; i <= 30; i++) {
     var bx = fx + d * i
@@ -1455,12 +1481,14 @@ function sprayBullet(w, ag, shot, dry) {
 
     // Hazards are targets in the same ray, not a separate magical range
     // check. Terrain in front absorbs the round before it can reach them.
-    if (h && !h.wrecked && bx >= h.zx0 && bx <= h.zx1 && by >= h.zy0 && by <= h.zy1) {
+    for (var hi = 0; hi < w.hazards.length; hi++) {
+      var h = w.hazards[hi]
+      if (h.wrecked || bx < h.zx0 || bx > h.zx1 || by < h.zy0 || by > h.zy1) continue
       if (dry) return true
       ag.shotTo = bx
       ag.shotY = by
       ag.shotFor = SPRAY_SHOT_TICKS
-      wreckHazard(w)
+      wreckHazard(w, h)
       addDust(w, bx, by, 8)
       return true
     }
@@ -1772,17 +1800,18 @@ function specialCut(w, ag, act, dry) {
 // ---------------------------------------------------------------------------
 // Dangers
 //
-// At most one per level, and not on every level — a board that always has a
+// Zero to three per level, weighted toward one — a board that always has a
 // machine gun on it is a board with a machine gun on it, where a board that
-// might have one is a board you watch.
+// might contain a whole unfortunate security stack is a board you watch.
 //
-// Every danger is built out of one of five mechanisms and differs in where it
+// Every danger is built out of one of six mechanisms and differs in where it
 // mounts, how far it reaches, how long it telegraphs before it fires and how
 // long it rests afterwards. That is deliberate: twenty separate pieces of
 // clockwork would be twenty separate ways for a level to become unwinnable,
 // where twenty settings of the same five are twenty things to look at.
 //
 //   watch    dormant until somebody comes within reach, then winds up and fires
+//   snipe    selects one visible target, holds a sight, then takes one shot
 //   beam     fires on its own schedule whether or not anyone is there
 //   plate    armed by being stood on, and goes off a moment later
 //   cycle    never stops, never triggers — just keeps its own time
@@ -1797,46 +1826,53 @@ function specialCut(w, ag, act, dry) {
 
 var HAZARDS = [
   // watch: mounted, dormant, wakes when somebody walks into reach
-  { id: "gun",      name: "machine gun",  mech: "watch", mount: "ceiling", reach: 13, charge: 16, fire: 24, rest: 66, w: 5, h: 6 },
-  { id: "sentry",   name: "sentry",       mech: "watch", mount: "wall",    reach: 16, charge: 34, fire: 14, rest: 74, w: 3, h: 4 },
-  { id: "darts",    name: "dart trap",    mech: "watch", mount: "wall",    reach: 11, charge: 18, fire: 10, rest: 52, w: 3, h: 3 },
-  { id: "flame",    name: "flame vent",   mech: "watch", mount: "ceiling", reach: 9,  charge: 30, fire: 26, rest: 70, w: 4, h: 6 },
-  { id: "tesla",    name: "tesla coil",   mech: "watch", mount: "floor",   reach: 10, charge: 24, fire: 18, rest: 62, w: 5, h: 5 },
-  { id: "turret",   name: "turret",       mech: "watch", mount: "ceiling", reach: 15, charge: 18, fire: 20, rest: 68, w: 4, h: 5 },
+  { id: "gun",      name: "Token Sprayer", mech: "watch", mount: "ceiling", reach: 13, charge: 16, fire: 24, rest: 66, w: 5, h: 6 },
+  { id: "sentry",   name: "Hall Monitor", mech: "watch", mount: "wall", reach: 16, charge: 34, fire: 14, rest: 74, w: 3, h: 4 },
+  { id: "darts",    name: "Sharp Prompt", mech: "watch", mount: "wall", reach: 11, charge: 18, fire: 10, rest: 52, w: 3, h: 3 },
+  { id: "flame",    name: "Thermal Throttler", mech: "watch", mount: "ceiling", reach: 9, charge: 30, fire: 26, rest: 70, w: 4, h: 6 },
+  { id: "tesla",    name: "Power User", mech: "watch", mount: "floor", reach: 10, charge: 24, fire: 18, rest: 62, w: 5, h: 5 },
+  { id: "turret",   name: "Auto Moderator", mech: "watch", mount: "ceiling", reach: 15, charge: 18, fire: 20, rest: 68, w: 4, h: 5 },
 
   // snipe: picks a target it can actually see, anywhere down the corridor
-  { id: "sniper",   name: "sniper",       mech: "snipe", mount: "wall",    reach: 46, charge: 44, fire: 10, rest: 150, w: 3, h: 3 },
+  { id: "sniper",   name: "Long Context", mech: "snipe", mount: "wall", reach: 46, charge: 44, fire: 10, rest: 150, w: 3, h: 3 },
 
   // beam: keeps its own schedule, telegraphs with a sight line
-  { id: "lasergrid",name: "laser grid",   mech: "beam",  mount: "ceiling", reach: 6,  charge: 30, fire: 30, rest: 60, w: 6, h: 6 },
-  { id: "sweeper",  name: "sweeper",      mech: "beam",  mount: "ceiling", reach: 10, charge: 26, fire: 34, rest: 56, w: 8, h: 6 },
-  { id: "tripwire", name: "tripwire",     mech: "beam",  mount: "floor",   reach: 7,  charge: 20, fire: 16, rest: 58, w: 7, h: 2 },
+  { id: "lasergrid",name: "Neural Net", mech: "beam", mount: "ceiling", reach: 6, charge: 30, fire: 30, rest: 60, w: 6, h: 6 },
+  { id: "sweeper",  name: "Garbage Collector", mech: "beam", mount: "ceiling", reach: 10, charge: 26, fire: 34, rest: 56, w: 8, h: 6 },
+  { id: "tripwire", name: "Dependency Trap", mech: "beam", mount: "floor", reach: 7, charge: 20, fire: 16, rest: 58, w: 7, h: 2 },
 
   // plate: armed by being stood on
-  { id: "spikes",   name: "floor spikes", mech: "plate", mount: "floor",   reach: 3, charge: 16, fire: 22, rest: 46, w: 5, h: 3 },
-  { id: "beartrap", name: "bear trap",    mech: "plate", mount: "floor",   reach: 2, charge: 8,  fire: 18, rest: 40, w: 3, h: 2 },
-  { id: "sawblade", name: "saw blade",    mech: "plate", mount: "floor",   reach: 3, charge: 20, fire: 26, rest: 50, w: 4, h: 3 },
-  { id: "grinder",  name: "grinder",      mech: "plate", mount: "floor",   reach: 4, charge: 24, fire: 30, rest: 54, w: 6, h: 3 },
+  { id: "spikes",   name: "Edge Cases", mech: "plate", mount: "floor", reach: 3, charge: 16, fire: 22, rest: 46, w: 5, h: 3 },
+  { id: "beartrap", name: "Catch Block", mech: "plate", mount: "floor", reach: 2, charge: 8, fire: 18, rest: 40, w: 3, h: 2 },
+  { id: "sawblade", name: "Circular Reference", mech: "plate", mount: "floor", reach: 3, charge: 20, fire: 26, rest: 50, w: 4, h: 3 },
+  { id: "grinder",  name: "Fine-Tuner", mech: "plate", mount: "floor", reach: 4, charge: 24, fire: 30, rest: 54, w: 6, h: 3 },
 
   // cycle: never triggers, never stops
-  { id: "crusher",  name: "crusher",      mech: "cycle", mount: "ceiling", reach: 0, charge: 34, fire: 20, rest: 62, w: 5, h: 6 },
-  { id: "pendulum", name: "pendulum",     mech: "cycle", mount: "ceiling", reach: 0, charge: 28, fire: 24, rest: 48, w: 6, h: 6 },
-  { id: "geyser",   name: "steam vent",   mech: "cycle", mount: "floor",   reach: 0, charge: 30, fire: 26, rest: 64, w: 4, h: 6 },
-  { id: "rockfall", name: "rockfall",     mech: "cycle", mount: "ceiling", reach: 0, charge: 36, fire: 18, rest: 72, w: 5, h: 6 },
-  { id: "piston",   name: "piston",       mech: "cycle", mount: "wall",    reach: 0, charge: 18, fire: 24, rest: 56, w: 5, h: 4 },
+  { id: "crusher",  name: "Context Compressor", mech: "cycle", mount: "ceiling", reach: 0, charge: 34, fire: 20, rest: 62, w: 5, h: 6 },
+  { id: "pendulum", name: "Mood Swing", mech: "cycle", mount: "ceiling", reach: 0, charge: 28, fire: 24, rest: 48, w: 6, h: 6 },
+  { id: "geyser",   name: "Vaporware", mech: "cycle", mount: "floor", reach: 0, charge: 30, fire: 26, rest: 64, w: 4, h: 6 },
+  { id: "rockfall", name: "Stack Overflow", mech: "cycle", mount: "ceiling", reach: 0, charge: 36, fire: 18, rest: 72, w: 5, h: 6 },
+  { id: "piston",   name: "Push Notification", mech: "cycle", mount: "wall", reach: 0, charge: 18, fire: 24, rest: 56, w: 5, h: 4 },
 
   // field: always live. Narrow, because there is no moment when it isn't.
-  { id: "brazier",  name: "brazier",      mech: "field", mount: "floor",   reach: 0, charge: 0, fire: 1, rest: 0, w: 2, h: 4 },
-  { id: "fence",    name: "electric fence", mech: "field", mount: "floor", reach: 0, charge: 0, fire: 1, rest: 0, w: 2, h: 5 },
+  { id: "brazier",  name: "Hot Take", mech: "field", mount: "floor", reach: 0, charge: 0, fire: 1, rest: 0, w: 2, h: 4 },
+  { id: "fence",    name: "Access Denied", mech: "field", mount: "floor", reach: 0, charge: 0, fire: 1, rest: 0, w: 2, h: 5 },
 
   // Biome-only. `only` keeps a thing where it belongs — a snake in a foundry
   // is a snake in the wrong story — and `not` keeps open flame out of the ice.
-  { id: "snake",    name: "snake",        mech: "watch", mount: "floor",   reach: 9,  charge: 20, fire: 16, rest: 60, w: 4, h: 3, only: ["Jungle"] },
-  { id: "spores",   name: "spore bloom",  mech: "cycle", mount: "ceiling", reach: 0,  charge: 30, fire: 28, rest: 60, w: 6, h: 6, only: ["Jungle"] },
-  { id: "icicle",   name: "icicle fall",  mech: "cycle", mount: "ceiling", reach: 0,  charge: 32, fire: 16, rest: 70, w: 5, h: 6, only: ["Ice Cave"] },
-  { id: "frostjet", name: "frost jet",    mech: "watch", mount: "wall",    reach: 12, charge: 22, fire: 20, rest: 64, w: 4, h: 4, only: ["Ice Cave"] },
-  { id: "airlock",  name: "airlock",      mech: "cycle", mount: "floor",   reach: 0,  charge: 34, fire: 24, rest: 66, w: 6, h: 6, only: ["Spaceship"] },
-  { id: "servo",    name: "servo arm",    mech: "watch", mount: "ceiling", reach: 14, charge: 18, fire: 18, rest: 62, w: 4, h: 5, only: ["Spaceship"] }
+  { id: "echobat",  name: "Echo Location", mech: "watch", mount: "ceiling", reach: 15, charge: 24, fire: 18, rest: 64, w: 5, h: 4, only: ["Cavern"] },
+  { id: "scarab",   name: "Legacy Daemon", mech: "watch", mount: "floor", reach: 10, charge: 18, fire: 20, rest: 58, w: 5, h: 3, only: ["Ruins"] },
+  { id: "snowball", name: "Cold Cache", mech: "cycle", mount: "ceiling", reach: 0, charge: 28, fire: 24, rest: 62, w: 6, h: 5, only: ["Frost"] },
+  { id: "molten",   name: "Memory Leak", mech: "cycle", mount: "ceiling", reach: 0, charge: 26, fire: 26, rest: 58, w: 5, h: 6, only: ["Foundry"] },
+  { id: "snake",    name: "Python", mech: "watch", mount: "floor", reach: 9, charge: 20, fire: 16, rest: 60, w: 4, h: 3, only: ["Jungle"] },
+  { id: "spores",   name: "Cloud Distribution", mech: "cycle", mount: "ceiling", reach: 0, charge: 30, fire: 28, rest: 60, w: 6, h: 6, only: ["Jungle"] },
+  { id: "vinelock", name: "Root Access", mech: "plate", mount: "floor", reach: 3, charge: 14, fire: 24, rest: 50, w: 5, h: 4, only: ["Jungle"] },
+  { id: "icicle",   name: "Frozen Model", mech: "cycle", mount: "ceiling", reach: 0, charge: 32, fire: 16, rest: 70, w: 5, h: 6, only: ["Ice Cave"] },
+  { id: "frostjet", name: "Cold Start", mech: "watch", mount: "wall", reach: 12, charge: 22, fire: 20, rest: 64, w: 4, h: 4, only: ["Ice Cave"] },
+  { id: "blackice", name: "Frozen State", mech: "plate", mount: "floor", reach: 3, charge: 12, fire: 22, rest: 48, w: 6, h: 2, only: ["Ice Cave"] },
+  { id: "airlock",  name: "Forced Logout", mech: "cycle", mount: "floor", reach: 0, charge: 34, fire: 24, rest: 66, w: 6, h: 6, only: ["Spaceship"] },
+  { id: "servo",    name: "ARM64", mech: "watch", mount: "ceiling", reach: 14, charge: 18, fire: 18, rest: 62, w: 4, h: 5, only: ["Spaceship"] },
+  { id: "packetloss", name: "Packet Loss", mech: "beam", mount: "ceiling", reach: 8, charge: 24, fire: 26, rest: 58, w: 7, h: 6, only: ["Spaceship"] }
 ]
 
 // Open flame and steam have no business in an ice cave, and the industrial
@@ -1882,7 +1918,15 @@ function hazardSpec(id) {
 // to seal is a level you cannot finish.
 function placeHazard(w, rng, corridors, ci) {
   var c = corridors[ci]
-  var spec = pick(rng, hazardsFor(w.biome))
+  var pool = hazardsFor(w.biome).filter(function(candidate) {
+    for (var hi = 0; hi < w.hazards.length; hi++) if (w.hazards[hi].kind === candidate.id) return false
+    return true
+  })
+  if (!pool.length) pool = hazardsFor(w.biome)
+  var localPool = pool.filter(function(candidate) { return candidate.only && candidate.only.indexOf(w.biome) >= 0 })
+  // Biome hazards would be drowned out by the large shared roster under a
+  // flat draw. Nearly half the time, prefer the local story when one exists.
+  var spec = pick(rng, localPool.length && rng() < 0.45 ? localPool : pool)
 
   // On the route, between where the colony arrives and where it hands off.
   //
@@ -1948,6 +1992,8 @@ function placeHazard(w, rng, corridors, ci) {
     phase: spec.mech === "field" ? "fire" : "idle",
     t: 0,
     fired: 0,
+    dir: -c.dir,
+    known: false,
     lineTo: -1,
     lineY: 0,
     wrecked: false
@@ -1970,6 +2016,40 @@ function hazardCatches(w, h, ag) {
   if (ag.gone || ag.state === "saved") return false
   var ax = Math.floor(ag.x)
   var ay = Math.floor(ag.y)
+  var spec = hazardSpec(h.kind)
+  var mid = (h.zx0 + h.zx1) / 2
+  var sameCorridor = Math.abs(ay - h.floorY) <= CORR_H
+
+  // These attacks leave the fixture instead of magically filling its box.
+  if (h.kind === "sentry" || h.kind === "frostjet")
+    return sameCorridor && (ag.x - mid) * h.dir >= 0 && (ag.x - mid) * h.dir <= spec.reach
+  if (h.kind === "darts" || h.kind === "scarab") {
+    var projectileCount = h.kind === "scarab" ? 5 : 3
+    for (var projectile = 0; projectile < projectileCount; projectile++) {
+      var travelPx = h.kind === "scarab"
+        ? (projectile * 7 + w.ticks * 2) % (spec.reach * CELL)
+        : (h.t * 4 + projectile * 13) % (spec.reach * CELL)
+      var projectileX = mid + h.dir * travelPx / CELL
+      if (sameCorridor && Math.abs(ag.x - projectileX) <= (h.kind === "scarab" ? 1.2 : 0.9)) return true
+    }
+    return false
+  }
+  if (h.kind === "snake")
+    return sameCorridor && (ag.x - mid) * h.dir >= 0 && (ag.x - mid) * h.dir <= 3.5
+  if (h.kind === "echobat")
+    return sameCorridor && Math.abs(ag.x - mid) <= spec.reach * Math.min(1, h.t / Math.max(1, spec.fire))
+  if (h.kind === "sweeper") {
+    var sweepX = h.zx0 + (h.zx1 - h.zx0) * (0.5 + 0.5 * Math.sin(w.ticks * 0.05))
+    return sameCorridor && Math.abs(ag.x - sweepX) <= 1.2
+  }
+  if (h.kind === "rockfall" || h.kind === "snowball" || h.kind === "molten") {
+    for (var drop = 0; drop < 4; drop++) {
+      var dropX = h.zx0 + 0.5 + ((drop * 2.3 + h.fired) % Math.max(1, h.zx1 - h.zx0 + 1))
+      var dropY = h.zy0 + ((h.t * 0.55 + drop * 3.1) % Math.max(1, h.zy1 - h.zy0 + 1))
+      if (Math.abs(ag.x - dropX) <= 1 && ay >= dropY && ay - (AGENT_H - 1) <= dropY + 1) return true
+    }
+    return false
+  }
   // Its feet are at ay and its body reaches AGENT_H-1 above, so a beam across
   // its chest counts even when it is standing below the beam's own row.
   return ax >= h.zx0 && ax <= h.zx1 && ay >= h.zy0 && ay - (AGENT_H - 1) <= h.zy1
@@ -1981,6 +2061,20 @@ function hazardWatching(w, h, spec) {
     if (ag.gone || ag.state === "saved") continue
     if (Math.abs(ag.y - h.floorY) > CORR_H) continue
     if (Math.abs(ag.x - (h.zx0 + h.zx1) / 2) <= spec.reach) return true
+  }
+  return false
+}
+
+function hazardPressed(w, h) {
+  for (var i = 0; i < w.agents.length; i++) {
+    var ag = w.agents[i]
+    if (!ag.gone && ag.state !== "saved" && Math.abs(ag.y - h.floorY) <= 2
+        && ag.x >= h.zx0 - 0.5 && ag.x <= h.zx1 + 0.5) return true
+  }
+  for (var ei = 0; ei < w.enemies.length; ei++) {
+    var en = w.enemies[ei]
+    if (!en.gone && Math.abs(en.y - h.floorY) <= 2
+        && en.x >= h.zx0 - 0.5 && en.x <= h.zx1 + 0.5) return true
   }
   return false
 }
@@ -2051,8 +2145,8 @@ function sniperTarget(w, h) {
 // Shot to pieces. It stays on the board as wreckage — the colony has to be
 // able to see that the thing which was killing them is now scrap — but it never
 // fires again and never turns anybody around.
-function wreckHazard(w) {
-  var h = w.hazard
+function wreckHazard(w, h) {
+  h = h || w.hazard
   if (!h || h.wrecked) return false
   h.wrecked = true
   h.phase = "rest"
@@ -2064,8 +2158,7 @@ function wreckHazard(w) {
 
 function hazardMid(h) { return { x: (h.zx0 + h.zx1) / 2, y: (h.zy0 + h.zy1) / 2 } }
 
-function stepHazard(w) {
-  var h = w.hazard
+function stepOneHazard(w, h) {
   if (!h || h.wrecked) return
   var spec = hazardSpec(h.kind)
   h.t++
@@ -2078,8 +2171,14 @@ function stepHazard(w) {
   if (spec.mech === "snipe") { stepSniper(w, h, spec); return }
 
   if (h.phase === "idle") {
-    var wake = (spec.mech === "watch") ? hazardWatching(w, h, spec) : h.t >= spec.rest
-    if (wake) { h.phase = "charge"; h.t = 0 }
+    var wake = spec.mech === "watch" ? hazardWatching(w, h, spec)
+      : (spec.mech === "plate" ? hazardPressed(w, h) : h.t >= spec.rest)
+    if (wake) {
+      h.phase = "charge"; h.t = 0
+      // A visible wind-up is enough to learn from; discovery no longer always
+      // demands that the first agent donate its body to science.
+      if (hazardWitnessed(w, h)) { h.known = true; w.hazardKnown = true }
+    }
 
   } else if (h.phase === "charge") {
     // The wind-up is the whole reason a danger is fair. It is drawn, it is
@@ -2089,7 +2188,7 @@ function stepHazard(w) {
       h.phase = "fire"
       h.t = 0
       h.fired++
-      if (hazardWitnessed(w, h)) w.hazardKnown = true
+      if (hazardWitnessed(w, h)) { h.known = true; w.hazardKnown = true }
     }
 
   } else if (h.phase === "fire") {
@@ -2099,6 +2198,10 @@ function stepHazard(w) {
   } else {
     if (h.t >= spec.rest) { h.phase = "idle"; h.t = 0 }
   }
+}
+
+function stepHazard(w) {
+  for (var hi = 0; hi < w.hazards.length; hi++) stepOneHazard(w, w.hazards[hi])
 }
 
 function stepSniper(w, h, spec) {
@@ -2127,7 +2230,7 @@ function stepSniper(w, h, spec) {
       h.phase = "fire"
       h.t = 0
       h.fired++
-      if (hazardWitnessed(w, h)) w.hazardKnown = true
+      if (hazardWitnessed(w, h)) { h.known = true; w.hazardKnown = true }
     }
 
   } else if (h.phase === "fire") {
@@ -2139,6 +2242,7 @@ function stepSniper(w, h, spec) {
       hit.gone = true
       hit.state = "dead"
       w.lost++
+      h.known = true
       w.hazardKnown = true
       w.hazardKills++
       w.lastEvent = "hazard"
@@ -2156,10 +2260,20 @@ function hazardStrike(w, h) {
   for (var i = 0; i < w.agents.length; i++) {
     var ag = w.agents[i]
     if (!hazardCatches(w, h, ag)) continue
+    if (h.kind === "frostjet") {
+      if (ag.hazardGrace > 0) continue
+      ag.chilledFor = 70
+      ag.hazardGrace = 55
+      h.known = true
+      w.hazardKnown = true
+      w.lastEvent = "cold start"
+      continue
+    }
     addBlood(w, ag.x, ag.y - 1.5, 14)
     ag.gone = true
     ag.state = "dead"
     w.lost++
+    h.known = true
     w.hazardKnown = true
     w.hazardKills++
     w.lastEvent = "hazard"
@@ -2182,25 +2296,35 @@ function hazardStrike(w, h) {
 // blocker never stands down, that would wall off the route for good. Winding
 // up or firing is a reason to be elsewhere; resting is not.
 function hazardAhead(w, ag, nx) {
-  var h = w.hazard
-  if (!h || h.wrecked || !w.hazardKnown) return false
-  if (h.phase !== "charge" && h.phase !== "fire") return false
   var ax = Math.floor(nx)
   var footY = Math.floor(ag.y)
-
-  // The sniper's dangerous ground is the sight line, which can be most of a
-  // corridor, so what gets avoided is the stretch it is currently covering
-  // rather than the box the rifle sits in.
-  if (h.kind === "sniper") {
-    if (h.lineTo === undefined || h.lineTo < 0) return false
-    if (Math.abs(footY - h.zy1) > CORR_H) return false
-    var a = Math.min(h.zx0, h.lineTo)
-    var b = Math.max(h.zx1, h.lineTo)
-    return ax >= a - 1 && ax <= b + 1
+  for (var hi = 0; hi < w.hazards.length; hi++) {
+    var h = w.hazards[hi]
+    var perceptive = ag.trait === "cautious" || ag.trait === "tinkerer"
+    if (h.wrecked || (!h.known && !perceptive)
+        || (h.phase !== "charge" && h.phase !== "fire")) continue
+    var hspec = hazardSpec(h.kind)
+    // The sniper's dangerous ground is its current sight line.
+    if (h.kind === "sniper") {
+      if (h.lineTo === undefined || h.lineTo < 0 || Math.abs(footY - h.zy1) > CORR_H) continue
+      var a = Math.min(h.zx0, h.lineTo)
+      var b = Math.max(h.zx1, h.lineTo)
+      if (ax >= a - 1 && ax <= b + 1) return true
+      continue
+    }
+    if (h.kind === "sentry" || h.kind === "darts" || h.kind === "frostjet"
+        || h.kind === "scarab" || h.kind === "snake") {
+      var hmid = (h.zx0 + h.zx1) / 2
+      var along = (ax - hmid) * h.dir
+      if (Math.abs(footY - h.floorY) <= CORR_H && along >= -1 && along <= hspec.reach + 1) return true
+      continue
+    }
+    if (h.kind === "echobat" && Math.abs(footY - h.floorY) <= CORR_H
+        && Math.abs(ax - (h.zx0 + h.zx1) / 2) <= hspec.reach + 1) return true
+    if (footY < h.zy0 - 2 || footY > h.zy1 + 2) continue
+    if (ax >= h.zx0 - 2 && ax <= h.zx1 + 2) return true
   }
-
-  if (footY < h.zy0 - 2 || footY > h.zy1 + 2) return false
-  return ax >= h.zx0 - 2 && ax <= h.zx1 + 2
+  return false
 }
 
 // The link down to the next corridor, always carved open — either as a plain
@@ -2719,6 +2843,8 @@ function spawn(w) {
     wounds: 0,
     stunFor: 0,
     shoveCool: 0,
+    hazardGrace: 0,
+    chilledFor: 0,
     shotTo: 0,        // where a camped sniper's last shot went, for the tracer
     shotY: 0,
     shotFor: 0,
@@ -2738,7 +2864,7 @@ function spawn(w) {
 // ---------------------------------------------------------------------------
 
 function stepWalk(w, ag) {
-  var nx = ag.x + ag.dir * WALK_SPEED
+  var nx = ag.x + ag.dir * WALK_SPEED * (ag.chilledFor > 0 ? 0.48 : 1)
   var cx = Math.floor(nx)
   var footY = Math.floor(ag.y)
 
@@ -3009,6 +3135,11 @@ function stepMines(w) {
       if (!en.gone && Math.abs(en.x - mine.x) <= MINE_RADIUS
           && Math.abs(en.y - mine.y) <= MINE_RADIUS) killEnemy(w, en)
     }
+    for (var hi = 0; hi < w.hazards.length; hi++) {
+      var hm = hazardMid(w.hazards[hi])
+      if (Math.abs(hm.x - mine.x) <= MINE_RADIUS && Math.abs(hm.y - mine.y) <= MINE_RADIUS)
+        wreckHazard(w, w.hazards[hi])
+    }
     addDust(w, mine.x, mine.y, 28)
     w.mines.splice(i, 1)
     w.lastEvent = "mine boom"
@@ -3092,6 +3223,11 @@ function stepBomb(w, ag) {
     if (!enemy.gone && Math.abs(enemy.x - ag.x) <= BOMB_RADIUS
         && Math.abs(enemy.y - ag.y) <= BOMB_RADIUS) killEnemy(w, enemy)
   }
+  for (var hi = 0; hi < w.hazards.length; hi++) {
+    var hm = hazardMid(w.hazards[hi])
+    if (Math.abs(hm.x - ag.x) <= BOMB_RADIUS && Math.abs(hm.y - ag.y) <= BOMB_RADIUS)
+      wreckHazard(w, w.hazards[hi])
+  }
 
   addDust(w, ag.x, ag.y - 1, 22)
   ag.gone = true
@@ -3160,20 +3296,49 @@ var TRICK_WINDUP = 14
 // one agent on the board that was never going to be counted.
 // Can it see the level's danger from where it is standing?
 function sightsHazard(w, ag) {
-  var h = w.hazard
-  if (!h || h.wrecked) return false
   var fy = Math.floor(ag.y)
-  var hm = hazardMid(h)
-  if (Math.abs(hm.y - fy) > CORR_H + 2) return false
-  return lineClear(w, Math.floor(ag.x), fy - 2, Math.round(hm.x), Math.round(hm.y))
+  for (var hi = 0; hi < w.hazards.length; hi++) {
+    var h = w.hazards[hi]
+    if (h.wrecked) continue
+    var hm = hazardMid(h)
+    if (Math.abs(hm.y - fy) <= CORR_H + 2
+        && lineClear(w, Math.floor(ag.x), fy - 2, Math.round(hm.x), Math.round(hm.y))) return true
+  }
+  return false
 }
 
 // Is the danger in front of it, within range?
 function hazardIsAhead(w, ag, reach) {
-  var h = w.hazard
-  if (!h || h.wrecked) return false
-  var ahead = (hazardMid(h).x - ag.x) * ag.dir
-  return ahead > 0 && ahead <= reach
+  for (var hi = 0; hi < w.hazards.length; hi++) {
+    var h = w.hazards[hi]
+    if (h.wrecked) continue
+    var ahead = (hazardMid(h).x - ag.x) * ag.dir
+    if (ahead > 0 && ahead <= reach) return true
+  }
+  return false
+}
+
+function specialCountersHazard(w, ag, act) {
+  if (ag.cool > 0) return false
+  var electronic = ["gun", "sentry", "darts", "tesla", "turret", "sniper", "lasergrid",
+    "sweeper", "tripwire", "fence", "servo", "packetloss"]
+  var frozen = ["snowball", "icicle", "frostjet", "blackice"]
+  for (var hi = 0; hi < w.hazards.length; hi++) {
+    var h = w.hazards[hi]
+    if (h.wrecked) continue
+    var hm = hazardMid(h)
+    if (Math.abs(hm.y - ag.y) > CORR_H + 2 || Math.abs(hm.x - ag.x) > 7) continue
+    var counters = (act === "sap" && electronic.indexOf(h.kind) >= 0)
+      || (act === "melt" && frozen.indexOf(h.kind) >= 0)
+      || (act === "slab" && hazardSpec(h.kind).mech === "field")
+    if (!counters) continue
+    ag.dir = hm.x >= ag.x ? 1 : -1
+    wreckHazard(w, h)
+    ag.cool = specOf(ag).cool
+    w.lastEvent = act === "sap" ? "prompt accepted" : (act === "melt" ? "thawed" : "contained")
+    return true
+  }
+  return false
 }
 
 function stepCamp(w, ag) {
@@ -3208,19 +3373,26 @@ function stepCamp(w, ag) {
   }
 
   // The danger, at any distance, provided the line is clear.
-  var h = w.hazard
-  if (h && !h.wrecked) {
+  var visibleHazard = null, visibleHazardDist = Infinity
+  for (var hi = 0; hi < w.hazards.length; hi++) {
+    var h = w.hazards[hi]
+    if (h.wrecked) continue
     var hm = hazardMid(h)
-    if (Math.abs(hm.y - fy) <= CORR_H + 2 &&
-        lineClear(w, fx, fy - 2, Math.round(hm.x), Math.round(hm.y))) {
-      ag.dir = hm.x >= ag.x ? 1 : -1
-      ag.shotTo = hm.x
-      ag.shotY = hm.y
-      ag.shotFor = 12
-      wreckHazard(w)
-      ag.cool = spec.cool
-      return
+    var hd = Math.abs(hm.x - ag.x)
+    if (hd < visibleHazardDist && Math.abs(hm.y - fy) <= CORR_H + 2
+        && lineClear(w, fx, fy - 2, Math.round(hm.x), Math.round(hm.y))) {
+      visibleHazard = h; visibleHazardDist = hd
     }
+  }
+  if (visibleHazard) {
+    var vhm = hazardMid(visibleHazard)
+    ag.dir = vhm.x >= ag.x ? 1 : -1
+    ag.shotTo = vhm.x
+    ag.shotY = vhm.y
+    ag.shotFor = 12
+    wreckHazard(w, visibleHazard)
+    ag.cool = spec.cool
+    return
   }
 
   // Otherwise it shoots the first thing in the way, at whatever range that
@@ -3790,6 +3962,49 @@ function enemyTargetById(w, id) {
   return null
 }
 
+function enemyTargetAbove(w, en) {
+  var best = null, bestRise = Infinity
+  for (var i = 0; i < w.agents.length; i++) {
+    var ag = w.agents[i]
+    if (ag.gone || ag.state === "saved" || ag.state === "bomb" || ag.y >= en.y - 5) continue
+    var rise = en.y - ag.y
+    if (rise < bestRise) { best = ag; bestRise = rise }
+  }
+  return best
+}
+
+function enemyCorridorIndex(w, en) {
+  var best = -1, bestD = Infinity
+  for (var i = 0; i < w.corridors.length; i++) {
+    var d = Math.abs((w.corridors[i].floorY - 1) - en.y)
+    if (d < bestD) { best = i; bestD = d }
+  }
+  return bestD <= w.corrGap ? best : -1
+}
+
+function seekEnemyJetUp(w, en) {
+  var above = enemyTargetAbove(w, en)
+  if (!above) return false
+  var ci = enemyCorridorIndex(w, en)
+  if (ci <= 0) return false
+  var upper = w.corridors[ci - 1]
+  // The handoff column is guaranteed open for both straight shafts and the
+  // diagonal ramp variant. Staying on that column avoids flying through the
+  // ramp's solid underside on the way back up.
+  var shaftX = upper.handoffX
+  en.dir = shaftX >= en.x ? 1 : -1
+  en.targetId = above.id
+  if (Math.abs(en.x - shaftX) > 1.1) return true
+  en.x = shaftX
+  en.state = "jet"
+  en.jetMode = "rise"
+  en.jetTargetY = upper.floorY - 2
+  en.jetLandDir = -upper.dir
+  en.jetShaftX = shaftX
+  en.timer = 0
+  return true
+}
+
 function visibleEnemyAhead(w, ag, reach) {
   for (var i = 0; i < w.enemies.length; i++) {
     var en = w.enemies[i]
@@ -3845,6 +4060,7 @@ function stepEnemyFall(w, en) {
 }
 
 function stepEnemyWalk(w, en) {
+  en.seekingUp = false
   // Give each hostile a little personal space. Later arrivals otherwise catch
   // the first patrol and merge into one red blob even though they left the
   // hatch separately.
@@ -3883,7 +4099,14 @@ function stepEnemyWalk(w, en) {
       en.timer = 40
       return
     }
-  } else en.targetId = 0
+  } else {
+    en.targetId = 0
+    if (seekEnemyJetUp(w, en)) {
+      en.seekingUp = true
+      if (en.state === "jet") return
+      // Continue walking toward the shaft selected above.
+    }
+  }
 
   var speed = ENEMY_WALK_SPEED
   var nx = en.x + en.dir * speed
@@ -3899,7 +4122,8 @@ function stepEnemyWalk(w, en) {
     else {
       // Gaps are launch ramps. The red team crosses them under power instead
       // of gathering at the lip or blindly falling behind the colony.
-      en.x = nx; en.state = "jet"; en.timer = 0; en.jetVy = 0; return
+      en.x = nx; en.state = "jet"; en.jetMode = en.seekingUp ? "cross" : "sink"
+      en.timer = 0; en.jetVy = 0; return
     }
   }
   if (!headroom(w, cx, targetY)) { en.dir = -en.dir; return }
@@ -3946,8 +4170,19 @@ function stepEnemy(w, en) {
 
   if (en.state === "jet") {
     en.timer++
+    if (en.jetMode === "rise") {
+      en.x += (en.jetShaftX - en.x) * 0.18
+      en.y -= 0.22
+      en.anim++
+      if (en.y <= en.jetTargetY) {
+        en.y = en.jetTargetY
+        en.jetMode = "land"
+        en.dir = en.jetLandDir
+      }
+      return
+    }
     var jetX = en.x + en.dir * ENEMY_JET_SPEED
-    var jetY = en.y + ENEMY_JET_SINK
+    var jetY = en.y + (en.jetMode === "land" ? 0.06 : (en.jetMode === "cross" ? 0.02 : ENEMY_JET_SINK))
     var jetCellX = Math.floor(jetX)
     if (solid(w, jetCellX, Math.floor(en.y)) || !headroom(w, jetCellX, Math.floor(en.y))) {
       en.dir = -en.dir
@@ -3957,7 +4192,7 @@ function stepEnemy(w, en) {
     var newFeet = Math.floor(jetY)
     for (var jy = oldFeet + 1; jy <= newFeet + 1; jy++) {
       if (!solid(w, Math.floor(en.x), jy)) continue
-      en.y = jy - 1; en.state = "walk"; en.timer = 0; en.jetVy = 0; return
+      en.y = jy - 1; en.state = "walk"; en.timer = 0; en.jetVy = 0; en.jetMode = ""; return
     }
     en.y = jetY
     en.anim++
@@ -4383,12 +4618,15 @@ function step(w) {
     if (ag.cool > 0) ag.cool--
     if (ag.shotFor > 0) ag.shotFor--
     if (ag.shoveCool > 0) ag.shoveCool--
+    if (ag.hazardGrace > 0) ag.hazardGrace--
+    if (ag.chilledFor > 0) ag.chilledFor--
 
     // A sniper takes a position it can see something from. Camping at the first
     // wall it happened to meet put it on a different floor from the danger on
     // nearly every level, where it could never see the one thing it is for.
     if (ag.special && ag.state === "walk") {
       var sact = specOf(ag).act
+      specialCountersHazard(w, ag, sact)
       var seesDanger = sightsHazard(w, ag)
       var seesRed = visibleEnemyAhead(w, ag, 30)
       if (sact === "camp" && (seesDanger || seesRed)) {

@@ -426,7 +426,7 @@ function drawActors(ctx, w, pal, opts) {
   drawEnemyHatch(ctx, w, pal, opts)
   drawExitGlow(ctx, w, pal)
 
-  drawHazard(ctx, w, pal)
+  for (var dhi = 0; dhi < w.hazards.length; dhi++) drawHazard(ctx, w, pal, w.hazards[dhi], opts)
 
   // Planted mines are separate actors: a small pulsing charge on the floor
   // with its own three-second countdown, rather than a tool hidden in a pose.
@@ -829,14 +829,14 @@ function drawExitGlow(ctx, w, pal) {
   ctx.globalAlpha = 1
 }
 
-// The level's one danger, if it has one — and each of the twenty-one gets its
-// own fixture and its own effect, because they were built on four shared looks
-// and eight of them came out as the same beam. A hazard you cannot tell from
-// the last one is, from where the viewer sits, the same hazard.
+// Each of the thirty-four dangers gets its own fixture and effect; a level may
+// now contain several, and shared silhouettes would turn that into visual soup.
+// A hazard you cannot tell from the last one is, from where the viewer sits,
+// the same hazard.
 //
 // Three states worth telling apart at a glance: dormant is the fixture and a
-// warning stripe, winding up adds a blinking telegraph, and firing fills the
-// ground it kills on. The telegraph is not decoration — it is the only reason a
+// warning stripe, winding up adds a blinking telegraph, and firing shows the
+// exact projectile, beam or impact path. The telegraph is the only reason a
 // danger sitting on the route is fair, so it is drawn to be unmissable.
 
 // A triangle standing on its base, or hanging from it. Teeth, spikes, jaws and
@@ -868,8 +868,8 @@ function hzBolt(ctx, x0, y0, x1, y1, seed, amp) {
   }
 }
 
-function drawHazard(ctx, w, pal) {
-  var h = w.hazard
+function drawHazard(ctx, w, pal, h, opts) {
+  h = h || w.hazard
   if (!h) return
   var C = w.k.CELL
   var x0 = h.zx0 * C
@@ -930,7 +930,11 @@ function drawHazard(ctx, w, pal) {
     ctx.fillRect(x0 + 1, y0 + 6, wide - 2, 2)
     ctx.fillStyle = show ? hot : pal.warn
     ctx.fillRect(cx - 2, y0 + 2, 4, 3)             // lens
-    if (show) { ctx.fillStyle = hot; ctx.fillRect(cx - (live ? 2 : 0), y0 + 6, live ? 4 : 1, tall - 6) }
+    if (show) {
+      ctx.fillStyle = hot
+      var sentryReach = 16 * C * h.dir
+      ctx.fillRect(Math.min(cx, cx + sentryReach), y0 + 4, Math.abs(sentryReach), live ? 2 : 1)
+    }
     break
 
   case "turret":
@@ -958,8 +962,9 @@ function drawHazard(ctx, w, pal) {
       ctx.fillStyle = hot
       // Darts in flight: short dashes marching away from the plate.
       for (var dd = 0; dd < 3; dd++) {
-        var dx2 = x0 + 7 + ((t * 5 + dd * 11) % Math.max(1, wide))
-        ctx.fillRect(dx2, y0 + 3 + dd * 5, live ? 5 : 2, 1)
+        var dartTravel = ((h.t * 4 + dd * 13) % (11 * C)) * h.dir
+        var dx2 = cx + dartTravel
+        ctx.fillRect(dx2, y0 + 3 + dd * 3, live ? 5 : 2, 1)
       }
     }
     break
@@ -1177,8 +1182,9 @@ function drawHazard(ctx, w, pal) {
       // Rocks on their way down, at staggered heights.
       ctx.fillStyle = live ? pal.rig : pal.warn
       for (var rk = 0; rk < 4; rk++) {
-        var ry = y0 + 4 + ((t * 3 + rk * 17) % Math.max(1, tall - 6))
-        ctx.fillRect(x0 + 2 + rk * 5, ry, live ? 4 : 2, live ? 4 : 2)
+        var rockX = (h.zx0 + 0.5 + ((rk * 2.3 + h.fired) % Math.max(1, h.zx1 - h.zx0 + 1))) * C
+        var ry = (h.zy0 + ((h.t * 0.55 + rk * 3.1) % Math.max(1, h.zy1 - h.zy0 + 1))) * C
+        ctx.fillRect(rockX, ry, live ? 4 : 2, live ? 4 : 2)
       }
     }
     break
@@ -1222,6 +1228,89 @@ function drawHazard(ctx, w, pal) {
         ctx.fillStyle = pal.fireHot
         hzBolt(ctx, x0 + 1, wy, x1 - 1, wy, seed + wi + t, 1)
       }
+    }
+    break
+
+  // --- biome-exclusive oddities -----------------------------------------
+  case "echobat":
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(cx - 2, y0, 4, 5)
+    ctx.fillStyle = show ? hot : pal.rig
+    hzTri(ctx, cx - 5, y0 + 4, 5, 4, 1)
+    hzTri(ctx, cx + 5, y0 + 4, 5, 4, 1)
+    if (show) {
+      ctx.fillStyle = hot
+      for (var eb = 1; eb <= 3; eb++) {
+        var er = ((t + eb * 6) % 18) + 3
+        ctx.fillRect(cx - er, y0 + 8 + eb * 2, er * 2, 1)
+      }
+    }
+    break
+
+  case "scarab":
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0, y1 - 2, wide, 2)
+    for (var sca = 0; sca < 5; sca++) {
+      var scx = cx + h.dir * ((sca * 7 + (live ? t * 2 : t >> 2)) % (10 * C))
+      ctx.fillStyle = show ? hot : pal.rig
+      ctx.fillRect(scx, y1 - 5 - (sca % 2), 3, 2)
+      ctx.fillRect(scx + 1, y1 - 7 - (sca % 2), 1, 2)
+    }
+    break
+
+  case "snowball":
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0, y0, wide, 2)
+    ctx.fillStyle = show ? hot : pal.decorLit
+    for (var sn = 0; sn < 4; sn++) {
+      var snowX = (h.zx0 + 0.5 + ((sn * 2.3 + h.fired) % Math.max(1, h.zx1 - h.zx0 + 1))) * C
+      var sny = (h.zy0 + ((h.t * 0.55 + sn * 3.1) % Math.max(1, h.zy1 - h.zy0 + 1))) * C
+      var snr = live ? 4 : 2
+      ctx.fillRect(snowX - snr, sny - snr, snr * 2, snr * 2)
+    }
+    break
+
+  case "molten":
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0, y0, wide, 3)
+    ctx.fillStyle = show ? hot : pal.warn
+    for (var ml = 0; ml < 4; ml++) {
+      var moltenX = (h.zx0 + 0.5 + ((ml * 2.3 + h.fired) % Math.max(1, h.zx1 - h.zx0 + 1))) * C
+      var mly = (h.zy0 + ((h.t * 0.55 + ml * 3.1) % Math.max(1, h.zy1 - h.zy0 + 1))) * C
+      ctx.fillRect(moltenX, mly, live ? 3 : 1, live ? 5 : 2)
+    }
+    break
+
+  case "vinelock":
+    ctx.fillStyle = pal.decorDim
+    ctx.fillRect(x0, y1 - 2, wide, 2)
+    ctx.fillStyle = show ? hot : pal.decor
+    for (var vl = 1; vl < wide; vl += 4) {
+      var vh = live ? tall - 2 : (winding ? 5 : 2)
+      for (var vv = 0; vv < vh; vv++) ctx.fillRect(x0 + vl + ((vv >> 2) % 2), y1 - 3 - vv, 2, 1)
+    }
+    break
+
+  case "blackice":
+    ctx.fillStyle = show ? hot : pal.decorLit
+    ctx.fillRect(x0, y1 - 2, wide, 2)
+    ctx.fillStyle = pal.rockEdge
+    for (var bi = 1; bi < wide; bi += 5) ctx.fillRect(x0 + bi, y1 - 3, 3, 1)
+    if (live) {
+      ctx.fillStyle = hot
+      hzTri(ctx, cx, y1 - 2, 5, 8, -1)
+    }
+    break
+
+  case "packetloss":
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0, y0, wide, 3)
+    ctx.fillStyle = show ? hot : pal.warn
+    for (var pk = 0; pk < 18; pk++) {
+      if ((pk + Math.floor(t / 3)) % 4 === 0) continue
+      var pkx = x0 + ((pk * 7) % Math.max(1, wide))
+      var pky = y0 + 4 + ((pk * 11 + t) % Math.max(1, tall - 5))
+      ctx.fillRect(pkx, pky, live ? 3 : 1, live ? 2 : 1)
     }
     break
 
@@ -1311,9 +1400,9 @@ function drawHazard(ctx, w, pal) {
     if (show) {
       // A cone of vapour, thickening as it goes.
       ctx.fillStyle = hot
-      for (var fj = 0; fj < (live ? wide : 6); fj++) {
-        var fh = Math.round(1 + fj * (live ? 0.55 : 0.2))
-        ctx.fillRect(x0 + 7 + fj, y0 + 4 - fh / 2, 1, fh + 1)
+      for (var fj = 0; fj < (live ? 12 * C : 6); fj++) {
+        var fh = Math.round(1 + fj * (live ? 0.18 : 0.1))
+        ctx.fillRect(cx + h.dir * fj, y0 + 4 - fh / 2, 1, fh + 1)
       }
     }
     break
@@ -1351,6 +1440,14 @@ function drawHazard(ctx, w, pal) {
     ctx.fillStyle = pal.rig
     ctx.fillRect(x0, y0, wide, 4)
     if (show) { ctx.fillStyle = hot; ctx.fillRect(x0, y0, wide, tall) }
+  }
+
+  if (opts && opts.labels) {
+    ctx.fillStyle = h.wrecked ? pal.labelFaint : pal.warn
+    ctx.font = "bold 6px monospace"
+    ctx.textAlign = "center"
+    ctx.fillText(h.name, cx, y0 - 3)
+    ctx.textAlign = "left"
   }
 
   spriteFlip = false
@@ -1442,7 +1539,10 @@ function drawEnemy(ctx, w, pal, en, opts) {
     ctx.fillStyle = redLit
     ctx.font = "7px monospace"
     ctx.textAlign = "center"
-    ctx.fillText(en.state === "jet" ? "Air-gapped" : "Trigger Warning", ox + 4, oy - 4)
+    var enemyLabel = "Trigger Warning"
+    if (en.state === "jet") enemyLabel = en.jetMode === "rise" ? "Stack Ascending"
+      : (en.jetMode === "land" ? "Soft Landing" : "Air-gapped")
+    ctx.fillText(enemyLabel, ox + 4, oy - 4)
   }
   ctx.globalAlpha = 1
 }
