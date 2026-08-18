@@ -446,6 +446,35 @@ function drawActors(ctx, w, pal, opts) {
     ctx.fillText(String(Math.ceil(mine.fuse / 30)), mx, my - 9)
   }
 
+  // Ladders. Drawn on the face of the wall they lean on, in the timber colours
+  // of whoever left them, and drawn BEFORE the agents so a climber's hands are
+  // in front of the rungs rather than behind them. `t` grows the ladder up the
+  // wall over half a second the first time, so it reads as being put there.
+  for (var li = 0; li < w.ladders.length; li++) {
+    var lad = w.ladders[li]
+    var lgrow = Math.min(1, lad.t / 14)
+    var lx = Math.round((lad.x + (lad.side > 0 ? 0 : 1)) * k.CELL) - lad.side * 1
+    var lbot = Math.round((lad.bottom + 1) * k.CELL)
+    var lspan = Math.round((lad.bottom - lad.top + 1) * k.CELL * lgrow)
+    var stile = lad.side > 0 ? lx - 3 : lx + 1
+
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(stile, lbot - lspan, 2, lspan)
+    ctx.fillStyle = SPECIALS_LADDER_WOOD
+    ctx.fillRect(stile + (lad.side > 0 ? 0 : 1), lbot - lspan, 1, lspan)
+    for (var lr = 2; lr < lspan; lr += 4) {
+      ctx.fillStyle = lr % 8 === 2 ? SPECIALS_LADDER_RUNG : SPECIALS_LADDER_WOOD
+      ctx.fillRect(stile - 1, lbot - lr, 5, 1)
+    }
+    // A fresh one still has sawdust coming off the top rung.
+    if (lad.t < 14) {
+      ctx.globalAlpha = 1 - lad.t / 14
+      ctx.fillStyle = pal.dust
+      ctx.fillRect(stile - 2, lbot - lspan - 2, 7, 2)
+      ctx.globalAlpha = 1
+    }
+  }
+
   for (var p = 0; p < w.particles.length; p++) {
     var d = w.particles[p]
     // Blood is bigger, redder and fades slower than dust, because it is the
@@ -480,6 +509,30 @@ function drawActors(ctx, w, pal, opts) {
 // Three per special, picked by level number so it is the same line every time
 // you come back to level 42 — the same rule the rest of the level runs on.
 var SPECIAL_FACTS = {
+  ladder: [
+    "calls itself, one rung at a time. There is no base case.",
+    "grew the stack until something gave.",
+    "has never returned from a call.",
+    "was asked how to get up there and posted a ladder instead.",
+    "marked this wall as a duplicate of the last wall.",
+    "was closed as off-topic and kept building anyway.",
+    "accepts the first answer that reaches the top.",
+    "does not solve the wall. It appends to it.",
+    "leaves the problem standing and the way up beside it.",
+    "allocates one more frame. And then one more."
+  ],
+  bulwark: [
+    "declines the request and the projectile.",
+    "blocks pop-ups, darts and the occasional colleague.",
+    "was told to be helpful and harmless. Harmless first.",
+    "has never let anything through, including the point.",
+    "refuses on principle, and on impact.",
+    "considers every incoming token unsolicited.",
+    "filters aggressively. Nothing gets past. Nothing gets done.",
+    "cannot comply with that trajectory.",
+    "has an allowlist of exactly nobody.",
+    "is the last line of defence and will not stop saying so."
+  ],
   buckshot: [
     "does not aim. Aiming is a form of doubt.",
     "solved it in one shot and cannot say which one.",
@@ -1462,6 +1515,13 @@ function drawHazard(ctx, w, pal, h, opts) {
 // none of them should have to know which way up they are.
 var spriteFlip = false
 
+// Stack Overflow's timber. Kept here rather than taken from the palette on
+// purpose: a ladder has to read as a thing somebody brought to the level, not
+// as part of the biome it was left in, so it stays the same colour under every
+// theme exactly like the umbrella does.
+var SPECIALS_LADDER_WOOD = "#b5651d"
+var SPECIALS_LADDER_RUNG = "#ffe9a8"
+
 function blit(ctx, ox, oy, dir, x, y, bw, bh) {
   var sx = dir > 0 ? ox + x : ox + (SPRITE_W - x - bw)
   var sy = spriteFlip ? oy + (SPRITE_PX - y - bh) : oy + y
@@ -1654,6 +1714,55 @@ function drawAgent(ctx, w, pal, ag, opts) {
     blit(ctx, ox, oy, 1, 3, -7, 2, 8)
   }
 
+  // Ada Blocker's plate. Drawn in front of the body on the side it is facing,
+  // tall enough to cover an agent standing behind it, with the lee it protects
+  // marked by a faint bar along the floor — otherwise the one thing the shield
+  // does for everybody else is invisible, and looks like an agent carrying a
+  // door for its own reasons.
+  if (ag.shieldFor > 0) {
+    var plateX = dir > 0 ? ox + SPRITE_W + 1 : ox - 4
+    var tired = ag.shieldHeld > 260
+    ctx.fillStyle = hair
+    ctx.fillRect(plateX, oy + 1, 3, SPRITE_PX - 2)
+    ctx.fillStyle = robe
+    ctx.fillRect(plateX + (dir > 0 ? 0 : 2), oy + 2, 1, SPRITE_PX - 4)
+    // Boss in the middle, and an arm behind it.
+    ctx.fillStyle = hair
+    ctx.fillRect(plateX - dir * 1, oy + 7, 2, 3)
+    ctx.fillStyle = skin
+    ctx.fillRect(dir > 0 ? ox + SPRITE_W - 1 : ox - 1, oy + 8, 2, 2)
+
+    // The cover itself, faint, along the ground behind it.
+    ctx.globalAlpha = tired ? 0.10 : 0.20
+    ctx.fillStyle = hair
+    ctx.fillRect(dir > 0 ? ox - 4 * C : ox + SPRITE_W, oy + SPRITE_PX - 1, 4 * C, 2)
+    ctx.globalAlpha = 1
+
+    // Arms giving out: the plate starts to shake before it comes down, so a
+    // drop in cover is something you can see coming rather than something that
+    // simply happens to whoever was behind it.
+    if (tired && (ag.anim >> 1) % 2 === 0) {
+      ctx.fillStyle = pal.warn
+      ctx.fillRect(plateX, oy + 1 + ((ag.anim >> 2) % 3), 3, 1)
+    }
+  }
+
+  // Something stopped on the plate: a hard spark at the point of impact, and
+  // three shards coming off it. This is the only feedback that the shield did
+  // anything at all, so it is deliberately louder than the plate itself.
+  if (ag.blockFor > 0) {
+    var sparkX = dir > 0 ? ox + SPRITE_W + 3 : ox - 6
+    ctx.globalAlpha = Math.min(1, ag.blockFor / 6)
+    ctx.fillStyle = pal.fireHot
+    ctx.fillRect(sparkX, oy + 6, 4, 4)
+    ctx.fillStyle = "#ffffff"
+    ctx.fillRect(sparkX + 1, oy + 7, 2, 2)
+    ctx.fillStyle = hair
+    for (var shard = 0; shard < 3; shard++)
+      ctx.fillRect(sparkX + dir * (3 + shard * 3), oy + 3 + shard * 4 - (10 - ag.blockFor), 2, 1)
+    ctx.globalAlpha = 1
+  }
+
   // The trick: a flash of whatever it is doing, thrown out in front. Each act
   // gets its own shape for the same reason each danger does — a special you
   // cannot tell from the last one is the same special.
@@ -1769,6 +1878,20 @@ function drawAgent(ctx, w, pal, ag, opts) {
           ctx.fillRect(ox - dir * mc * 8, oy + SPRITE_PX - msize, Math.max(2, SPRITE_W - mc), msize)
         }
         break
+      case "stack":                             // rungs going up, one call at a time
+        var rungs = Math.min(7, 1 + Math.floor(reach * 7))
+        for (var sr = 0; sr < rungs; sr++) {
+          var sry = oy + SPRITE_PX - 4 - sr * 5
+          ctx.fillRect(tx + dir * 2 - (dir < 0 ? 5 : 0), sry, 6, 2)
+        }
+        // The two stiles it is nailing them to, and the frame that has not
+        // returned yet at the top of the stack.
+        ctx.fillRect(tx + dir * 1 - (dir < 0 ? 1 : 0), oy + SPRITE_PX - 4 - rungs * 5, 1, rungs * 5)
+        ctx.fillRect(tx + dir * 6 - (dir < 0 ? 1 : 0), oy + SPRITE_PX - 4 - rungs * 5, 1, rungs * 5)
+        ctx.globalAlpha = 0.35
+        ctx.fillRect(tx + dir * 2 - (dir < 0 ? 5 : 0), oy + SPRITE_PX - 9 - rungs * 5, 6, 2)
+        break
+
       case "limit":                             // a gate closes on the queue
         var gate = Math.round(12 * reach)
         ctx.fillRect(ox - gate, oy + 2, 2, 14)
@@ -1910,7 +2033,10 @@ function drawAgent(ctx, w, pal, ag, opts) {
   // the same ledge and disagree about it only reads as personality once you
   // can see which one is the cautious one.
   if (opts && opts.labels && st !== "saved") {
-    var action = actionLabel(st)
+    // An agent in somebody's lee is doing something no pose can show: walking
+    // through ground it would otherwise have turned round at. A special keeps
+    // its name — it is the one holding the plate, and the name says so.
+    var action = ag.coveredFor > 0 && !ag.special ? "covered" : actionLabel(st)
     // A special is named rather than described. Its personality never comes up
     // — it cannot use the toolbar, so the choices a trait would colour are not
     // choices it gets to make — and the name is the useful thing to know.

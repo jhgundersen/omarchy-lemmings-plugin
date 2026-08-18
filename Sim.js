@@ -372,9 +372,23 @@ var K = {
 // deterministic, so replaying a failed level unchanged fails it again, tick for
 // tick. Same problem, different agents, and a little more to work with each
 // time round.
-function generate(level, attempt) {
+function generate(level, attempt, colonySeed) {
   attempt = attempt || 0
   var rng = makeRng(level)
+
+  // The layout is the level's, the colony is this playthrough's.
+  //
+  // Everything below used to be a pure function of (level, attempt), the
+  // personalities included, so watching level 12 twice was watching the same
+  // recording twice: the same agent hesitated at the same ledge on the same
+  // tick. The ground should be the same — that is what makes a level a place
+  // you can come back to — but the fifteen who walk into it should not be.
+  //
+  // Callers that need a repeatable run pass the seed in; simcheck does, or its
+  // paired-run checks would compare two different colonies and blame the
+  // terrain for the difference.
+  if (colonySeed === undefined || colonySeed === null)
+    colonySeed = Math.floor(Math.random() * 2147483647)
   var w = {
     level: level,
     attempt: attempt,
@@ -402,6 +416,7 @@ function generate(level, attempt) {
     enemiesKilled: 0,
     nextEnemyId: 1,
     mines: [],
+    ladders: [],
     particles: [],
     buildSites: [],
     ticks: 0,
@@ -426,7 +441,10 @@ function generate(level, attempt) {
 
     // Personalities are drawn from their own stream, kept separate from the
     // generator's so that changing level layout doesn't reshuffle who is who.
-    traitRng: makeRng(level * 7919 + 13 + attempt * 104729),
+    // The seed is kept so a run that did something worth seeing again can be
+    // replayed exactly: generate(level, attempt, w.colonySeed).
+    colonySeed: colonySeed,
+    traitRng: makeRng(colonySeed),
     traitCounts: {},
 
     // Stall detection: the director watches these three numbers and steps in
@@ -1379,6 +1397,19 @@ var SPECIALS = [
   // Stops a crowd, then grudgingly returns one token at a time. It is the only
   // special whose signature move is making everybody else do less.
   ,{ id: "ratelimit", name: "Rate Limiter", act: "limit", cool: 145, robe: "#315b8a", hair: "#f0c75e" }
+
+  // Leaves the wall exactly where it is and makes it free. Everything else on
+  // this roster solves a wall for itself; a ladder is still there twenty
+  // seconds later for whoever arrives next, and it climbs walls too tall for
+  // anybody to have climbed at all. The only special whose work outlives it.
+  ,{ id: "ladder", name: "Stack Overflow", act: "stack", cool: 150, robe: "#b5651d", hair: "#ffe9a8" }
+
+  // Answers a danger by walking into it. Everybody else treats a live hazard
+  // as a wall and turns round; this one raises a plate and keeps going, and
+  // whoever is in its lee comes through with it. The only defensive move on
+  // the board, and the only one that is worth more to the queue behind it than
+  // to the agent doing it.
+  ,{ id: "bulwark", name: "Ada Blocker", act: "shield", cool: 150, robe: "#7b8794", hair: "#ffd23f" }
 ]
 
 function specialSpec(id) {
@@ -1762,6 +1793,24 @@ function specialCut(w, ag, act, dry) {
           if (dry) return true
           setCell(w, fx + d * i, fy + j, ROCK); moved = true
         }
+
+  } else if (act === "stack") {
+    // Adds nothing to the level and takes nothing out of it. The wall is left
+    // standing; what it leaves is a way up the outside of it, which is the one
+    // thing here that is worth more to the colony than to the special.
+    var ladX = fx + d
+    if (!solid(w, ladX, fy)) return false
+    var ladH = wallHeight(w, ladX, fy)
+    // Under two courses is a stride, not a climb. Over LADDER_MAX — or 99,
+    // which is wallHeight's way of saying it never found a top with room to
+    // stand on — is a wall that wants a different answer.
+    if (ladH < 2 || ladH > LADDER_MAX) return false
+    if (fy - ladH < SKY) return false
+    if (ladderAt(w, ladX, d, fy)) return false
+    if (dry) return true
+    w.ladders.push({ x: ladX, side: d, bottom: fy, top: fy - ladH, t: 0 })
+    w.lastEvent = "ladder up"
+    return true
 
   } else if (act === "spray") {
     // Twelve independent angled rays. stepTrick feeds these out over time for
@@ -2238,6 +2287,14 @@ function stepSniper(w, h, spec) {
     if (hit && lineClear(w, sx, sy, Math.floor(hit.x), Math.floor(hit.y) - 1)) {
       h.lineTo = hit.x
       h.lineY = hit.y - 1
+      // The one shot on the board that can be caught on a plate. It still
+      // counts as the danger being seen to work: the colony learns the corridor
+      // is lethal from the agent who stopped it, not only from a body.
+      if (shieldStops(w, hit, h.zx0 <= hit.x ? h.zx0 - 1 : h.zx1 + 1)) {
+        h.known = true; w.hazardKnown = true
+        h.phase = "rest"; h.t = 0; h.lineTo = -1; h.targetId = undefined
+        return
+      }
       addBlood(w, hit.x, hit.y - 1.5, 16)
       hit.gone = true
       hit.state = "dead"
@@ -2257,9 +2314,11 @@ function stepSniper(w, h, spec) {
 }
 
 function hazardStrike(w, h) {
+  var hmid = hazardMid(h)
   for (var i = 0; i < w.agents.length; i++) {
     var ag = w.agents[i]
     if (!hazardCatches(w, h, ag)) continue
+    if (shieldStops(w, ag, hmid.x)) { h.known = true; w.hazardKnown = true; continue }
     if (h.kind === "frostjet") {
       if (ag.hazardGrace > 0) continue
       ag.chilledFor = 70
@@ -2563,9 +2622,16 @@ function goalDist(w, ag) {
 function exitAbove(w, ag) { return exitFloor(w) < ag.y - 2 }
 
 function hitWall(w, ag) {
-  if (ag.special) { specialAtWall(w, ag); return }
   var footY = Math.floor(ag.y)
   var ax = Math.floor(ag.x) + ag.dir
+
+  // A ladder is the one thing on the board that every agent treats identically
+  // — special or not, cautious or brave, climbers left or none. It is also the
+  // only way up a wall taller than MAX_CLIMB, and it costs the toolbar
+  // nothing, which is the whole of what Stack Overflow contributes.
+  if (ladderAt(w, ax, ag.dir, footY)) { startClimb(w, ag); return }
+
+  if (ag.special) { specialAtWall(w, ag); return }
   var mat = at(w, ax, footY)
 
   // Steel is the one honest "no". Nothing to try, so don't waste a skill on it.
@@ -2577,7 +2643,28 @@ function hitWall(w, ag) {
   var bashFirst = ag.contrary ? !trait.bashFirst : trait.bashFirst
   // Climbable means: short enough to be worth it, and the top is somewhere
   // inside the level rather than out on the open surface above the earth.
-  var climbable = h <= MAX_CLIMB && footY - h >= SKY
+  //
+  // "Worth it" depends on where home is. A wall is normally an obstacle, and
+  // eight courses is as much of one as an agent will pay a climber for. For an
+  // agent BELOW the exit the same wall is not an obstacle at all — it is the
+  // only way back to the floor the exit is on — and it is worth every course
+  // wallHeight can see. This is the one place the whole colony gets the taller
+  // climb, and it is deliberately here, at the wall, rather than in the rescue
+  // paths: an agent pacing the bottom of a pit is not next to anything to climb
+  // when the director asks, and by the time it is, it has already decided what
+  // to do with the wall.
+  var wantUp = exitAbove(w, ag)
+  var reach = wantUp ? RESCUE_CLIMB : MAX_CLIMB
+  var climbable = h <= reach && footY - h >= SKY
+
+  // Bashing is a way THROUGH a wall, and for an agent under the exit there is
+  // nothing on the other side of this one worth reaching: the floor it needs is
+  // overhead. Left to their traits the brave and the stubborn shoulder into it
+  // anyway and tunnel a horizontal gallery along the bottom of the world — the
+  // exact behaviour that made a colony dropped below the exit by a runaway
+  // charge look like it was digging its own catacomb. Below the exit, over
+  // beats through for everybody.
+  if (wantUp) bashFirst = false
 
   // Over, or through. Both work on a short wall, and which one an agent
   // reaches for first is most of what its personality looks like from outside:
@@ -2590,6 +2677,11 @@ function hitWall(w, ag) {
     if (climbable && take(w, "climber")) { startClimb(w, ag); return }
   } else {
     if (climbable && take(w, "climber")) { startClimb(w, ag); return }
+    // Climbers are the scarcest thing on the board and a pit will empty them.
+    // A staircase is the other way up, and the one the level has plenty of —
+    // so under the exit it comes before the bash rather than after it, and
+    // brings its own allowance with it (see willBuild).
+    if (wantUp && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
     if (t <= BASH_REACH && take(w, "basher")) { ag.state = "bash"; ag.timer = 0; return }
   }
 
@@ -2700,6 +2792,43 @@ function countComing(w, ag) {
 // to the bedrock has the exit ABOVE it, and without this there is no rule in
 // the whole brain that ever says "go up": it paces the floor until the level
 // times out.
+// The way on is up.
+//
+// Every other escape in this file is horizontal or downward, because that is
+// what the level normally asks for: the serpentine descends, and the exit sits
+// on the last corridor. An agent BELOW that floor has fallen into a pit, ridden
+// a shaft to the bedrock, or been dropped there by somebody else's charge, and
+// for it every rule in the brain points the wrong way.
+//
+// What it had was a climb of eight courses or less, which is the height of an
+// ordinary obstacle and never the height of a pit — so the rescue offered
+// nothing and the agent paced the bottom of the hole until the level timed out.
+// This will take a wall as tall as wallHeight can see, on either side, and it
+// looks both ways for one: the wall that gets an agent out is rarely the one it
+// happens to be facing.
+//
+// Only ever from a rescue path. An ordinary agent still turns at anything over
+// MAX_CLIMB, or the whole colony would scale every wall on the board and the
+// obstacles would stop meaning anything.
+var RESCUE_CLIMB = 16    // as far up as wallHeight looks; past that there is no top
+
+function climbOut(w, ag, spend) {
+  if (!exitAbove(w, ag)) return false
+  var footY = Math.floor(ag.y)
+  for (var side = 0; side < 2; side++) {
+    var dir = side === 0 ? ag.dir : -ag.dir
+    var ax = Math.floor(ag.x) + dir
+    if (!solid(w, ax, footY)) continue
+    if (wallHeight(w, ax, footY) > RESCUE_CLIMB) continue
+    if (!spend(w, "climber")) return false
+    ag.dir = dir
+    ag.idle = 0
+    startClimb(w, ag)
+    return true
+  }
+  return false
+}
+
 function considerEscape(w, ag) {
   if (ag.turns < traitOf(ag).turnLimit) return false
   var footY = Math.floor(ag.y)
@@ -2716,13 +2845,16 @@ function considerEscape(w, ag) {
     // Tinkerers prefer the planted charge; the id split keeps both downward
     // tools in circulation for everyone else.
     var charge = traitOf(ag).mineFirst === true || ag.id % 2 === 0
-    if (charge && take(w, "miner")) { plantMine(w, ag); return true }
+    if (charge && canPlantMine(w, ag) && take(w, "miner")) { plantMine(w, ag); return true }
     if (take(w, "digger")) { ag.state = "dig"; ag.timer = 0; return true }
-    if (take(w, "miner")) { plantMine(w, ag); return true }
+    if (canPlantMine(w, ag) && take(w, "miner")) { plantMine(w, ag); return true }
     return false
   }
 
-  // Nothing to climb from here, so the only way up is to build one.
+  // Up the wall if there is one worth taking, and build a way up if there is
+  // not. The climb comes first: it costs one skill and gains sixteen courses,
+  // where a build costs one and gains four.
+  if (climbOut(w, ag, take)) return true
   if (canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return true }
   return false
 }
@@ -2774,7 +2906,15 @@ function startBuild(w, ag) {
 // bridging. Left uncapped, the keen ones spend a whole level constructing a
 // private folly, and the earth they add is what the ones behind them then get
 // stuck on.
-function willBuild(ag) { return ag.built < traitOf(ag).buildCap }
+// The cap is there because every bridge leaves a new ledge and a new wall for
+// the next agent to treat as an obstacle, and two per agent is where that stops
+// paying. An agent under the exit is the exception: it is not bridging a gap it
+// could have walked round, it is building the only staircase out of a hole, and
+// one build gains six courses where the hole is twelve deep. Two more, and only
+// while it is down there.
+function willBuild(ag, wantUp) {
+  return ag.built < traitOf(ag).buildCap + (wantUp ? 2 : 0)
+}
 
 // Let one builder finish (or visibly fail) before another edits the same
 // ledge. This is intentionally short-lived shared evidence, not a route plan:
@@ -2782,7 +2922,7 @@ function willBuild(ag) { return ag.built < traitOf(ag).buildCap }
 // Without it, a queue can spend a dozen builders on the same few cells before
 // the first bridge has even settled into terrain.
 function canStartBuild(w, ag) {
-  if (!willBuild(ag)) return false
+  if (!willBuild(ag, exitAbove(w, ag))) return false
   for (var i = w.buildSites.length - 1; i >= 0; i--) {
     var site = w.buildSites[i]
     if (w.ticks - site.tick > 240) break
@@ -2792,9 +2932,10 @@ function canStartBuild(w, ag) {
 }
 
 function spawn(w) {
-  // Drawn from the world's own stream so a given level always sends the same
-  // agents out in the same order — level 42 has the same stubborn one at the
-  // same point in the queue every time you come back to it.
+  // Drawn from the world's own stream, which is seeded per playthrough: level
+  // 42 is the same level every time and never the same colony twice. Which one
+  // is the stubborn one, and how far down the queue it is, is the difference
+  // between watching a level again and watching a recording of it.
   var trait = TRAIT_POOL[Math.floor(w.traitRng() * TRAIT_POOL.length) % TRAIT_POOL.length]
   var whim = w.traitRng()
   return {
@@ -2853,6 +2994,12 @@ function spawn(w) {
     rescueCool: 0,     // do not reconsider the same escape every simulation tick
     markD: Infinity,   // closest it has ever been; see goalDist()
     fuse: 0,
+    mineCool: 0,      // one charge at a time, and not again until it has gone off
+    shieldFor: 0,     // ticks left on the plate; renewed while a threat is in front
+    shieldHeld: 0,    // how long it has been up for, which is what tires it out
+    blockFor: 0,      // ticks of the spark from the last thing it stopped
+    coveredFor: 0,    // ticks since it was last inside somebody's cover
+    blocked: 0,
     anim: Math.floor(Math.random() * 8),
     gone: false,
     fade: 0
@@ -2879,6 +3026,21 @@ function stepWalk(w, ag) {
   // Before anyone has seen the thing fire this is all inert and they walk in
   // as confidently as they walk anywhere. Somebody has to find out.
   if (hazardAhead(w, ag, nx)) {
+    // Two ways past a live danger that are not "turn round". Ada Blocker
+    // raises the plate and keeps walking; anybody already in its lee walks on
+    // because the thing ahead cannot reach them, which is the only time in
+    // this game a colony crosses known-lethal ground on purpose.
+    // The margin matters more than the cover does. An agent that follows a
+    // shield into a danger zone and is still inside it when the plate comes
+    // down has been led into exactly the place it spent the whole level
+    // avoiding — so nobody steps in on the strength of a shield that is nearly
+    // out of hold, the one holding it included.
+    var mine = ag.special && specOf(ag).act === "shield"
+    if (mine && ag.shieldHeld < SHIELD_MAX - SHIELD_MARGIN
+        && (ag.shieldFor > 0 || raiseShield(w, ag))) return advanceWalk(w, ag, nx, cx, footY)
+    var cover = mine ? null : shieldCovering(w, ag, nx)
+    if (cover && cover.shieldHeld < SHIELD_MAX - SHIELD_MARGIN) return advanceWalk(w, ag, nx, cx, footY)
+
     var htrait = traitOf(ag)
     // A timed hazard may consume several blockers as each sacrifice is
     // eventually killed. Keep the final one for a true bottomless edge, where
@@ -2891,6 +3053,14 @@ function stepWalk(w, ag) {
     return
   }
 
+  advanceWalk(w, ag, nx, cx, footY)
+}
+
+// The step itself, once the decisions above have let it happen. Split out so
+// that walking on under cover takes the same route through the ground rules as
+// walking on anywhere else — a shielded agent still meets walls, steps and
+// edges exactly like everybody, it just no longer treats the danger as one.
+function advanceWalk(w, ag, nx, cx, footY) {
   var targetY = footY
 
   if (solid(w, cx, footY)) {
@@ -3041,8 +3211,14 @@ function stepBuild(w, ag) {
   // three bricks, the builder turns round, and the gap it was called for is
   // still there. Sloping where it can and running flat where it can't gets the
   // staircase look wherever there's room for one, and a bridge everywhere else.
+  //
+  // Steeper when the exit is overhead. Every third brick is the right pitch for
+  // crossing a gap, which is what a bridge is normally for; for an agent under
+  // the exit the bridge IS the way up, and at that pitch a whole build gains
+  // four courses and the cap allows two builds. That is not a way out of a pit.
   var ny = ag.y
-  if ((ag.bricks % 3) === 0 && headroom(w, Math.floor(nx), Math.floor(ag.y) - 1)) ny = ag.y - 1
+  var rise = exitAbove(w, ag) ? 2 : 3
+  if ((ag.bricks % rise) === 0 && headroom(w, Math.floor(nx), Math.floor(ag.y) - 1)) ny = ag.y - 1
 
   if (!headroom(w, Math.floor(nx), Math.floor(ny))) {
     // Even level is blocked. Check this BEFORE laying anything: the old order
@@ -3102,9 +3278,37 @@ function stepBash(w, ag) {
   if (!solid(w, Math.floor(ag.x), footY + 1)) beginUncontrolledFall(w, ag)
 }
 
+// Would a charge here achieve anything a charge is for?
+//
+// Two ways it does not, and level 9 found both at once. A sentinel pinned in
+// one cell between a piston and a wall turned round every tick, and every turn
+// asked for an escape: it planted six charges on the same cell inside twenty
+// ticks, which is the level's entire miner budget spent on one hole. And each
+// one after the first had no floor left to sit on — it fell down the shaft the
+// last one opened and detonated wherever it landed, so the six of them chewed
+// a chimney from the corridor floor to the bedrock and dropped the colony
+// twenty cells below the exit, where nothing in the brain knows how to get
+// back up.
+//
+// A charge is a decision about the floor under an agent, so: one at a time,
+// nowhere near a live one, and not again from the same agent until the last
+// one has gone off and the dust has settled.
+function canPlantMine(w, ag) {
+  if (ag.mineCool > 0) return false
+  var cx = Math.floor(ag.x)
+  var cy = Math.floor(ag.y) + 1
+  if (!solid(w, cx, cy) || at(w, cx, cy) === STEEL) return false
+  for (var i = 0; i < w.mines.length; i++) {
+    var m = w.mines[i]
+    if (Math.abs(m.x - cx) <= MINE_RADIUS && Math.abs(m.y - cy) <= MINE_RADIUS) return false
+  }
+  return true
+}
+
 function plantMine(w, ag) {
   var cx = Math.floor(ag.x)
   var cy = Math.floor(ag.y) + 1
+  ag.mineCool = MINE_FUSE + 60
   w.mines.push({ x: cx, y: cy, fuse: MINE_FUSE })
   w.lastUsed.miner = w.ticks
   w.lastEvent = "mine planted"
@@ -3113,6 +3317,39 @@ function plantMine(w, ag) {
   ag.idle = 0
   ag.turns = 0
   ag.dir = -ag.dir
+}
+
+// ---------------------------------------------------------------------------
+// Ladders
+//
+// A ladder is not terrain. It is a note pinned to one face of one wall saying
+// "this one is free", which is why it can exist at all: the three earth
+// materials have to stay interchangeable (see check-core-refs and `sim inert`),
+// and a fourth that changed behaviour would end that. Nothing about the wall
+// changes. What changes is what an agent decides when it meets it.
+// ---------------------------------------------------------------------------
+
+function ladderAt(w, x, side, footY) {
+  for (var i = 0; i < w.ladders.length; i++) {
+    var l = w.ladders[i]
+    if (l.x === x && l.side === side && footY <= l.bottom && footY > l.top) return l
+  }
+  return null
+}
+
+function stepLadders(w) {
+  for (var i = w.ladders.length - 1; i >= 0; i--) {
+    var l = w.ladders[i]
+    if (l.t < 14) l.t++
+
+    // The face it leans on can be bashed through, dug out or blown away by
+    // somebody working on the other side of it. A ladder up a wall that is no
+    // longer there is a ladder to nowhere, and worse than nowhere: the agents
+    // reading it would queue at a hole to climb something.
+    var broken = false
+    for (var y = l.top + 1; y <= l.bottom; y++) if (!solid(w, l.x, y)) { broken = true; break }
+    if (broken) w.ladders.splice(i, 1)
+  }
 }
 
 function stepMines(w) {
@@ -3283,6 +3520,19 @@ function addDust(w, x, y, n) {
 // something.
 var TRICK_WINDUP = 14
 
+// Stack Overflow's rungs, and how tall a wall is still worth leaning them on.
+// Past this the wall is somebody else's problem: a ladder to the ceiling is a
+// long climb to a place with nothing on it.
+var LADDER_MAX = 16
+
+// Ada Blocker's plate: how long it stays up, and how far the cover behind it
+// reaches. Four cells is about three agents in a queue, which is the point —
+// the shield is worth more to the ones following than to the one holding it.
+var SHIELD_HOLD = 60     // ticks the plate stays up after the last sight of a threat
+var SHIELD_MAX = 380     // and the longest it can be held before its arms give out
+var SHIELD_COVER = 4
+var SHIELD_MARGIN = 120  // hold that must be left before anybody steps in behind it
+
 // What a special does when something is in the way. It never consults the
 // toolbar — take() would refuse it anyway — so this is the entire decision.
 // Four of them just do an ordinary skill with no meter on it; the rest go to
@@ -3441,6 +3691,11 @@ function specialAtWall(w, ag) {
   // which is the entire point of the cooldown: the move is something you wait
   // for rather than something it does every half second.
   if (ag.cool > 0) { turnAround(w, ag); return }
+
+  // Ada Blocker has no move for a wall — its move is for what a wall cannot
+  // help with. Turning at one must not spend the cooldown, or it arrives at
+  // the danger it exists for with the plate still on its back.
+  if (spec.act === "shield") { turnAround(w, ag); return }
 
   if (spec.act === "ceiling") { startCeiling(w, ag); return }
 
@@ -4017,8 +4272,92 @@ function visibleEnemyAhead(w, ag, reach) {
   return false
 }
 
+// ---------------------------------------------------------------------------
+// The plate
+//
+// Cover, not immortality. An agent is covered while it is holding the plate
+// itself, or while it is walking in the lee of somebody who is: within four
+// cells behind them, on the same floor, on the side the plate is not facing.
+// Step out in front and you are as mortal as anybody.
+// ---------------------------------------------------------------------------
+
+function shieldCovering(w, ag, fromX) {
+  for (var i = 0; i < w.agents.length; i++) {
+    var s = w.agents[i]
+    if (s.gone || s.shieldFor <= 0) continue
+    if (Math.abs(s.y - ag.y) > 1.6) continue
+    var behind = (ag.x - s.x) * s.dir
+    if (behind > 0.6 || behind < -SHIELD_COVER) continue
+    // The plate faces one way. Something arriving from the other side of it
+    // arrives at the back of an agent holding a shield, which is exactly as
+    // useful as it sounds.
+    if (fromX !== undefined && (fromX - s.x) * s.dir <= 0) continue
+    // Marked for the label. Being in cover is the whole of what the shield
+    // does for anybody else, and it is otherwise completely invisible: an
+    // agent strolling through a sentry's reach looks like an agent that has
+    // not noticed the sentry.
+    ag.coveredFor = 4
+    return s
+  }
+  return null
+}
+
+// Stopped it. The counter is on the shield rather than the level because it is
+// the one number that says what this special was worth on this board.
+function shieldStops(w, ag, fromX) {
+  var s = shieldCovering(w, ag, fromX)
+  if (!s) return false
+  s.blocked++
+  s.blockFor = 10
+  w.lastEvent = "request declined"
+  return true
+}
+
+// Held, rather than flashed. A shield that goes up for four seconds and comes
+// down on a timer is a special effect; one that stays up while there is
+// something in front of it to stay up for is cover, and the whole point of it
+// is the stretch of corridor it makes crossable for the queue behind.
+// SHIELD_MAX is what stops that becoming permanent: arms tire, and then it is
+// as mortal as anybody until it has had a rest.
+function raiseShield(w, ag) {
+  if (ag.shieldHeld >= SHIELD_MAX) return false
+  if (ag.shieldFor > 0) { ag.shieldFor = SHIELD_HOLD; return true }
+  if (ag.cool > 0) return false
+  ag.shieldFor = SHIELD_HOLD
+  w.lastEvent = "shields up"
+  return true
+}
+
+// What the plate goes up for. Deliberately laxer than hazardAhead: that one
+// answers "is the colony about to walk into something it has watched kill
+// somebody", and this one answers "is there a thing up there that shoots".
+// The difference is the character — everybody else learns a danger by losing
+// somebody to it, and this one is already behind the shield.
+function threatAhead(w, ag, reach) {
+  for (var i = 0; i < w.hazards.length; i++) {
+    var h = w.hazards[i]
+    if (h.wrecked) continue
+    var mid = hazardMid(h)
+    var along = (mid.x - ag.x) * ag.dir
+    if (Math.abs(mid.y - ag.y) > CORR_H) continue
+    if (along > -2 && along <= reach) return true
+  }
+  // Red team counts without a clear line to it. Everything else in this file
+  // asks whether an agent can *see* the thing; a plate goes up because there
+  // is shooting in the neighbourhood, which is a lower bar on purpose and the
+  // reason the shield is ever up on a level whose hazard sits off the route.
+  for (var e = 0; e < w.enemies.length; e++) {
+    var en = w.enemies[e]
+    if (en.gone || Math.abs(en.y - ag.y) > CORR_H) continue
+    var gap = (en.x - ag.x) * ag.dir
+    if (gap > -3 && gap <= reach + 8) return true
+  }
+  return false
+}
+
 function woundFriendly(w, ag, fromX) {
   if (!ag || ag.gone || ag.state === "saved") return
+  if (shieldStops(w, ag, fromX)) return
   ag.wounds = (ag.wounds || 0) + 1
   addBlood(w, ag.x, ag.y - 1.5, ag.wounds >= 2 ? 16 : 7)
   if (ag.wounds >= 2) {
@@ -4368,10 +4707,11 @@ function forceEscape(w, ag) {
   var ahead = Math.floor(ag.x) + ag.dir
 
   if (exitAbove(w, ag)) {
-    // Below the exit: the only useful direction is up.
-    if (solid(w, ahead, footY) && wallHeight(w, ahead, footY) <= MAX_CLIMB
-        && grant(w, "climber")) { ag.idle = 0; startClimb(w, ag); return }
-    if (canStartBuild(w, ag) && grant(w, "builder")) { ag.idle = 0; startBuild(w, ag) }
+    // Below the exit: the only useful direction is up. Climb if there is a
+    // wall and a climber left for it, build the staircase if there is not, and
+    // in particular do NOT fall through to the horizontal rescues below.
+    if (climbOut(w, ag, grant)) return
+    if (ag.state === "walk" && canStartBuild(w, ag) && grant(w, "builder")) { ag.idle = 0; startBuild(w, ag) }
     return
   }
 
@@ -4410,7 +4750,7 @@ function forceEscape(w, ag) {
   // of the room it was standing in.
   if (exitBelow(w, ag) && solid(w, Math.floor(ag.x), footY + 1)
       && at(w, Math.floor(ag.x), footY + 1) !== STEEL) {
-    var charge = traitOf(ag).mineFirst === true || ag.id % 2 === 0
+    var charge = (traitOf(ag).mineFirst === true || ag.id % 2 === 0) && canPlantMine(w, ag)
     if (grant(w, charge ? "miner" : "digger")) {
       ag.idle = 0
       if (charge) plantMine(w, ag)
@@ -4468,11 +4808,18 @@ function runDirector(w) {
 
   // Below the exit and pacing: nothing horizontal helps, and digging only
   // makes it worse. Hand them a climb.
-  var wantsMine = best.id % 2 === 0
-  if (wantUp && solid(w, ahead, footY) && wallHeight(w, ahead, footY) <= MAX_CLIMB
-      && grant(w, "climber")) {
-    startClimb(w, best)
-  } else if (solid(w, ahead, footY) && at(w, ahead, footY) !== STEEL && grant(w, "basher")) {
+  var wantsMine = best.id % 2 === 0 && canPlantMine(w, best)
+  if (wantUp && climbOut(w, best, grant)) {
+    // climbOut has already turned it to face whichever wall it is taking.
+  } else if (wantUp && best.state === "walk" && canStartBuild(w, best) && grant(w, "builder")) {
+    // No climb available — usually because a pit has emptied the climbers —
+    // so build the way up instead. This has to come before the bash below: the
+    // director was handing a stranded agent a basher, which drove a horizontal
+    // gallery along the bottom of the world while home sat directly overhead.
+    // With the climb gone that bash was the only branch that ever matched, so
+    // an agent under the exit tunnelled sideways until the clock ran out.
+    startBuild(w, best)
+  } else if (!wantUp && solid(w, ahead, footY) && at(w, ahead, footY) !== STEEL && grant(w, "basher")) {
     best.state = "bash"
     best.timer = 0
   } else if (exitBelow(w, best) && solid(w, Math.floor(best.x), footY + 1)
@@ -4616,6 +4963,17 @@ function step(w) {
     // doing is working: clear both counters and let it get on with it.
     w.acting = ag
     if (ag.cool > 0) ag.cool--
+    if (ag.blockFor > 0) ag.blockFor--
+    if (ag.coveredFor > 0) ag.coveredFor--
+    if (ag.mineCool > 0) ag.mineCool--
+    if (ag.shieldFor > 0) {
+      ag.shieldHeld++
+      if (--ag.shieldFor === 0) {
+        ag.shieldHeld = 0
+        var sspec = specOf(ag)
+        ag.cool = sspec ? sspec.cool : 0
+      }
+    }
     if (ag.shotFor > 0) ag.shotFor--
     if (ag.shoveCool > 0) ag.shoveCool--
     if (ag.hazardGrace > 0) ag.hazardGrace--
@@ -4629,6 +4987,11 @@ function step(w) {
       specialCountersHazard(w, ag, sact)
       var seesDanger = sightsHazard(w, ag)
       var seesRed = visibleEnemyAhead(w, ag, 30)
+      // Sees the danger, or sees the red team, or is simply getting close to
+      // one: same answer either way, and the last of those is the one that
+      // matters — cover is worth nothing raised after the first shot.
+      if (sact === "shield" && (seesDanger || seesRed || threatAhead(w, ag, 14))) raiseShield(w, ag)
+
       if (sact === "camp" && (seesDanger || seesRed)) {
         ag.state = "camp"
         ag.cool = 0
@@ -4786,6 +5149,7 @@ function step(w) {
 
   stepHazard(w)
   stepMines(w)
+  stepLadders(w)
   stepParticles(w)
   if (!w.done) runDirector(w)
 
