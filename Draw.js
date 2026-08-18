@@ -584,16 +584,16 @@ var SPECIAL_FACTS = {
     "solves the gap by disagreeing that there is one."
   ],
   gridsearch: [
-    "does not search. It covers.",
-    "tried every option at once and one of them worked.",
+    "searched the whole grid one belt at a time.",
+    "has enough RAM for exactly one more magazine.",
+    "tried every bullet. One of them worked.",
     "considers precision a form of hesitation.",
-    "has never left a wall standing to think about it.",
-    "solved it exhaustively. Very exhaustively.",
-    "does not tune hyperparameters. It removes them.",
-    "brute force is a strategy if you commit.",
-    "is the only one here the machinery is afraid of.",
-    "was asked to narrow it down. It declined.",
-    "clears the whole space and calls that convergence."
+    "does not tune hyperparameters. It suppresses them.",
+    "brute force is a strategy if you bring enough ammunition.",
+    "is one of two agents the machinery is afraid of.",
+    "was asked to narrow the search. It opened fire.",
+    "draws first, then searches for an explanation.",
+    "calls collateral damage exhaustive evaluation."
   ],
   beamsearch: [
     "keeps only the most promising candidate. Then shoots it.",
@@ -618,6 +618,66 @@ var SPECIAL_FACTS = {
     "is very sure, which is the problem.",
     "does not collaborate. It phases.",
     "left the level exactly as it found it and took credit."
+  ],
+  autocomplete: [
+    "finished the bridge and the next three bridges.",
+    "knows what you meant. This is worse.",
+    "completed the sentence, tunnel and surrounding geology.",
+    "was asked for one step and supplied the staircase.",
+    "predicts the next token is always more floor.",
+    "cannot stop while there is whitespace remaining.",
+    "helpfully continued past the useful part.",
+    "turned a suggestion into infrastructure.",
+    "has never met an ending it could not extend.",
+    "pressed Tab on the physical world."
+  ],
+  chainthought: [
+    "brought four premises and misplaced the conclusion.",
+    "shows its working. Everyone is in it now.",
+    "linked the agents logically, not safely.",
+    "reasoned through the wall and took witnesses.",
+    "has several steps. None are optional.",
+    "made the others follow its train of thought.",
+    "the conclusion was on the far side all along.",
+    "cannot think quietly or alone.",
+    "mistook consensus for correctness at speed.",
+    "has a long chain and one weak link per agent."
+  ],
+  specdecoder: [
+    "tried three futures and billed for all of them.",
+    "drafted ahead and deleted the witnesses.",
+    "committed to the least visibly impossible route.",
+    "moves faster by being wrong in parallel.",
+    "accepted one future and ghosted the others.",
+    "predicts several exits. One occasionally exists.",
+    "has already been where it might be going.",
+    "discarded two excellent mistakes per step.",
+    "branches first and asks about reality later.",
+    "calls teleporting a decoding optimisation."
+  ],
+  collapse: [
+    "trained a copy on a copy of this sentence.",
+    "each generation remembers fewer pixels.",
+    "scaled out and quality went with it.",
+    "made a cheaper model of a cheaper decision.",
+    "the copies agree because nuance was removed.",
+    "has reproduced the error with high fidelity.",
+    "distilled itself until only confidence remained.",
+    "creates synthetic agents from organic mistakes.",
+    "the third copy is mostly robe and conviction.",
+    "collapsed the distribution into a small crowd."
+  ],
+  ratelimit: [
+    "received five agents and returned 429.",
+    "allows one thought per billing interval.",
+    "fixed congestion by making it stationary.",
+    "has asked the colony to retry later.",
+    "protects capacity from anything getting done.",
+    "releases tokens one deeply considered pixel at a time.",
+    "calls the queue a successful backpressure strategy.",
+    "throttles first and measures never.",
+    "the request was valid. The timing was personal.",
+    "has plenty of bandwidth and a strict principle."
   ]
 }
 
@@ -1297,6 +1357,36 @@ function drawAgent(ctx, w, pal, ag, opts) {
     skin = on ? "#ffffff" : pal.skin
   }
 
+  // A degraded copy keeps the palette but loses fidelity generation by
+  // generation. Missing pixels and displaced fragments read more clearly at
+  // this scale than simply tinting it a different colour.
+  if (ag.modelGen > 0) {
+    ctx.globalAlpha = Math.max(0.42, 1 - ag.modelGen * 0.16)
+    ctx.fillStyle = hair
+    for (var mg = 0; mg < ag.modelGen + 1; mg++)
+      ctx.fillRect(ox - 2 + ((ag.id + mg * 5) % 13), oy + ((ag.anim + mg * 7) % 16), 1, 1)
+  }
+
+  if (st === "limited") {
+    // Two hard bars and a shrinking quota pip: unmistakably stopped, without
+    // making the held agent look dead or blocked forever.
+    ctx.fillStyle = pal.warn
+    ctx.fillRect(ox - 2, oy + 3, 2, 11)
+    ctx.fillRect(ox + SPRITE_W, oy + 3, 2, 11)
+    ctx.fillRect(ox - 2, oy + 3, SPRITE_W + 4, 1)
+    ctx.fillStyle = pal.label
+    ctx.fillRect(ox - 1, oy, Math.max(1, Math.min(10, Math.ceil(ag.limitedFor / 8))), 2)
+  }
+
+  if (ag.special && w.specialSpec && w.specialSpec.act === "complete" && ag.shotFor > 0) {
+    ctx.fillStyle = hair
+    var cursorX = Math.round(ag.specialX * C)
+    var cursorY = Math.round((ag.specialY + 1) * C) - 8
+    ctx.fillRect(cursorX, cursorY, 2, 9)
+    for (var trail = 0; trail < 4; trail++)
+      ctx.fillRect(cursorX - dir * (trail * 5 + 3), cursorY + 10, 3, 1)
+  }
+
   // The crawler's web stays fixed to the roof while the sprite descends. Draw
   // it behind the body so the raised hand appears to be holding the line.
   if (st === "rappel") {
@@ -1333,12 +1423,16 @@ function drawAgent(ctx, w, pal, ag, opts) {
           var bs = Math.round(bi * 1.6 * reach)
           ctx.fillRect(tx + dir * bi * 3 - (dir < 0 ? 2 : 0), mid - bs, 2, bs * 2 + 1)
         }
+        // The answer ended several tokens ago. Max Tokens is still answering.
+        for (var ov = 0; ov < 4; ov++)
+          ctx.fillRect(tx + dir * (22 + ov * 5) - (dir < 0 ? 3 : 0), mid - 8 + ov * 5, 3, 2)
         break
       case "kick":                              // one heavy bar driven forward
         ctx.fillRect(dir > 0 ? tx : tx - Math.round(18 * reach), mid - 6, Math.round(18 * reach), 12)
         break
-      case "fell":                              // a tall thin slice
+      case "topple":                           // a tall thin slice
         ctx.fillRect(tx + dir * 4 - 1, oy - Math.round(26 * reach), 3, Math.round(30 * reach))
+        ctx.fillRect(tx + dir * 4, oy + 14, Math.round(24 * reach), 2)
         break
       case "melt":                              // a growing disc
         var rr = Math.round(9 * reach)
@@ -1347,27 +1441,92 @@ function drawAgent(ctx, w, pal, ag, opts) {
           ctx.fillRect(tx + dir * 14 - mw, mid + my, mw * 2, 1)
         }
         break
-      case "sap":                               // a charge, then the blast
-        ctx.fillRect(tx + dir * 18 - 2, mid - 2, 4, 4)
-        if (reach > 0.75) { ctx.globalAlpha = 0.8; ctx.fillRect(tx + dir * 18 - 10, mid - 10, 20, 20) }
+      case "sap":                               // instructions injected into rock
+        for (var pr = 0; pr < 4; pr++) {
+          var promptX = tx + dir * (5 + pr * 5)
+          ctx.fillRect(promptX - (dir < 0 ? 4 : 0), mid - 7 + pr * 4, 4, 1)
+          ctx.fillRect(promptX + dir * 3, mid - 8 + pr * 4, 1, 3)
+        }
         break
       case "stomp":                             // straight down, under its feet
         ctx.fillRect(ox + 1, oy + SPRITE_PX, 6, Math.round(18 * reach))
         break
       case "quarry":                            // a whole room's worth
-        ctx.fillRect(dir > 0 ? tx : tx - Math.round(26 * reach), oy - 12, Math.round(26 * reach), 28)
+        var qwide = Math.round(28 * reach)
+        ctx.globalAlpha = 0.28
+        for (var qgx = 0; qgx <= qwide; qgx += 4)
+          ctx.fillRect((dir > 0 ? tx : tx - qwide) + qgx, oy - 12, 1, 28)
+        for (var qgy = 0; qgy <= 28; qgy += 4)
+          ctx.fillRect(dir > 0 ? tx : tx - qwide, oy - 12 + qgy, qwide, 1)
+        ctx.globalAlpha = 1
+        ctx.fillRect(dir > 0 ? tx + qwide - 2 : tx - qwide, oy - 12, 2, 28)
         break
       case "spray":                             // a wall of tracer, full height
-        for (var si = 0; si < 7; si++) {
-          var sy4 = oy - 4 + si * 3
-          var sl = Math.round((10 + si % 3 * 6) * reach)
-          ctx.fillRect(dir > 0 ? tx : tx - sl, sy4, sl, 2)
-        }
+        // A twelve-round burst, one angled tracer at a time. The simulation
+        // uses the same slope sequence, so the visible impact is the cell that
+        // actually absorbs this particular round.
+        var gunX = dir > 0 ? tx : tx - 9
+        ctx.fillStyle = pal.rigDark
+        ctx.fillRect(gunX, mid - 1, 9, 3)          // receiver and long barrel
+        ctx.fillRect(dir > 0 ? gunX - 3 : gunX + 8, mid + 2, 4, 4)
+        var spraySlopes = [-0.16, 0.10, -0.06, 0.14, 0, -0.12, 0.06, -0.18, 0.12, -0.03, 0.17, -0.09]
+        var shotIndex = Math.min(11, Math.floor(Math.max(0, ag.timer - 1) / 2))
+        var muzzleCellY = Math.floor(ag.y) - 2
+        var shotSlope = spraySlopes[shotIndex]
+        var hitCellX = ag.shotFor > 0 ? ag.shotTo : Math.floor(ag.x) + dir * 30
+        var hitCellY = ag.shotFor > 0 ? ag.shotY : Math.round(muzzleCellY + shotSlope * 30)
+        var shotPhase = ((ag.timer - 1) % 2) === 0 ? 0.55 : 1
+        var bulletCellX = ag.x + (hitCellX - ag.x) * shotPhase
+        var bulletCellY = muzzleCellY + (hitCellY - muzzleCellY) * shotPhase
         ctx.fillStyle = pal.fireHot
-        hzTri(ctx, tx + dir * 2, mid, 3, 5, dir > 0 ? 1 : -1)
+        ctx.fillRect(Math.round(bulletCellX * C), Math.round((bulletCellY + 0.5) * C), 4, 2)
+        ctx.globalAlpha = 0.45
+        ctx.fillRect(Math.round((bulletCellX - dir * 1.5) * C), Math.round((bulletCellY + 0.5) * C), 4, 1)
+        ctx.globalAlpha = 1
+        hzTri(ctx, tx + dir * 5, mid, 3, 5, dir > 0 ? 1 : -1)
+        // One hot casing per shot, falling behind the receiver.
+        ctx.fillStyle = tsp ? tsp.hair : pal.warn
+        ctx.fillRect(gunX + (dir > 0 ? 1 : 7), mid + 4 + (shotIndex % 3), 2, 1)
         break
       case "slab":                              // laid out rather than taken out
         ctx.fillRect(dir > 0 ? tx : tx - Math.round(24 * reach), oy + SPRITE_PX - 2, Math.round(24 * reach), 5)
+        break
+      case "phase":                             // the confident route that is not there
+        for (var ph = 1; ph <= 4; ph++) {
+          ctx.globalAlpha = (5 - ph) * 0.12
+          ctx.fillRect(ox + dir * ph * 7, oy + 2, SPRITE_W, SPRITE_PX - 3)
+        }
+        break
+      case "complete":                          // cursor and unsolicited continuation
+        for (var au = 1; au <= 7; au++)
+          ctx.fillRect(tx + dir * au * 4 - (dir < 0 ? 2 : 0), oy + 14 - (au % 3), 3, 1)
+        ctx.fillRect(tx + dir * Math.round(30 * reach), oy + 3, 2, 13)
+        break
+      case "chain":                             // linked bubbles, one conclusion
+        for (var ch = 0; ch < 5; ch++) {
+          var chx = ox + SPRITE_W / 2 + dir * ch * 7
+          ctx.fillRect(chx, oy - 2 - (ch % 2) * 2, 4, 3)
+          if (ch > 0) ctx.fillRect(chx - dir * 4, oy - 1 - (ch % 2), 4, 1)
+        }
+        break
+      case "speculate":                         // three futures, one commitment
+        for (var sd = -1; sd <= 1; sd++) {
+          ctx.globalAlpha = sd === 0 ? 0.65 : 0.25
+          ctx.fillRect(ox + dir * Math.round(22 * reach), oy + sd * 6, SPRITE_W, SPRITE_PX)
+        }
+        break
+      case "collapse":                          // copies losing resolution outward
+        for (var mc = 1; mc <= 3; mc++) {
+          ctx.globalAlpha = 0.55 / mc
+          var msize = SPRITE_PX - mc * 3
+          ctx.fillRect(ox - dir * mc * 8, oy + SPRITE_PX - msize, Math.max(2, SPRITE_W - mc), msize)
+        }
+        break
+      case "limit":                             // a gate closes on the queue
+        var gate = Math.round(12 * reach)
+        ctx.fillRect(ox - gate, oy + 2, 2, 14)
+        ctx.fillRect(ox + SPRITE_W + gate, oy + 2, 2, 14)
+        ctx.fillRect(ox - gate, oy + 2, SPRITE_W + gate * 2, 2)
         break
     }
     ctx.globalAlpha = 1
@@ -1515,6 +1674,7 @@ function actionLabel(st) {
   if (st === "jump") return "hop"
   if (st === "ceil") return "ceiling"
   if (st === "rappel") return "rappel"
+  if (st === "limited") return "rate limited"
   if (st === "trick") return "!"
   if (st === "camp") return "camped"
   return ""

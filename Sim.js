@@ -74,6 +74,9 @@ var BOMB_FUSE = 150      // 5 seconds, same as the original
 var BOMB_RADIUS = 5
 var MINE_FUSE = 90       // a planted, visible 3-2-1 countdown
 var MINE_RADIUS = 6      // just wider than the carried bomb
+var SPRAY_BURST = 12
+var SPRAY_SHOT_TICKS = 2
+var SPRAY_SLOPES = [-0.16, 0.10, -0.06, 0.14, 0, -0.12, 0.06, -0.18, 0.12, -0.03, 0.17, -0.09]
 
 // How long a level gets before the nuke goes off. Levels that are going to
 // work are usually done well inside this; the ones that trip it are stuck for
@@ -352,7 +355,8 @@ function corridorPlan(rng) {
 // change COLS above and the renderer follows, which a copy in Draw.js wouldn't.
 var K = {
   COLS: COLS, ROWS: ROWS, CELL: CELL, SKY: SKY,
-  EMPTY: EMPTY, DIRT: DIRT, ROCK: ROCK, STEEL: STEEL, ORE: ORE
+  EMPTY: EMPTY, DIRT: DIRT, ROCK: ROCK, STEEL: STEEL, ORE: ORE,
+  AGENT_H: AGENT_H
 }
 
 // `attempt` re-runs the SAME level with a different colony. The layout stays a
@@ -417,6 +421,7 @@ function generate(level, attempt) {
     stallTicks: 0,
     rescues: 0,
     bombsUsed: 0,
+    collapseCopies: 0,
 
     timeLimit: LEVEL_LIMIT,
     nuking: false,
@@ -1205,8 +1210,8 @@ var SPECIALS = [
   // twenty, twelve of which had no animation at all — "that one is slightly
   // teal and walks a bit quicker" is not a character at this size — and the
   // eight that did have one fired it seventy times a level, which is not a
-  // signature move either. Ten, all visible, all rationed by time instead of
-  // by budget.
+  // signature move either. The roster is deliberately smaller than the old
+  // grab bag, all visible, all rationed by time instead of by budget.
   //
   // `cool` is ticks before it can do it again. While it is cooling it turns at
   // a wall like anybody else, so the move is something you wait for.
@@ -1244,8 +1249,28 @@ var SPECIALS = [
   // The two that can do something about the level's danger. Everybody else
   // treats a danger as weather — you learn it, you time it, you live with it.
   // These two shoot it.
-  { id: "gridsearch",name: "Grid Search",    act: "spray",  cool: 70,  robe: "#4a5d23", hair: "#b03a2e" },
+  { id: "gridsearch",name: "RAMbo Search",   act: "spray",  cool: 70,  robe: "#4a5d23", hair: "#b03a2e" },
   { id: "beamsearch",name: "Beam Search",    act: "camp",   cool: 120, robe: "#37474f", hair: "#8fd0e8" }
+
+  // Finishes whatever shape the level appears to have started, then keeps
+  // going because stopping at the requested boundary would require judgment.
+  ,{ id: "autocomplete", name: "Auto Complete", act: "complete", cool: 125, robe: "#176b87", hair: "#7de3ff" }
+
+  // Takes nearby agents through an obstacle as one linked conclusion. Whether
+  // any of them agreed to the premise is outside the context window.
+  ,{ id: "chainthought", name: "Chain of Thought", act: "chain", cool: 165, robe: "#713f98", hair: "#dfb7ff" }
+
+  // Renders several possible futures, discards the embarrassing ones, and
+  // commits to the first candidate that has somewhere solid to stand.
+  ,{ id: "specdecoder", name: "Speculative Decoder", act: "speculate", cool: 115, robe: "#146c5c", hair: "#74f0cf" }
+
+  // Every solution produces a cheaper copy of the model. The copies inherit
+  // the confidence and progressively less of the sprite.
+  ,{ id: "collapse", name: "Model Collapse", act: "collapse", cool: 190, robe: "#7a3154", hair: "#f19ac2" }
+
+  // Stops a crowd, then grudgingly returns one token at a time. It is the only
+  // special whose signature move is making everybody else do less.
+  ,{ id: "ratelimit", name: "Rate Limiter", act: "limit", cool: 145, robe: "#315b8a", hair: "#f0c75e" }
 ]
 
 function specialSpec(id) {
@@ -1271,6 +1296,108 @@ function workable(w, x, y) {
   return m !== EMPTY && m !== STEEL
 }
 
+function specialLanding(w, ag, reach) {
+  var fx = Math.floor(ag.x)
+  var fy = Math.floor(ag.y)
+  for (var i = 2; i <= reach; i++) {
+    var tx = fx + ag.dir * i
+    if (at(w, tx, fy) === STEEL) return null
+    if (!solid(w, tx, fy) && !solid(w, tx, fy - 1)
+        && solid(w, tx, fy + 1) && headroom(w, tx, fy))
+      return { x: tx + 0.5, y: fy }
+  }
+  return null
+}
+
+function freezeNearby(w, ag, count) {
+  var held = 0
+  for (var i = 0; i < w.agents.length && held < count; i++) {
+    var other = w.agents[i]
+    if (other === ag || other.gone || other.state === "saved"
+        || other.state === "bomb" || other.state === "block"
+        || other.state === "camp" || other.state === "limited") continue
+    if (Math.abs(other.x - ag.x) > 12 || Math.abs(other.y - ag.y) > 3) continue
+    other.state = "limited"
+    other.limitedFor = 35 + held * 24
+    other.limitedBy = ag.id
+    held++
+  }
+  return held
+}
+
+function collapseCopy(w, ag) {
+  if ((ag.modelGen || 0) >= 3 || w.collapseCopies >= 12) return false
+  var copy = {}
+  for (var key in ag) if (ag.hasOwnProperty(key)) copy[key] = ag[key]
+  copy.id = w.nextId++
+  copy.x = ag.x - ag.dir * (1.2 + ag.modelGen * 0.3)
+  copy.dir = -ag.dir
+  copy.state = "walk"
+  copy.modelGen = (ag.modelGen || 0) + 1
+  copy.cool = specialSpec("collapse").cool + copy.modelGen * 35
+  copy.timer = 0
+  copy.turns = 0
+  copy.idle = 0
+  copy.passes = {}
+  copy.bucket = ""
+  copy.cell = ""
+  copy.still = 0
+  copy.escapeFloors = {}
+  copy.escapeTunnels = {}
+  copy.markD = Infinity
+  copy.gone = false
+  copy.fade = 0
+  w.agents.push(copy)
+  w.collapseCopies++
+  return true
+}
+
+function sprayBullet(w, ag, shot, dry) {
+  var fx = Math.floor(ag.x)
+  var fy = Math.floor(ag.y)
+  var d = ag.dir
+  var slope = SPRAY_SLOPES[shot % SPRAY_SLOPES.length]
+  var h = w.hazard
+
+  for (var i = 1; i <= 30; i++) {
+    var bx = fx + d * i
+    var by = Math.round(fy - 2 + slope * i)
+
+    // Hazards are targets in the same ray, not a separate magical range
+    // check. Terrain in front absorbs the round before it can reach them.
+    if (h && !h.wrecked && bx >= h.zx0 && bx <= h.zx1 && by >= h.zy0 && by <= h.zy1) {
+      if (dry) return true
+      ag.shotTo = bx
+      ag.shotY = by
+      ag.shotFor = SPRAY_SHOT_TICKS
+      wreckHazard(w)
+      addDust(w, bx, by, 8)
+      return true
+    }
+
+    var mat = at(w, bx, by)
+    if (mat === EMPTY) continue
+    if (!dry) {
+      ag.shotTo = bx
+      ag.shotY = by
+      ag.shotFor = SPRAY_SHOT_TICKS
+    }
+    if (mat === STEEL) return false
+    if (dry) return true
+    if (clearCell(w, bx, by)) {
+      addDust(w, bx, by, 4)
+      return true
+    }
+    return false
+  }
+  if (!dry) {
+    ag.shotTo = fx + d * 30
+    ag.shotY = Math.round(fy - 2 + slope * 30)
+    ag.shotFor = SPRAY_SHOT_TICKS
+  }
+  return false
+}
+
 function specialCut(w, ag, act, dry) {
   var fx = Math.floor(ag.x)
   var fy = Math.floor(ag.y)
@@ -1286,6 +1413,87 @@ function specialCut(w, ag, act, dry) {
           if (dry) return true
           moved = true
         }
+
+  } else if (act === "complete") {
+    // A tunnel completed from the first blocked token through the wall and a
+    // few cells past the far side. The extra cursor travel is deliberate: the
+    // joke has to survive even when there was only one cell left to remove.
+    var seenWall = false
+    var seenAirAfter = 0
+    for (i = 1; i <= 16; i++) {
+      var completeX = fx + d * i
+      for (j = -AGENT_H; j <= 0; j++) {
+        if (at(w, completeX, fy + j) === STEEL) return moved
+        if (dry && workable(w, completeX, fy + j)) return true
+        if (!dry && clearCell(w, completeX, fy + j)) { moved = true; seenWall = true }
+      }
+      if (!dry && seenWall) {
+        if (!solid(w, completeX, fy) && !solid(w, completeX, fy - 1)) seenAirAfter++
+        else seenAirAfter = 0
+        if (seenAirAfter >= 4) break
+      }
+    }
+    if (!dry && moved) {
+      ag.specialX = fx + d * Math.min(i, 16)
+      ag.specialY = fy
+      ag.shotFor = 12
+    }
+
+  } else if (act === "chain") {
+    var chainLand = specialLanding(w, ag, 12)
+    if (!chainLand) return false
+    if (dry) return true
+    ag.specialX = chainLand.x
+    ag.specialY = chainLand.y
+    var linked = []
+    for (i = 0; i < w.agents.length && linked.length < 4; i++) {
+      var link = w.agents[i]
+      if (link === ag || link.gone || link.state === "saved" || link.state === "bomb"
+          || link.state === "block" || link.state === "camp") continue
+      if (Math.abs(link.x - ag.x) <= 9 && Math.abs(link.y - ag.y) <= 3) linked.push(link)
+    }
+    ag.x = chainLand.x
+    ag.y = chainLand.y
+    for (i = 0; i < linked.length; i++) {
+      linked[i].x = chainLand.x - d * (i + 1) * 0.8
+      linked[i].y = chainLand.y
+      linked[i].dir = d
+      linked[i].state = "walk"
+      linked[i].fall = 0
+    }
+    moved = true
+
+  } else if (act === "speculate") {
+    var specLand = specialLanding(w, ag, 14)
+    if (!specLand) return false
+    if (dry) return true
+    ag.specialX = specLand.x
+    ag.specialY = specLand.y
+    ag.x = specLand.x
+    ag.y = specLand.y
+    moved = true
+
+  } else if (act === "collapse") {
+    var collapseLand = specialLanding(w, ag, 11)
+    if (!collapseLand) return false
+    if (dry) return true
+    ag.specialX = collapseLand.x
+    ag.specialY = collapseLand.y
+    collapseCopy(w, ag)
+    ag.x = collapseLand.x
+    ag.y = collapseLand.y
+    moved = true
+
+  } else if (act === "limit") {
+    var limitLand = specialLanding(w, ag, 11)
+    if (!limitLand) return false
+    if (dry) return true
+    freezeNearby(w, ag, 5)
+    ag.specialX = limitLand.x
+    ag.specialY = limitLand.y
+    ag.x = limitLand.x
+    ag.y = limitLand.y
+    moved = true
 
   } else if (act === "kick") {
     // The wall is not destroyed. It is moved.
@@ -1399,6 +1607,16 @@ function specialCut(w, ag, act, dry) {
         }
       }
     addDust(w, fx + d * 5, fy - 2, 18)
+    if (!dry && moved) {
+      // The payload is an instruction, not merely a charge: everyone close
+      // enough to read it adopts the injector's direction with total confidence.
+      for (var pi = 0; pi < w.agents.length; pi++) {
+        var prompted = w.agents[pi]
+        if (prompted === ag || prompted.gone || prompted.state !== "walk") continue
+        if (Math.abs(prompted.x - ag.x) <= 11 && Math.abs(prompted.y - ag.y) <= 3)
+          prompted.dir = d
+      }
+    }
 
   } else if (act === "stomp") {
     for (i = -1; i <= 1; i++)
@@ -1428,35 +1646,17 @@ function specialCut(w, ag, act, dry) {
         }
 
   } else if (act === "spray") {
-    // Fires at everything. A wide burst — the full height of the corridor and a
-    // good way down it — and then the rounds that got through keep going.
-    //
-    // The danger is checked AFTER the terrain is cut, along a line from the
-    // muzzle: the burst opens the tunnel and the same burst goes down it. The
-    // first version tested a fixed box before cutting, which never reached,
-    // because a danger is placed just past an obstacle and the obstacle is
-    // exactly what Grid Search is standing in front of.
+    // Twelve independent angled rays. stepTrick feeds these out over time for
+    // the visible burst; keeping the full operation here as well makes direct
+    // and rescue calls obey the same collision rules.
     var hit = false
-    for (i = 1; i <= 10; i++)
-      for (j = -AGENT_H - 2; j <= 1; j++)
-        if (dry ? workable(w, fx + d * i, fy + j) : clearCell(w, fx + d * i, fy + j)) {
-          if (dry) return true
-          hit = true
-        }
-
-    var hz = w.hazard
-    if (hz && !hz.wrecked) {
-      var hm = hazardMid(hz)
-      var ahead = (hm.x - fx) * d
-      if (ahead > 0 && ahead <= 20 && Math.abs(hm.y - fy) <= CORR_H) {
+    for (i = 0; i < SPRAY_BURST; i++) {
+      if (sprayBullet(w, ag, i, dry)) {
         if (dry) return true
-        if (lineClear(w, fx, fy - 2, Math.round(hm.x), Math.round(hm.y))) {
-          wreckHazard(w)
-          hit = true
-        }
+        hit = true
       }
     }
-    moved = hit
+    return hit
 
   } else if (act === "phase") {
     // Steps through instead of removing. It gets itself past and leaves the
@@ -2416,6 +2616,12 @@ function spawn(w) {
     ceilX: 0,
     ceilTo: 0,
     ropeY: 0,
+    specialX: 0,
+    specialY: 0,
+    modelGen: 0,
+    limitedFor: 0,
+    limitedBy: 0,
+    flipTicks: 0,
     shotTo: 0,        // where a camped sniper's last shot went, for the tracer
     shotY: 0,
     shotFor: 0,
@@ -3124,6 +3330,37 @@ function stepCeiling(w, ag) {
 function specialAtEdge(w, ag, nx, depth, far) {
   var spec = specOf(ag)
 
+  if (spec.act === "complete" && ag.cool <= 0 && far > 2) {
+    var foot = Math.floor(ag.y) + 1
+    var span = Math.min(BUILD_REACH, far + 4)
+    var added = false
+    for (var ac = 1; ac <= span; ac++) {
+      var acx = Math.floor(ag.x) + ag.dir * ac
+      if (at(w, acx, foot) !== EMPTY || agentOccupiesCell(w, acx, foot, ag)) continue
+      setCell(w, acx, foot, ROCK)
+      added = true
+    }
+    if (added) {
+      ag.specialX = ag.x + ag.dir * span
+      ag.specialY = ag.y
+      ag.shotFor = 12
+      ag.cool = spec.cool
+      ag.x = nx
+      return
+    }
+  }
+
+  // These agents resolve gaps the same way they resolve walls: commit a group,
+  // a prediction, a degraded copy, or a queue to the first valid candidate on
+  // the far side. The wind-up makes the choice visible before it happens.
+  if ((spec.act === "chain" || spec.act === "speculate"
+       || spec.act === "collapse" || spec.act === "limit")
+      && ag.cool <= 0 && far > 1 && specialLanding(w, ag, 14)) {
+    ag.state = "trick"
+    ag.timer = 0
+    return
+  }
+
   // A deep shaft with a roof over it is a rappel, even if the crawler has
   // only just used its horizontal ceiling walk. Treating both movements as
   // one cooldown is what made level 55's crawler turn away from the central
@@ -3273,10 +3510,23 @@ function stepJump(w, ag) {
 
 function stepTrick(w, ag) {
   ag.timer++
+
+  var spec = specOf(ag)
+  if (spec.act === "spray") {
+    // One visible round at a time. Two ticks per round is just slow enough to
+    // read as a burst rather than a rectangle blinking out of the terrain.
+    if ((ag.timer - 1) % SPRAY_SHOT_TICKS === 0)
+      sprayBullet(w, ag, Math.floor((ag.timer - 1) / SPRAY_SHOT_TICKS), false)
+    if (ag.timer < SPRAY_BURST * SPRAY_SHOT_TICKS) return
+    ag.timer = 0
+    ag.state = "walk"
+    ag.cool = spec.cool
+    return
+  }
+
   if (ag.timer < TRICK_WINDUP) return
   ag.timer = 0
 
-  var spec = specOf(ag)
   var cut = specialCut(w, ag, spec.act)
   ag.state = "walk"
 
@@ -3290,6 +3540,15 @@ function stepTrick(w, ag) {
   // Nothing shifted, so whatever is in the way is steel and always will be.
   // Turning is the only honest answer.
   if (!cut) turnAround(w, ag)
+}
+
+function stepLimited(w, ag) {
+  ag.limitedFor--
+  if (ag.limitedFor > 0) return
+  ag.limitedFor = 0
+  ag.limitedBy = 0
+  if (unsupported(w, ag)) beginUncontrolledFall(w, ag)
+  else ag.state = "walk"
 }
 
 function stepParticles(w) {
@@ -3563,7 +3822,13 @@ function countPass(w, ag) {
   if (key === ag.bucket) return
   ag.bucket = key
   ag.passes[key] = (ag.passes[key] || 0) + 1
-  if (ag.passes[key] < LOOP_PASSES) return
+  // Fire once when the threshold is crossed, not on every later visit. A
+  // special cooling down answers specialEscape() by turning around; when its
+  // two-cell pace straddles a bucket boundary, calling that rescue forever
+  // flips it on every tick and manufactures the exact loop this detects.
+  // PATIENCE and STUCK_LIMIT remain the later fallbacks if the first rescue
+  // did not get it anywhere.
+  if (ag.passes[key] !== LOOP_PASSES) return
   condemn(w, ag)
 }
 
@@ -3658,7 +3923,7 @@ function step(w) {
       if (sact === "camp") {
         ag.state = "camp"
         ag.cool = 0
-      } else if (sact === "spray" && ag.cool <= 0 && hazardIsAhead(w, ag, 20)) {
+      } else if (sact === "spray" && ag.cool <= 0 && hazardIsAhead(w, ag, 30)) {
         // It opens up the moment it has the thing in view. Waiting for a wall
         // meant it fired once or twice a level, always at the map edge, and
         // never once at the danger — which is half of what it is for.
@@ -3667,6 +3932,18 @@ function step(w) {
       }
     }
     if (ag.rescueCool > 0) ag.rescueCool--
+
+    // Rate Limiter does not wait for terrain. A sufficiently dense queue is
+    // already an incident: stop the nearest requests and let them resume one
+    // by one. The stagger is stored on each victim, so removing the limiter
+    // does not release the whole thundering herd at once.
+    if (ag.special && ag.state === "walk" && specOf(ag).act === "limit" && ag.cool <= 0) {
+      var rateHeld = freezeNearby(w, ag, 5)
+      if (rateHeld >= 2) {
+        ag.cool = specOf(ag).cool
+        ag.timer = 10
+      }
+    }
 
     // Stuck inside one cell. Not "getting nowhere" in the goalDist sense — the
     // literal same cell, tick after tick, which is what pacing in a pocket
@@ -3726,6 +4003,7 @@ function step(w) {
     // pacing between two places, which the bucket count above cannot see.
     if (ag.state === "walk" && ag.idle > STUCK_LIMIT) condemn(w, ag)
 
+    var dirBeforeStep = ag.dir
     switch (ag.state) {
       case "walk": stepWalk(w, ag); break
       case "fall": stepFall(w, ag); break
@@ -3738,8 +4016,21 @@ function step(w) {
       case "trick": stepTrick(w, ag); break
       case "ceil":  stepCeiling(w, ag); break
       case "rappel": stepRappel(w, ag); break
+      case "limited": stepLimited(w, ag); break
       case "jump":  stepJump(w, ag); break
       case "camp":  stepCamp(w, ag); break
+    }
+
+    // A one-cell trap can evade both stuck detectors: the agent technically
+    // changes cells and directions every tick, so it is neither stationary nor
+    // completing another full pacing bucket. Eighteen uninterrupted reversals
+    // is not navigation. End a special's loop with its usual condemned blast,
+    // which also has a chance to open the trap for everyone behind it.
+    if (ag.special && ag.state === "walk" && ag.dir !== dirBeforeStep) ag.flipTicks++
+    else ag.flipTicks = 0
+    if (ag.special && ag.flipTicks >= 18) {
+      ag.idle = Math.max(ag.idle, STUCK_LIMIT)
+      condemn(w, ag)
     }
 
     w.acting = null
