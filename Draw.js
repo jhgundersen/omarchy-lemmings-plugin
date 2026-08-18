@@ -62,6 +62,22 @@ function drawTerrain(ctx, w, pal) {
   ctx.fillStyle = sky
   ctx.fillRect(0, 0, cols * C, rows * C)
 
+  // On a ship the open band at the top is not sky, it is outside. Stars are
+  // laid out from the level number so they are the same every time you come
+  // back to it, like everything else here.
+  if (w.biome === "Spaceship") {
+    var seed3 = w.level * 2654435761 % 100000
+    for (var st4 = 0; st4 < 70; st4++) {
+      seed3 = (seed3 * 1103515245 + 12345) % 2147483648
+      var stx = (seed3 >> 7) % (cols * C)
+      var sty = (seed3 >> 3) % (k.SKY * C)
+      ctx.fillStyle = st4 % 7 === 0 ? pal.decorLit : pal.dust
+      ctx.globalAlpha = st4 % 3 === 0 ? 0.9 : 0.45
+      ctx.fillRect(stx, sty, 1, 1)
+    }
+    ctx.globalAlpha = 1
+  }
+
   // Body of the earth, drawn as horizontal runs of like material. A level is
   // a few hundred runs where it would be several thousand cells, which is the
   // difference between this repainting comfortably mid-dig and not.
@@ -138,6 +154,45 @@ function drawDecor(ctx, w, pal) {
     var d = w.decor[i]
     var px = d.x * C
     var py = d.y * C
+
+    // Ship fittings. A viewport is only drawn while the hull it is set into is
+    // still there, so an agent that bashes through the wall takes the window
+    // with it.
+    if (d.kind === "window") {
+      if (w.terrain[d.y * k.COLS + d.x] === k.EMPTY) continue
+      var ww2 = (d.size + 2) * C
+      var wh2 = (d.size + 1) * C
+      ctx.fillStyle = pal.hatchMouth               // the void outside
+      ctx.fillRect(px, py, ww2, wh2)
+      ctx.fillStyle = pal.decorLit
+      for (var st3 = 0; st3 < 5; st3++) {          // stars in it
+        var sxx = px + 2 + ((d.seed * (st3 + 3)) % Math.max(1, ww2 - 4))
+        var syy = py + 2 + ((d.seed * (st3 + 7)) % Math.max(1, wh2 - 4))
+        ctx.fillRect(sxx, syy, 1, 1)
+      }
+      ctx.fillStyle = pal.rig                      // the frame
+      ctx.fillRect(px - 1, py - 1, ww2 + 2, 2)
+      ctx.fillRect(px - 1, py + wh2 - 1, ww2 + 2, 2)
+      ctx.fillRect(px - 1, py - 1, 2, wh2 + 2)
+      ctx.fillRect(px + ww2 - 1, py - 1, 2, wh2 + 2)
+      continue
+    }
+
+    if (d.kind === "strip") {
+      if (w.terrain[(d.y - 1) * k.COLS + d.x] === k.EMPTY) continue
+      ctx.fillStyle = pal.rigDark
+      ctx.fillRect(px - 6, py, 16, 2)
+      ctx.fillStyle = pal.decorLit                 // the lit tube
+      ctx.fillRect(px - 4, py + 1, 12, 1)
+      continue
+    }
+
+    if (d.kind === "grate") {
+      if (w.terrain[(d.y + 1) * k.COLS + d.x] === k.EMPTY) continue
+      ctx.fillStyle = pal.decorDim
+      for (var gg = 0; gg < 5; gg++) ctx.fillRect(px + gg * 3, py + C - 2, 2, 2)
+      continue
+    }
 
     if (d.kind === "hang") {
       if (w.terrain[(d.y - 1) * k.COLS + d.x] === k.EMPTY) continue

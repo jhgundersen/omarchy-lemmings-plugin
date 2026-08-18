@@ -436,7 +436,7 @@ function generate(level, attempt) {
     // and the obstacles along them aren't all at the same three positions.
     var hj = irand(rng, 0, 7)
     c.handoffX = c.dir > 0 ? c.x1 - 10 - hj : c.x0 + 10 + hj
-    carveCorridor(w, c, rng, w.biome)
+    carveCorridor(w, c)
   }
 
   // At most one danger, and only on about half of levels. It takes over that
@@ -595,6 +595,13 @@ function generate(level, attempt) {
 
   // Last, once every wall, shaft and doorway is where it is going to be, so
   // nothing gets furnished and then carved away before anyone sees it.
+  // Roughen the floors last of all. Doing it while the corridor was carved put
+  // the bumps in before the obstacles, so a chasm cut afterwards took the floor
+  // out from under them and left a shelf of raised dirt hanging across the hole
+  // — a bridge nobody built, over the one obstacle that is supposed to need
+  // one. Jungle levels lost sixteen points of clear rate to it.
+  for (var rf = 0; rf < corridors.length; rf++) roughFloor(w, corridors[rf], rng, w.biome)
+
   placeDecor(w, rng, corridors)
   if (hazardCorridor >= 0) w.hazard = placeHazard(w, rng, corridors, hazardCorridor)
 
@@ -704,8 +711,6 @@ function fillEarth(w, rng) {
     }
   }
 
-  biomeSkin(w, rng)
-
   // Grit along the boundaries. Every cell that sits directly under a different
   // material has a chance of taking that material instead, which frays the
   // seam between two layers into something granular. This is the cheapest line
@@ -728,6 +733,10 @@ function fillEarth(w, rng) {
       }
     }
   }
+  // Last, so it has the final say. It used to run before the grit pass, which
+  // then frayed every panel edge back into rock — which is precisely why the
+  // spaceship still read as a cavern with a pattern on it.
+  biomeSkin(w, rng)
 }
 
 // Things standing on the floor and hanging from the ceiling. Purely something
@@ -764,6 +773,17 @@ function biomeSkin(w, rng) {
       for (y = by; y < by + ph - 1; y++)
         for (x = bx; x < bx + pw - 1; x++)
           if (at(w, x, y) !== STEEL) setCell(w, x, y, DIRT)
+    }
+
+    // Structural ribs: full-height frames at a regular pitch, running through
+    // everything. A ship is a frame with plating on it, and the frame is what
+    // stops the grid reading as wallpaper.
+    for (x = 3 + (irand(rng, 0, 3)); x < COLS - 3; x += 17) {
+      for (y = SKY; y < ROWS - 2; y++) {
+        if (at(w, x, y) === STEEL) continue
+        setCell(w, x, y, ORE)
+        if (at(w, x + 1, y) !== STEEL) setCell(w, x + 1, y, ORE)
+      }
     }
 
   } else if (w.biome === "Ice Cave") {
@@ -837,6 +857,38 @@ function placeDecor(w, rng, corridors) {
     floorKinds = ["spire", "clump", "clump", "tuft"]
   }
 
+  // A ship's corridor is fitted, not furnished: a strip light overhead, grating
+  // underfoot, and a viewport looking out at nothing. The viewports do most of
+  // the work — a window onto space is the one thing on this board that cannot
+  // be read as a cave.
+  //
+  // All of it is decor, so none of it is in the terrain grid and none of it is
+  // an obstacle. A viewport is painted onto solid hull; the renderer only draws
+  // one where the wall is still there, so bashing through a window removes it.
+  if (w.biome === "Spaceship") {
+    for (var si = 0; si < corridors.length; si++) {
+      var sc = corridors[si]
+      for (var sx2 = sc.x0 + 4; sx2 < sc.x1 - 6; sx2 += irand(rng, 9, 16)) {
+        // Set into the wall above the corridor, where there is wall to set it
+        // into.
+        var wy = sc.floorY - CORR_H - 4
+        if (solid(w, sx2, wy) && solid(w, sx2 + 3, wy)) {
+          w.decor.push({ x: sx2, y: wy, kind: "window", size: irand(rng, 2, 3), seed: Math.floor(rng() * 1000) })
+        }
+      }
+      // Strip lights along the ceiling and grating along the floor, on a
+      // regular pitch, because nothing on a ship is where it fell.
+      for (var lx = sc.x0 + 3; lx < sc.x1 - 3; lx += 11) {
+        var lceil = sc.floorY - CORR_H - 1
+        if (solid(w, lx, lceil)) w.decor.push({ x: lx, y: lceil + 1, kind: "strip", size: 2, seed: 0 })
+      }
+      for (var gx2 = sc.x0 + 2; gx2 < sc.x1 - 3; gx2 += 6) {
+        if (solid(w, gx2, sc.floorY) && !solid(w, gx2, sc.floorY - 1))
+          w.decor.push({ x: gx2, y: sc.floorY - 1, kind: "grate", size: 1, seed: gx2 })
+      }
+    }
+  }
+
   for (var i = 0; i < corridors.length; i++) {
     var c = corridors[i]
     for (var x = c.x0 + 2; x < c.x1 - 2; x++) {
@@ -864,10 +916,9 @@ function placeDecor(w, rng, corridors) {
   }
 }
 
-function carveCorridor(w, c, rng, biome) {
+function carveCorridor(w, c) {
   for (var x = c.x0; x <= c.x1; x++)
     for (var y = c.floorY - CORR_H; y < c.floorY; y++) clearCell(w, x, y)
-  if (rng) roughFloor(w, c, rng, biome)
 }
 
 // The floor of a corridor, per biome. A perfectly flat floor across a hundred
@@ -899,6 +950,9 @@ function roughFloor(w, c, rng, biome) {
       h = Math.max(0, Math.min(amp, h + step))
       run = irand(rng, biome === "Ice Cave" ? 4 : 1, biome === "Ice Cave" ? 11 : 5)
     }
+    // Only where there is still floor to build on. Everything the obstacles
+    // took away stays taken away.
+    if (!solid(w, x, c.floorY)) { h = 0; continue }
     for (var d = 0; d < h; d++) setCell(w, x, c.floorY - 1 - d, DIRT)
   }
 }
