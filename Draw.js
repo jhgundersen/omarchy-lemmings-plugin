@@ -320,14 +320,98 @@ function drawExitBack(ctx, w, pal) {
   ctx.fillStyle = g
   ctx.fillRect(x, y, ww, hh)
 
-  // A stepped lintel over the opening — two courses, the upper one wider —
-  // so the portal carries a bit of built structure and stands out from the
-  // carved earth around it as the one made thing on the board.
+  // The way home is the one thing on the board that must be recognisable at a
+  // glance on every level, so the lit mouth above never changes. What changes
+  // is what has been built around it: each biome frames its exit in its own
+  // materials, and you know where you are from the doorway alone.
   ctx.fillStyle = pal.exitFrame
-  ctx.fillRect(x - 4, y - 6, ww + 8, 3)
-  ctx.fillRect(x - 2, y - 3, ww + 4, 3)
-  ctx.fillRect(x - 2, y - 3, 2, hh + 3)
-  ctx.fillRect(x + ww, y - 3, 2, hh + 3)
+  var cx3 = x + ww / 2
+
+  switch (w.biome) {
+  case "Ruins":
+    // A pediment on two broken columns, one shorter than the other.
+    ctx.fillRect(x - 5, y - 7, ww + 10, 3)
+    for (var pd = 0; pd < 4; pd++)
+      ctx.fillRect(cx3 - 6 + pd * 3, y - 10 + pd, 3, 3)
+    ctx.fillRect(x - 4, y - 4, 3, hh + 4)
+    ctx.fillRect(x + ww + 1, y - 4, 3, hh - 2)          // snapped short
+    break
+
+  case "Ice Cave":
+    // The same doorway, but the cave has been closing on it for a long time:
+    // a thick encrusted arch, with ice growing down into the opening itself.
+    ctx.fillRect(x - 5, y - 7, ww + 10, 5)
+    ctx.fillRect(x - 5, y - 2, 4, hh + 2)
+    ctx.fillRect(x + ww + 1, y - 2, 4, hh + 2)
+    ctx.fillStyle = pal.decorLit
+    for (var ie = 0; ie < ww + 6; ie += 3)
+      for (var id2 = 0; id2 < 2 + ((ie / 3) % 4); id2++)
+        ctx.fillRect(x - 3 + ie, y - 2 + id2, 2, 1)
+    for (var iw = 0; iw < 3; iw++) {         // and down the jambs inside
+      ctx.fillRect(x, y + iw * 4, 1, 3)
+      ctx.fillRect(x + ww - 1, y + 2 + iw * 4, 1, 3)
+    }
+    break
+
+  case "Frost":
+    // A light fringe of ice off a plain lintel — frost, not a glacier.
+    ctx.fillRect(x - 3, y - 5, ww + 6, 3)
+    ctx.fillRect(x - 3, y - 2, 2, hh + 2)
+    ctx.fillRect(x + ww + 1, y - 2, 2, hh + 2)
+    ctx.fillStyle = pal.decorLit
+    for (var ic2 = 0; ic2 < ww; ic2 += 4)
+      for (var dp = 0; dp < 2 + ((ic2 / 4) % 3); dp++)
+        ctx.fillRect(x + ic2, y - 2 + dp, 2 - (dp > 1 ? 1 : 0), 1)
+    break
+
+  case "Foundry":
+    // A blast door: heavy jambs, a lintel, and rivets.
+    ctx.fillRect(x - 5, y - 6, ww + 10, 4)
+    ctx.fillRect(x - 4, y - 2, 4, hh + 2)
+    ctx.fillRect(x + ww, y - 2, 4, hh + 2)
+    ctx.fillStyle = pal.rigDark
+    for (var rv = 0; rv < ww + 8; rv += 5) ctx.fillRect(x - 4 + rv, y - 5, 2, 2)
+    break
+
+  case "Jungle":
+    // A stone arch that the forest has taken back.
+    ctx.fillRect(x - 4, y - 5, ww + 8, 3)
+    ctx.fillRect(x - 3, y - 2, 2, hh + 2)
+    ctx.fillRect(x + ww + 1, y - 2, 2, hh + 2)
+    ctx.fillStyle = pal.decor
+    for (var vn = -4; vn < ww + 4; vn += 3) {
+      var drop3 = 3 + ((vn + 12) % 4) * 2
+      ctx.fillRect(x + vn, y - 5, 1, drop3)             // vines over the lintel
+      ctx.fillStyle = pal.decorLit
+      ctx.fillRect(x + vn - 1, y - 5 + drop3, 2, 1)     // a leaf on the end
+      ctx.fillStyle = pal.decor
+    }
+    break
+
+  case "Spaceship":
+    // An airlock: a bolted collar, hazard striping, and a lamp above it.
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x - 5, y - 6, ww + 10, 4)
+    ctx.fillRect(x - 5, y - 2, 5, hh + 2)
+    ctx.fillRect(x + ww, y - 2, 5, hh + 2)
+    ctx.fillStyle = pal.warn
+    for (var hs = 0; hs < ww + 10; hs += 6) ctx.fillRect(x - 5 + hs, y - 6, 3, 4)
+    ctx.fillStyle = pal.rigDark
+    for (var bo = 0; bo < hh; bo += 5) {
+      ctx.fillRect(x - 3, y + bo, 2, 2)
+      ctx.fillRect(x + ww + 1, y + bo, 2, 2)
+    }
+    ctx.fillStyle = pal.decorLit
+    ctx.fillRect(cx3 - 2, y - 9, 4, 2)                  // lamp over the door
+    break
+
+  default:
+    // Cavern: the original stepped lintel, two courses, the upper one wider.
+    ctx.fillRect(x - 4, y - 6, ww + 8, 3)
+    ctx.fillRect(x - 2, y - 3, ww + 4, 3)
+    ctx.fillRect(x - 2, y - 3, 2, hh + 3)
+    ctx.fillRect(x + ww, y - 3, 2, hh + 3)
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -189,9 +189,14 @@ cannot leave it flickering left and right in the same pixel every frame.
 Levels are a pure function of their number — level 42 is always level 42, same
 ground, same colony, same line on the card — so `←` and `→` walk a fixed
 catalogue rather than reshuffling. The board starts as one solid mass and the
-level is *carved* out of it: four corridors, each walked in the opposite
-direction to the one above, with each floor stopping at the handoff so the way
-on is over the edge. Which way the serpentine runs is a coin toss, so about half
+level is *carved* out of it: three, four or five corridors, each walked in the
+opposite direction to the one above, with each floor stopping at the handoff so
+the way on is over the edge.
+
+How many floors, and how far apart, varies per level. The spacing is not a free
+choice — the handoff at the end of a corridor is a drop of exactly one gap, and
+a drop past the safe limit kills — so a five-floor level packs them closer
+rather than reaching further down, and a three-floor one can afford to spread. Which way the serpentine runs is a coin toss, so about half
 of levels mirror.
 
 Two or three obstacles sit along each corridor, every one a shape with a known
@@ -302,6 +307,14 @@ the exclusion radius and make it turn left and right in the same pixel forever.
 That is also why a level has a *target* rather than asking for everyone: a
 blocker doesn't come home, so on any level that posts one, "everyone home" isn't
 a target, it's a contradiction.
+
+### Gravity applies to everybody
+
+Standing still is a decision about walking, not a suspension of gravity. A
+blocker holding a gap, a sniper camped in position, an agent with a lit fuse and
+a planted charge counting down all come down if the ground under them is
+removed — usually by somebody else's explosion. The fuse keeps burning on the
+way, and goes off wherever it lands.
 
 ## When it goes wrong
 

@@ -325,8 +325,23 @@ function irand(rng, lo, hi) { return lo + Math.floor(rng() * (hi - lo + 1)) }
 
 var SKY = 7              // rows of open air above the earth
 var CORR_H = 6           // carved headroom above a corridor floor
-var CORR_GAP = 12        // vertical distance between corridor floors
-var N_CORR = 4
+var CORR_GAP = 12        // default vertical distance between corridor floors
+var N_CORR = 4           // default number of corridors
+
+// How many corridors a level gets, and how far apart. Both vary per level now,
+// because four floors at a fixed spacing meant every level had the same shape
+// however different the ground looked.
+//
+// The gap is the constraint, not a free choice: the handoff at the end of each
+// corridor is a drop of exactly one gap, and a drop past SAFE_FALL kills. So it
+// can only be nudged, and a five-floor level has to pack them closer rather
+// than reach further down.
+function corridorPlan(rng) {
+  var n = irand(rng, 3, 5)
+  var gap = n === 5 ? 10 : (n === 3 ? 13 : 12)
+  var top = 9 + irand(rng, 0, 2)
+  return { n: n, gap: gap, top: top }
+}
 
 // Everything Draw.js needs to know about geometry and materials, stamped onto
 // every world by generate(). Draw.js used to reach for these through a QML
@@ -355,6 +370,7 @@ function generate(level, attempt) {
     biome: BIOMES[(level - 1) % BIOMES.length],
     k: K,
     decor: [],
+    corrGap: CORR_GAP,
     acting: null,
     special: null,
     specialSpec: null,
@@ -414,11 +430,13 @@ function generate(level, attempt) {
   // top-left corner and the exit in the bottom-left of every level ever
   // generated — the one thing a viewer would notice was always the same.
   var flip = rng() < 0.5 ? 1 : -1
+  var plan = corridorPlan(rng)
+  w.corrGap = plan.gap
   var corridors = []
-  for (var k = 0; k < N_CORR; k++) {
+  for (var k = 0; k < plan.n; k++) {
     var dir = ((k % 2 === 0) ? 1 : -1) * flip
     corridors.push({
-      floorY: SKY + 9 + k * CORR_GAP,
+      floorY: SKY + plan.top + k * plan.gap,
       dir: dir,
       x0: 4,
       x1: COLS - 5,
@@ -975,7 +993,7 @@ function placeObstacles(w, rng, c, index, corridors) {
   // as anything else, and climbing used to be free after the first wall.
   // Bashing and bridging have to be the common answers or the whole level reads
   // as walking, climbing and falling.
-  var lastOne = index === N_CORR - 1
+  var lastOne = index === corridors.length - 1
   var kinds = lastOne
     ? ["wall", "collapse", "pillars", "towers", "step"]
     : ["wall", "collapse", "collapse", "pillars", "towers", "towers",
@@ -983,7 +1001,7 @@ function placeObstacles(w, rng, c, index, corridors) {
   // The floater needs a drop taller than SAFE_FALL, and the only landing far
   // enough down to be one is the corridor TWO floors below — see the cliff
   // case for why it has to be a real corridor and not just a deep hole.
-  if (index < N_CORR - 2 && !lastOne) kinds.push("cliff")
+  if (index < corridors.length - 2 && !lastOne) kinds.push("cliff")
 
   // Two or three. At one to three, spaced across eighty cells, a corridor could
   // easily come out as a stroll with a single thing in the way.
@@ -1047,7 +1065,7 @@ function placeObstacles(w, rng, c, index, corridors) {
       // makes it the clearest showcase of who's who on the board — and the
       // reason there's now a build to watch on nearly every level.
       var span2 = irand(rng, 10, 17)
-      var floorBelow = index + 1 < N_CORR ? corridors[index + 1].floorY : ROWS - 3
+      var floorBelow = index + 1 < corridors.length ? corridors[index + 1].floorY : ROWS - 3
       for (var gx2 = x; gx2 < x + span2 && gx2 <= hi; gx2++)
         for (var gy2 = c.floorY; gy2 < floorBelow; gy2++) clearCell(w, gx2, gy2)
 
@@ -2670,6 +2688,12 @@ function stepMines(w) {
   for (var i = w.mines.length - 1; i >= 0; i--) {
     var mine = w.mines[i]
     mine.fuse--
+
+    // A charge sitting on ground that gets removed drops down the hole. It is
+    // still armed on the way, which is the entertaining part.
+    while (!solid(w, mine.x, mine.y + 1) && mine.y < ROWS - 1) mine.y++
+    if (mine.y >= ROWS - 1) { w.mines.splice(i, 1); continue }
+
     if (mine.fuse > 0) continue
     for (var dy = -MINE_RADIUS; dy <= MINE_RADIUS; dy++)
       for (var dx = -MINE_RADIUS; dx <= MINE_RADIUS; dx++)
@@ -2709,10 +2733,18 @@ function stepDig(w, ag) {
   if (!solid(w, cx, Math.floor(ag.y) + 1)) beginUncontrolledFall(w, ag)
 }
 
+// Nothing under it. Anything that has planted itself — a blocker, a camped
+// sniper, an agent with a lit fuse — is still subject to the floor being taken
+// out from underneath it, usually by somebody else's explosion. Standing still
+// is a decision about walking, not a suspension of gravity.
+function unsupported(w, ag) {
+  return !solid(w, Math.floor(ag.x), Math.floor(ag.y) + 1)
+}
+
 function stepBlock(w, ag) {
   // A blocker with nothing under it stops blocking — the ground it was holding
   // has been dug out from beneath, usually by whoever it turned back.
-  if (!solid(w, Math.floor(ag.x), Math.floor(ag.y) + 1)) { beginUncontrolledFall(w, ag); return }
+  if (unsupported(w, ag)) { beginUncontrolledFall(w, ag); return }
   ag.anim++
 
   // It does not stand down, ever. A blocker is an agent that has given up
@@ -2723,6 +2755,20 @@ function stepBlock(w, ag) {
 
 function stepBomb(w, ag) {
   ag.fuse--
+
+  // Falling with the fuse still burning. It keeps counting on the way down and
+  // goes off wherever it lands, or in the air if it runs out first — which is
+  // the honest outcome and a much better one to watch than a bomb hanging in
+  // the space its floor used to occupy.
+  if (unsupported(w, ag)) {
+    ag.fall += FALL_SPEED
+    var ny = ag.y + FALL_SPEED
+    if (Math.floor(ny) >= ROWS - 1) { ag.gone = true; w.lost++; return }
+    ag.y = ny
+  } else {
+    ag.fall = 0
+  }
+
   if (ag.fuse > 0) return
 
   var cx = Math.floor(ag.x)
@@ -2815,6 +2861,10 @@ function hazardIsAhead(w, ag, reach) {
 }
 
 function stepCamp(w, ag) {
+  // Shot out from under. It comes down, and picks a new position from wherever
+  // it lands rather than hanging in the air where the deck used to be.
+  if (unsupported(w, ag)) { beginUncontrolledFall(w, ag); return }
+
   if (ag.cool > 0) return
   var spec = specOf(ag)
   var fx = Math.floor(ag.x)
@@ -3046,7 +3096,7 @@ function specialAtEdge(w, ag, nx, depth, far) {
 function specialEscape(w, ag) {
   var fx = Math.floor(ag.x)
   var fy = Math.floor(ag.y)
-  var floor = Math.floor((fy + 1) / CORR_GAP)
+  var floor = Math.floor((fy + 1) / (w.corrGap || CORR_GAP))
   if (exitBelow(w, ag) && solid(w, fx, fy + 1)
       && at(w, fx, fy + 1) !== STEEL && !ag.escapeFloors[floor]) {
     ag.escapeFloors[floor] = true
@@ -3433,7 +3483,7 @@ function countPass(w, ag) {
   // same bucket repeatedly while doing useful work; condemning it here turns
   // the rescue itself into a bomb and leaves everyone behind in its crater.
   if (ag.state !== "walk") return
-  var key = Math.floor(ag.x / LOOP_BUCKET) + "@" + Math.floor((ag.y + 1) / CORR_GAP)
+  var key = Math.floor(ag.x / LOOP_BUCKET) + "@" + Math.floor((ag.y + 1) / (w.corrGap || CORR_GAP))
   if (key === ag.bucket) return
   ag.bucket = key
   ag.passes[key] = (ag.passes[key] || 0) + 1
