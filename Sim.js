@@ -90,7 +90,10 @@ var SKILL_LABELS = {
   builder: "Build", basher: "Bash", miner: "Mine", digger: "Dig"
 }
 
-var BIOMES = ["Cavern", "Ruins", "Frost", "Foundry"]
+// Seven, cycling with the level number. Each one retints the earth, sky and
+// portal, furnishes its corridors with its own scenery, and draws from its own
+// set of dangers — a snake belongs in the jungle and nowhere else.
+var BIOMES = ["Cavern", "Ruins", "Frost", "Foundry", "Jungle", "Ice Cave", "Spaceship"]
 
 // ---------------------------------------------------------------------------
 // Personalities
@@ -1029,7 +1032,13 @@ var SPECIALS = [
 
   // Steps through the wall rather than removing it, which leaves the level
   // exactly as it found it and gets nobody else anywhere.
-  { id: "wraith",    name: "Hal Lucination",     act: "phase",  cool: 110, robe: "#8e8ea8", hair: "#e8e8f4" }
+  { id: "wraith",    name: "Hal Lucination",     act: "phase",  cool: 110, robe: "#8e8ea8", hair: "#e8e8f4" },
+
+  // The two that can do something about the level's danger. Everybody else
+  // treats a danger as weather — you learn it, you time it, you live with it.
+  // These two shoot it.
+  { id: "gridsearch",name: "Grid Search",    act: "spray",  cool: 70,  robe: "#4a5d23", hair: "#b03a2e" },
+  { id: "beamsearch",name: "Beam Search",    act: "camp",   cool: 120, robe: "#37474f", hair: "#8fd0e8" }
 ]
 
 function specialSpec(id) {
@@ -1211,6 +1220,37 @@ function specialCut(w, ag, act, dry) {
           setCell(w, fx + d * i, fy + j, ROCK); moved = true
         }
 
+  } else if (act === "spray") {
+    // Fires at everything. A wide burst — the full height of the corridor and a
+    // good way down it — and then the rounds that got through keep going.
+    //
+    // The danger is checked AFTER the terrain is cut, along a line from the
+    // muzzle: the burst opens the tunnel and the same burst goes down it. The
+    // first version tested a fixed box before cutting, which never reached,
+    // because a danger is placed just past an obstacle and the obstacle is
+    // exactly what Grid Search is standing in front of.
+    var hit = false
+    for (i = 1; i <= 10; i++)
+      for (j = -AGENT_H - 2; j <= 1; j++)
+        if (dry ? workable(w, fx + d * i, fy + j) : clearCell(w, fx + d * i, fy + j)) {
+          if (dry) return true
+          hit = true
+        }
+
+    var hz = w.hazard
+    if (hz && !hz.wrecked) {
+      var hm = hazardMid(hz)
+      var ahead = (hm.x - fx) * d
+      if (ahead > 0 && ahead <= 20 && Math.abs(hm.y - fy) <= CORR_H) {
+        if (dry) return true
+        if (lineClear(w, fx, fy - 2, Math.round(hm.x), Math.round(hm.y))) {
+          wreckHazard(w)
+          hit = true
+        }
+      }
+    }
+    moved = hit
+
   } else if (act === "phase") {
     // Steps through instead of removing. It gets itself past and leaves the
     // level exactly as it found it, which helps precisely nobody else.
@@ -1290,8 +1330,44 @@ var HAZARDS = [
 
   // field: always live. Narrow, because there is no moment when it isn't.
   { id: "brazier",  name: "brazier",      mech: "field", mount: "floor",   reach: 0, charge: 0, fire: 1, rest: 0, w: 2, h: 4 },
-  { id: "fence",    name: "electric fence", mech: "field", mount: "floor", reach: 0, charge: 0, fire: 1, rest: 0, w: 2, h: 5 }
+  { id: "fence",    name: "electric fence", mech: "field", mount: "floor", reach: 0, charge: 0, fire: 1, rest: 0, w: 2, h: 5 },
+
+  // Biome-only. `only` keeps a thing where it belongs — a snake in a foundry
+  // is a snake in the wrong story — and `not` keeps open flame out of the ice.
+  { id: "snake",    name: "snake",        mech: "watch", mount: "floor",   reach: 9,  charge: 20, fire: 16, rest: 60, w: 4, h: 3, only: ["Jungle"] },
+  { id: "spores",   name: "spore bloom",  mech: "cycle", mount: "ceiling", reach: 0,  charge: 30, fire: 28, rest: 60, w: 6, h: 6, only: ["Jungle"] },
+  { id: "icicle",   name: "icicle fall",  mech: "cycle", mount: "ceiling", reach: 0,  charge: 32, fire: 16, rest: 70, w: 5, h: 6, only: ["Ice Cave"] },
+  { id: "frostjet", name: "frost jet",    mech: "watch", mount: "wall",    reach: 12, charge: 22, fire: 20, rest: 64, w: 4, h: 4, only: ["Ice Cave"] },
+  { id: "airlock",  name: "airlock",      mech: "cycle", mount: "floor",   reach: 0,  charge: 34, fire: 24, rest: 66, w: 6, h: 6, only: ["Spaceship"] },
+  { id: "servo",    name: "servo arm",    mech: "watch", mount: "ceiling", reach: 14, charge: 18, fire: 18, rest: 62, w: 4, h: 5, only: ["Spaceship"] }
 ]
+
+// Open flame and steam have no business in an ice cave, and the industrial
+// machinery reads wrong in a jungle.
+var HAZARD_NOT = {
+  brazier: ["Ice Cave"],
+  flame: ["Ice Cave"],
+  pyro: ["Ice Cave"],
+  geyser: ["Ice Cave", "Spaceship"],
+  grinder: ["Jungle"],
+  piston: ["Jungle"],
+  crusher: ["Jungle"],
+  tesla: ["Jungle"],
+  fence: ["Jungle"]
+}
+
+// Which of them may turn up on this level.
+function hazardsFor(biome) {
+  var out = []
+  for (var i = 0; i < HAZARDS.length; i++) {
+    var spec = HAZARDS[i]
+    if (spec.only && spec.only.indexOf(biome) < 0) continue
+    var banned = HAZARD_NOT[spec.id]
+    if (banned && banned.indexOf(biome) >= 0) continue
+    out.push(spec)
+  }
+  return out
+}
 
 function hazardSpec(id) {
   for (var i = 0; i < HAZARDS.length; i++) if (HAZARDS[i].id === id) return HAZARDS[i]
@@ -1309,7 +1385,7 @@ function hazardSpec(id) {
 // to seal is a level you cannot finish.
 function placeHazard(w, rng, corridors, ci) {
   var c = corridors[ci]
-  var spec = pick(rng, HAZARDS)
+  var spec = pick(rng, hazardsFor(w.biome))
 
   // On the route, between where the colony arrives and where it hands off.
   //
@@ -1376,7 +1452,8 @@ function placeHazard(w, rng, corridors, ci) {
     t: 0,
     fired: 0,
     lineTo: -1,
-    lineY: 0
+    lineY: 0,
+    wrecked: false
   }
 
   // The zone that is lethal while it is firing. Anchored to whatever it hangs
@@ -1474,9 +1551,25 @@ function sniperTarget(w, h) {
   return null
 }
 
+// Shot to pieces. It stays on the board as wreckage — the colony has to be
+// able to see that the thing which was killing them is now scrap — but it never
+// fires again and never turns anybody around.
+function wreckHazard(w) {
+  var h = w.hazard
+  if (!h || h.wrecked) return false
+  h.wrecked = true
+  h.phase = "rest"
+  h.lineTo = -1
+  addDust(w, (h.zx0 + h.zx1) / 2, (h.zy0 + h.zy1) / 2, 26)
+  w.lastEvent = "wrecked"
+  return true
+}
+
+function hazardMid(h) { return { x: (h.zx0 + h.zx1) / 2, y: (h.zy0 + h.zy1) / 2 } }
+
 function stepHazard(w) {
   var h = w.hazard
-  if (!h) return
+  if (!h || h.wrecked) return
   var spec = hazardSpec(h.kind)
   h.t++
 
@@ -1589,7 +1682,7 @@ function hazardStrike(w, h) {
 // up or firing is a reason to be elsewhere; resting is not.
 function hazardAhead(w, ag, nx) {
   var h = w.hazard
-  if (!h || !w.hazardKnown) return false
+  if (!h || h.wrecked || !w.hazardKnown) return false
   if (h.phase !== "charge" && h.phase !== "fire") return false
   var ax = Math.floor(nx)
   var footY = Math.floor(ag.y)
@@ -2115,6 +2208,9 @@ function spawn(w) {
     jvy: 0,
     ceilX: 0,
     ceilTo: 0,
+    shotTo: 0,        // where a camped sniper's last shot went, for the tracer
+    shotY: 0,
+    shotFor: 0,
     escapeFloors: {},  // a special may cut one rescue shaft per corridor
     escapeTunnels: {}, // and one body-height rescue tunnel per corridor
     rescueCool: 0,     // do not reconsider the same escape every simulation tick
@@ -2505,8 +2601,94 @@ var TRICK_WINDUP = 14
 // toolbar — take() would refuse it anyway — so this is the entire decision.
 // Four of them just do an ordinary skill with no meter on it; the rest go to
 // the trick state and cut a shape out of whatever is there.
+// The sniper's whole game. It picks a spot, stays there for the rest of the
+// level, and works at range: the danger first if it can see one, and otherwise
+// a few cells taken out of whatever is in front of everybody else.
+//
+// It does not go home, and it is not pretending it might. That is the trade —
+// unlimited range and the only reliable answer to a danger, in exchange for the
+// one agent on the board that was never going to be counted.
+// Can it see the level's danger from where it is standing?
+function sightsHazard(w, ag) {
+  var h = w.hazard
+  if (!h || h.wrecked) return false
+  var fy = Math.floor(ag.y)
+  var hm = hazardMid(h)
+  if (Math.abs(hm.y - fy) > CORR_H + 2) return false
+  return lineClear(w, Math.floor(ag.x), fy - 2, Math.round(hm.x), Math.round(hm.y))
+}
+
+// Is the danger in front of it, within range?
+function hazardIsAhead(w, ag, reach) {
+  var h = w.hazard
+  if (!h || h.wrecked) return false
+  var ahead = (hazardMid(h).x - ag.x) * ag.dir
+  return ahead > 0 && ahead <= reach
+}
+
+function stepCamp(w, ag) {
+  if (ag.cool > 0) return
+  var spec = specOf(ag)
+  var fx = Math.floor(ag.x)
+  var fy = Math.floor(ag.y)
+
+  // The danger, at any distance, provided the line is clear.
+  var h = w.hazard
+  if (h && !h.wrecked) {
+    var hm = hazardMid(h)
+    if (Math.abs(hm.y - fy) <= CORR_H + 2 &&
+        lineClear(w, fx, fy - 2, Math.round(hm.x), Math.round(hm.y))) {
+      ag.dir = hm.x >= ag.x ? 1 : -1
+      ag.shotTo = hm.x
+      ag.shotY = hm.y
+      ag.shotFor = 12
+      wreckHazard(w)
+      ag.cool = spec.cool
+      return
+    }
+  }
+
+  // Otherwise it shoots the first thing in the way, at whatever range that
+  // turns out to be, and takes a couple of cells out of it.
+  //
+  // It must NOT require a clear line to what it is shooting: it camps because
+  // it met a wall, so there is a wall directly in front of it, and demanding an
+  // unobstructed line meant it could never fire at anything ever — not the
+  // blocks, and not the danger behind them either. Shooting the near face is
+  // the point, and it is also what eventually opens the line to something
+  // further off.
+  for (var r = 2; r <= 34; r++) {
+    var tx = fx + ag.dir * r
+    if (at(w, tx, fy - 2) === STEEL) break
+    if (!workable(w, tx, fy - 2) && !workable(w, tx, fy - 1)) continue
+    var cut = false
+    for (var j = -AGENT_H + 1; j <= 0; j++)
+      if (clearCell(w, tx, fy + j)) cut = true
+    if (cut) {
+      w.terrainVersion++
+      addDust(w, tx, fy - 2, 6)
+      ag.shotTo = tx
+      ag.shotY = fy - 2
+      ag.shotFor = 8
+      ag.cool = spec.cool
+      return
+    }
+  }
+
+  // Nothing in that direction worth a bullet. Face the other way and wait.
+  ag.dir = -ag.dir
+  ag.cool = Math.round(spec.cool / 2)
+}
+
 function specialAtWall(w, ag) {
   var spec = specOf(ag)
+
+  // Digs in where it stands and stays there.
+  if (spec.act === "camp") {
+    ag.state = "camp"
+    ag.cool = 0
+    return
+  }
 
   // Cooling down. It turns at the wall like anybody else and comes back to it,
   // which is the entire point of the cooldown: the move is something you wait
@@ -3082,7 +3264,7 @@ function condemn(w, ag) {
   // It costs a bomber from the level's budget like everything else. When that
   // budget is empty the agent goes on pacing, and PATIENCE handles it with a
   // shovel instead.
-  if (ag.state === "bomb" || ag.state === "block" || ag.state === "saved") return
+  if (ag.state === "bomb" || ag.state === "block" || ag.state === "camp" || ag.state === "saved") return
 
   // A special gets the shovel before it gets written off. Pacing trips the
   // bucket count in about two hundred ticks, where the forced escape does not
@@ -3152,6 +3334,24 @@ function step(w) {
     // doing is working: clear both counters and let it get on with it.
     w.acting = ag
     if (ag.cool > 0) ag.cool--
+    if (ag.shotFor > 0) ag.shotFor--
+
+    // A sniper takes a position it can see something from. Camping at the first
+    // wall it happened to meet put it on a different floor from the danger on
+    // nearly every level, where it could never see the one thing it is for.
+    if (ag.special && ag.state === "walk" && sightsHazard(w, ag)) {
+      var sact = specOf(ag).act
+      if (sact === "camp") {
+        ag.state = "camp"
+        ag.cool = 0
+      } else if (sact === "spray" && ag.cool <= 0 && hazardIsAhead(w, ag, 20)) {
+        // It opens up the moment it has the thing in view. Waiting for a wall
+        // meant it fired once or twice a level, always at the map edge, and
+        // never once at the danger — which is half of what it is for.
+        ag.state = "trick"
+        ag.timer = 0
+      }
+    }
     if (ag.rescueCool > 0) ag.rescueCool--
 
     // Stuck inside one cell. Not "getting nowhere" in the goalDist sense — the
@@ -3224,6 +3424,7 @@ function step(w) {
       case "trick": stepTrick(w, ag); break
       case "ceil":  stepCeiling(w, ag); break
       case "jump":  stepJump(w, ag); break
+      case "camp":  stepCamp(w, ag); break
     }
 
     w.acting = null
@@ -3241,7 +3442,10 @@ function step(w) {
     }
 
     active++
-    if (ag.state === "block") blockers++
+    // A camped sniper counts with the blockers here: it is standing somewhere
+    // on purpose and it is never coming home either. Without this the level
+    // waits for it and every Beam Search level runs to the nuke.
+    if (ag.state === "block" || ag.state === "camp") blockers++
     if (ag.state !== "walk" || ag.idle < 300) moving++
   }
 
@@ -3252,7 +3456,7 @@ function step(w) {
   if (active > 0 && active === blockers) {
     for (var b = 0; b < w.agents.length; b++) {
       var B2 = w.agents[b]
-      if (B2.state === "block") {
+      if (B2.state === "block" || B2.state === "camp") {
         B2.state = "bomb"
         B2.fuse = BOMB_FUSE
       }

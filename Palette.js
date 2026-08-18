@@ -67,14 +67,28 @@ function hex(s) {
   return { r: ((n >> 16) & 255) / 255, g: ((n >> 8) & 255) / 255, b: (n & 255) / 255 }
 }
 
-// Which theme tone each biome pulls toward. Four biomes cycling with the level
+// Pull a colour part of the way toward a fixed hue. The four original biomes
+// are made purely of theme colours, which is right for them, but a jungle has
+// to be green and an ice cave has to be blue whatever the theme happens to be.
+// Mixing rather than replacing keeps the theme in the room: a green jungle
+// under gruvbox and a green jungle under tokyo-night are still different greens.
+function toward(c, hue, t) { return mix(c, hue, t) }
+
+var JUNGLE = { r: 0.24, g: 0.52, b: 0.20 }
+var GLACIER = { r: 0.55, g: 0.78, b: 0.92 }
+var HULL = { r: 0.46, g: 0.52, b: 0.60 }
+
+// Which tone each biome pulls toward. Seven of them cycling with the level
 // number is what stops a long watch looking like one level over and over.
 function biomeTint(theme, level) {
-  switch ((level - 1) % 4) {
-    case 0: return theme.accent                  // Cavern
-    case 1: return theme.urgent                  // Ruins
-    case 2: return lighter(theme.accent, 1.7)    // Frost
-    default: return theme.muted                  // Foundry
+  switch ((level - 1) % 7) {
+    case 0: return theme.accent                              // Cavern
+    case 1: return theme.urgent                              // Ruins
+    case 2: return lighter(theme.accent, 1.7)                // Frost
+    case 3: return theme.muted                               // Foundry
+    case 4: return toward(theme.accent, JUNGLE, 0.72)        // Jungle
+    case 5: return toward(lighter(theme.accent, 1.4), GLACIER, 0.66)  // Ice Cave
+    default: return toward(theme.muted, HULL, 0.6)           // Spaceship
   }
 }
 

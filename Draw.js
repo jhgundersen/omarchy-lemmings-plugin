@@ -152,8 +152,9 @@ function drawDecor(ctx, w, pal) {
     // frost and a length of pipe in the foundry — same silhouette, and the
     // palette plus a detail or two does the rest.
     var ruins = w.biome === "Ruins"
-    var frost = w.biome === "Frost"
-    var foundry = w.biome === "Foundry"
+    var frost = w.biome === "Frost" || w.biome === "Ice Cave"
+    var foundry = w.biome === "Foundry" || w.biome === "Spaceship"
+    var jungle = w.biome === "Jungle"
 
     if (d.kind === "spire") {
       var h = 3 + d.size * 3
@@ -170,6 +171,13 @@ function drawDecor(ctx, w, pal) {
         ctx.fillRect(px + 3, py + C - h, 2, 2)
         ctx.fillStyle = pal.decorLit
         ctx.fillRect(px, py + C - h, 3, 1)
+      } else if (jungle) {
+        // A trunk with a canopy on top, which is the one silhouette that says
+        // jungle without needing colour to do the work.
+        ctx.fillRect(px + 2, py + C - h, 2, h)
+        ctx.fillStyle = pal.decorLit
+        ctx.fillRect(px - 1, py + C - h - 2, 8, 3)
+        ctx.fillRect(px + 1, py + C - h - 4, 4, 2)
       } else {
         // A cone, drawn as courses that narrow toward the tip.
         for (var r = 0; r < h; r++) {
@@ -413,6 +421,30 @@ var SPECIAL_FACTS = {
     "is load-bearing in every sense.",
     "solves the gap by disagreeing that there is one."
   ],
+  gridsearch: [
+    "does not search. It covers.",
+    "tried every option at once and one of them worked.",
+    "considers precision a form of hesitation.",
+    "has never left a wall standing to think about it.",
+    "solved it exhaustively. Very exhaustively.",
+    "does not tune hyperparameters. It removes them.",
+    "brute force is a strategy if you commit.",
+    "is the only one here the machinery is afraid of.",
+    "was asked to narrow it down. It declined.",
+    "clears the whole space and calls that convergence."
+  ],
+  beamsearch: [
+    "keeps only the most promising candidate. Then shoots it.",
+    "picked a spot and has not moved since.",
+    "prunes at range.",
+    "does not explore. It waits for the branch to come to it.",
+    "has line of sight and infinite patience.",
+    "is not going home and has made peace with that.",
+    "the danger was a candidate. It is not any more.",
+    "evaluates from cover.",
+    "one shot, then a long think about the next one.",
+    "sets up, sights, and lets the level come to it."
+  ],
   wraith: [
     "walked through the wall and reported it as solved.",
     "sees a corridor. There is no corridor.",
@@ -582,6 +614,20 @@ function drawHazard(ctx, w, pal) {
   // moment it becomes lethal impossible to see coming.
   var show = live || (winding && Math.floor(t / 4) % 2 === 0)
   var hot = live ? pal.fireHot : pal.warn
+
+  // Shot to pieces. It stays on the board, because the colony has to be able to
+  // see that the thing which was killing them is now scrap, but it does nothing
+  // and it is drawn as nothing: a slumped, unlit heap in the material of the
+  // earth rather than the machinery colour.
+  if (h.wrecked) {
+    ctx.fillStyle = pal.rigDark
+    var wy = h.mount === "ceiling" ? y0 : y1 - 5
+    ctx.fillRect(x0 + 1, wy, wide - 2, 5)
+    ctx.fillStyle = pal.dirtShade
+    for (var wk = 0; wk < wide; wk += 3)
+      ctx.fillRect(x0 + wk, wy + 3 + ((wk >> 1) % 2), 2, 2)
+    return
+  }
 
   switch (h.kind) {
 
@@ -905,6 +951,97 @@ function drawHazard(ctx, w, pal) {
     }
     break
 
+  // --- jungle -------------------------------------------------------------
+  case "snake":
+    // Coiled on the floor, and it rears when it is about to strike.
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0, y1 - 3, wide, 3)                 // the coil
+    ctx.fillRect(x0 + 2, y1 - 5, wide - 6, 2)
+    var rear = live ? 10 : (winding ? 6 : 3)
+    ctx.fillStyle = show ? hot : pal.rig
+    ctx.fillRect(cx - 1, y1 - 5 - rear, 2, rear)      // the raised neck
+    ctx.fillRect(cx - 2, y1 - 7 - rear, 4, 3)         // head
+    if (live) {
+      ctx.fillStyle = pal.fireHot
+      ctx.fillRect(cx + 2, y1 - 6 - rear, 4, 1)       // strike
+    }
+    break
+
+  case "spores":
+    // A pod that splits, and a drift of spores under it.
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(cx - 4, y0, 8, 4)
+    ctx.fillStyle = show ? hot : pal.rig
+    ctx.fillRect(cx - 5, y0 + 4, 10, 2)
+    if (show) {
+      ctx.fillStyle = hot
+      for (var sp2 = 0; sp2 < 14; sp2++) {
+        var sy3 = y0 + 6 + ((t + sp2 * 9) % Math.max(1, tall - 6))
+        var sx3 = x0 + ((sp2 * 5 + Math.floor(t / 6)) % Math.max(1, wide))
+        ctx.fillRect(sx3, sy3, live ? 2 : 1, live ? 2 : 1)
+      }
+    }
+    break
+
+  // --- ice cave -----------------------------------------------------------
+  case "icicle":
+    // Hanging, until it isn't.
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0, y0, wide, 2)
+    var drop2 = live ? tall - 10 : (winding ? 2 : 0)
+    ctx.fillStyle = show ? hot : pal.rig
+    for (var ic = 0; ic < 3; ic++) {
+      var icx = x0 + 2 + ic * Math.max(3, Math.round((wide - 4) / 3))
+      hzTri(ctx, icx, y0 + 2 + drop2, 2, 8, 1)
+    }
+    break
+
+  case "frostjet":
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0, y0 + 1, 4, tall - 2)             // the nozzle housing
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0 + 4, y0 + 3, 3, 3)
+    ctx.fillStyle = pal.warn
+    ctx.fillRect(x0 + 1, y0 + 2, 1, tall - 4)
+    if (show) {
+      // A cone of vapour, thickening as it goes.
+      ctx.fillStyle = hot
+      for (var fj = 0; fj < (live ? wide : 6); fj++) {
+        var fh = Math.round(1 + fj * (live ? 0.55 : 0.2))
+        ctx.fillRect(x0 + 7 + fj, y0 + 4 - fh / 2, 1, fh + 1)
+      }
+    }
+    break
+
+  // --- spaceship ----------------------------------------------------------
+  case "airlock":
+    // Floor plates that part, and everything above them goes.
+    var gap2 = live ? Math.round(wide / 2) - 2 : (winding ? 2 : 0)
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x0, y1 - 4, Math.max(0, wide / 2 - gap2), 4)
+    ctx.fillRect(x0 + wide / 2 + gap2, y1 - 4, Math.max(0, wide / 2 - gap2), 4)
+    ctx.fillStyle = show ? hot : pal.warn
+    ctx.fillRect(x0 + 1, y1 - 5, wide - 2, 1)
+    if (live) {
+      ctx.fillStyle = pal.fire
+      ctx.globalAlpha = 0.5
+      ctx.fillRect(x0 + wide / 2 - gap2, y0, gap2 * 2, tall - 4)
+      ctx.globalAlpha = 1
+    }
+    break
+
+  case "servo":
+    // An arm on a rail that swings down and sweeps.
+    var swing2 = live ? 1 : (winding ? 0.5 : 0)
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0, y0, wide, 3)
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(cx - 2, y0 + 3, 4, Math.round(4 + swing2 * (tall - 8)))
+    ctx.fillStyle = show ? hot : pal.warn
+    var armY = y0 + 3 + Math.round(4 + swing2 * (tall - 8))
+    ctx.fillRect(cx - Math.round(wide / 2 * swing2) - 1, armY, Math.round(wide * swing2) + 2, 2)
+    break
+
   default:
     ctx.fillStyle = pal.rig
     ctx.fillRect(x0, y0, wide, 4)
@@ -1017,6 +1154,15 @@ function drawAgent(ctx, w, pal, ag, opts) {
       case "quarry":                            // a whole room's worth
         ctx.fillRect(dir > 0 ? tx : tx - Math.round(26 * reach), oy - 12, Math.round(26 * reach), 28)
         break
+      case "spray":                             // a wall of tracer, full height
+        for (var si = 0; si < 7; si++) {
+          var sy4 = oy - 4 + si * 3
+          var sl = Math.round((10 + si % 3 * 6) * reach)
+          ctx.fillRect(dir > 0 ? tx : tx - sl, sy4, sl, 2)
+        }
+        ctx.fillStyle = pal.fireHot
+        hzTri(ctx, tx + dir * 2, mid, 3, 5, dir > 0 ? 1 : -1)
+        break
       case "slab":                              // laid out rather than taken out
         ctx.fillRect(dir > 0 ? tx : tx - Math.round(24 * reach), oy + SPRITE_PX - 2, Math.round(24 * reach), 5)
         break
@@ -1024,11 +1170,30 @@ function drawAgent(ctx, w, pal, ag, opts) {
     ctx.globalAlpha = 1
   }
 
+  // The camped sniper's shot: a thin line from the muzzle to whatever it hit,
+  // fading over about a third of a second. It is the only way to tell that
+  // something happening at the far end of the corridor was done by the agent
+  // sitting perfectly still at this one.
+  if (st === "camp" && ag.shotFor > 0 && ag.special) {
+    var csp = w.specialSpec
+    ctx.globalAlpha = Math.min(1, ag.shotFor / 6)
+    ctx.fillStyle = csp ? csp.hair : pal.fireHot
+    var sx0 = ox + (dir > 0 ? SPRITE_W : 0)
+    var sy0 = oy + 9
+    var ex0 = ag.shotTo * C
+    var ey0 = ag.shotY * C
+    var steps2 = Math.max(1, Math.round(Math.abs(ex0 - sx0) / 3))
+    for (var q2 = 0; q2 <= steps2; q2++)
+      ctx.fillRect(Math.round(sx0 + (ex0 - sx0) * q2 / steps2),
+                   Math.round(sy0 + (ey0 - sy0) * q2 / steps2), 2, 1)
+    ctx.globalAlpha = 1
+  }
+
   // Upside down: the whole sprite is mirrored vertically, so the one that
   // walks on ceilings reads as hanging rather than as floating.
   spriteFlip = (st === "ceil")
 
-  var bodyDrop = st === "dig" ? 2 : 0
+  var bodyDrop = (st === "dig" || st === "camp") ? 2 : 0
 
   // --- hair + head -------------------------------------------------------
   ctx.fillStyle = hair
@@ -1141,5 +1306,6 @@ function actionLabel(st) {
   if (st === "jump") return "hop"
   if (st === "ceil") return "ceiling"
   if (st === "trick") return "!"
+  if (st === "camp") return "camped"
   return ""
 }

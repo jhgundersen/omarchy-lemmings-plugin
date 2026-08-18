@@ -157,10 +157,21 @@ Give it the move *and* the toolbar and it solves the level on its own.
 | **Context Window** | Needed one cell of room and opens two hundred |
 | **Guard Rails** | The only one that adds: a slab laid straight out |
 | **Hal Lucination** | Steps through the wall, reports it solved, helps nobody |
+| **Grid Search** | Fires at everything. A burst the full height of the corridor, and the rounds that get through keep going |
+| **Beam Search** | Picks a firing position and stays there for the rest of the level, working at range |
 
 You know it by its colour — every other agent is the same green and blue on
 purpose — with a pip on its shoulder, its name over its head with labels on, and
 a card up in the sky saying who is down there and one line about them.
+
+Those last two are the only things on the board that can do anything about a
+danger. Everybody else treats one as weather — you learn it, you time it, you
+live with it. Grid Search wrecks it if it is anywhere in the burst, which is
+why it opens fire the moment it has one in view rather than waiting for a wall.
+Beam Search takes up a position it can *see* the danger from and shoots it at
+any distance, provided the line is clear; failing that it takes a couple of
+cells out of whatever is in everybody's way, at whatever range that turns out
+to be. It doesn't go home, and it isn't pretending it might.
 
 None of them commits to a move that cannot work: a block too big to shift is
 walked away from rather than kicked and missed. And every one keeps a shovel for
@@ -208,19 +219,23 @@ crumbled scatter along every boundary so no two layers meet on a clean line.
 All of it is free, because those three materials are one material to everything
 that makes a decision.
 
-Four biomes cycle with the level number — **Cavern**, **Ruins**, **Frost**,
-**Foundry** — each pulling the earth, sky and portal toward a different tone of
-the active Omarchy theme, and each furnishing its corridors with its own
-scenery: stalagmites and grass, fallen columns, ice needles, pipes and sparks.
-Change your theme and the board changes with it. The agents are the one
+Seven biomes cycle with the level number — **Cavern**, **Ruins**, **Frost**,
+**Foundry**, **Jungle**, **Ice Cave** and **Spaceship** — each pulling the
+earth, sky and portal toward a different tone of the active Omarchy theme, and
+each furnishing its corridors with its own scenery: stalagmites and grass,
+fallen columns, ice needles, pipes and sparks, trees with canopies. The first
+four are mixed purely out of theme colours; a jungle has to be green and an ice
+cave has to be blue whatever your theme is, so those pull part of the way
+toward a fixed hue and keep the rest. Change your theme and the board changes
+with it. The agents are the one
 deliberately un-themed thing on it: green hair, blue robe, orange umbrella.
 
 ### Dangers
 
 About half of levels have one, and never more than one — a hanging machine gun,
 a sniper with a laser sight, plates that bring spikes up under you, a sweeping
-beam, a crusher, a steam vent, an electric fence. Twenty-one of them, built out
-of five mechanisms:
+beam, a crusher, a steam vent, an electric fence. Twenty-seven of them, built
+out of five mechanisms:
 
 | | |
 | --- | --- |
@@ -230,6 +245,12 @@ of five mechanisms:
 | **plate** | Armed by being stood on, and goes off a moment later |
 | **cycle** | Never triggers and never stops — just keeps its own time |
 | **field** | Always live, and the only kind with no safe moment at all |
+
+Six of them belong to one biome and turn up nowhere else: a **snake** and a
+**spore bloom** in the jungle, an **icicle fall** and a **frost jet** in the ice
+cave, an **airlock** and a **servo arm** on the spaceship. A few of the others
+are kept out of where they'd read wrong — no open flame or steam in an ice cave,
+no industrial machinery in a jungle.
 
 Everything but `field` rests between firings for long enough to walk through,
 and everything winds up first, visibly, for long enough to read. Both are what
