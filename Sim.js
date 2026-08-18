@@ -1344,72 +1344,72 @@ var SPECIALS = [
 
   // Works like a basher, except it happens all at once: a tunnel the height of
   // an agent, punched through in a single shot.
-  { id: "buckshot",  name: "Max Tokens",   act: "blast",  cool: 150, robe: "#b83232", hair: "#e8d24a" },
+  { id: "buckshot",  name: "Max Tokens",   act: "blast",  height: "recoil", cool: 150, robe: "#b83232", hair: "#e8d24a" },
 
   // Does not destroy the wall. Moves it. The block ahead is picked up and put
   // down four cells further on, which can open a way through, seal one, or
   // shunt a lump of the level into a hole — and the colony has to deal with
   // wherever it ended up.
-  { id: "roundhouse",name: "Vector Van Damme", act: "kick",   cool: 130, robe: "#d1621f", hair: "#3a2a18" },
+  { id: "roundhouse",name: "Vector Van Damme", act: "kick",   height: "cyclone", cool: 130, robe: "#d1621f", hair: "#3a2a18" },
 
   // Goes up the wall, onto the ceiling, and keeps walking upside down until the
   // roof runs out from under it.
-  { id: "spider",    name: "Web Crawler",     act: "ceiling",cool: 90,  robe: "#8f2bbf", hair: "#e04a8a" },
+  { id: "spider",    name: "Web Crawler",     act: "ceiling",height: "web", cool: 90,  robe: "#8f2bbf", hair: "#e04a8a" },
 
   // Topples the column rather than deleting it: what was a wall lies down and
   // becomes a floor to walk out on.
-  { id: "lumberjack",name: "Random Forrest", act: "topple", cool: 170, robe: "#2f6b3a", hair: "#8a4b22" },
+  { id: "lumberjack",name: "Random Forrest", act: "topple", height: "logchute", cool: 170, robe: "#2f6b3a", hair: "#8a4b22" },
 
-  { id: "pyro",      name: "Sim Anneal",       act: "melt",   cool: 160, robe: "#c4341c", hair: "#f0a03c" },
-  { id: "sapper",    name: "Prompt Injection",     act: "sap",    cool: 200, robe: "#6b6b28", hair: "#c8c8b0" },
-  { id: "piledriver",name: "Gradient Descent", act: "stomp",  cool: 140, robe: "#4a4f59", hair: "#d8dde5" },
-  { id: "quarryman", name: "Context Window",  act: "quarry", cool: 220, robe: "#a8843c", hair: "#5a4426" },
+  { id: "pyro",      name: "Sim Anneal",       act: "melt",   height: "balloon", cool: 160, robe: "#c4341c", hair: "#f0a03c" },
+  { id: "sapper",    name: "Prompt Injection",     act: "sap",    height: "promptchute", cool: 200, robe: "#6b6b28", hair: "#c8c8b0" },
+  { id: "piledriver",name: "Gradient Descent", act: "stomp",  height: "piledrive", cool: 140, robe: "#4a4f59", hair: "#d8dde5" },
+  { id: "quarryman", name: "Context Window",  act: "quarry", height: "helicopter", cool: 220, robe: "#a8843c", hair: "#5a4426" },
 
   // The only one that adds instead of taking away.
-  { id: "glazier",   name: "Guard Rails",    act: "slab",   cool: 120, robe: "#4a9ec4", hair: "#dff2ff" },
+  { id: "glazier",   name: "Guard Rails",    act: "slab",   height: "glasswing", cool: 120, robe: "#4a9ec4", hair: "#dff2ff" },
 
   // Steps through the wall rather than removing it, which leaves the level
   // exactly as it found it and gets nobody else anywhere.
-  { id: "wraith",    name: "Hal Lucination",     act: "phase",  cool: 110, robe: "#8e8ea8", hair: "#e8e8f4" },
+  { id: "wraith",    name: "Hal Lucination",     act: "phase",  height: "ghost", cool: 110, robe: "#8e8ea8", hair: "#e8e8f4" },
 
   // The two that can do something about the level's danger. Everybody else
   // treats a danger as weather — you learn it, you time it, you live with it.
   // These two shoot it.
-  { id: "gridsearch",name: "RAMbo Search",   act: "spray",  cool: 70,  robe: "#4a5d23", hair: "#b03a2e" },
-  { id: "beamsearch",name: "Beam Search",    act: "camp",   cool: 120, robe: "#37474f", hair: "#8fd0e8" }
+  { id: "gridsearch",name: "RAMbo Search",   act: "spray",  height: "gunwing", cool: 70,  robe: "#4a5d23", hair: "#b03a2e" },
+  { id: "beamsearch",name: "Beam Search",    act: "camp",   height: "tractor", cool: 120, robe: "#37474f", hair: "#8fd0e8" }
 
   // Finishes whatever shape the level appears to have started, then keeps
   // going because stopping at the requested boundary would require judgment.
-  ,{ id: "autocomplete", name: "Auto Complete", act: "complete", cool: 125, robe: "#176b87", hair: "#7de3ff" }
+  ,{ id: "autocomplete", name: "Auto Complete", act: "complete", height: "steps", cool: 125, robe: "#176b87", hair: "#7de3ff" }
 
   // Takes nearby agents through an obstacle as one linked conclusion. Whether
   // any of them agreed to the premise is outside the context window.
-  ,{ id: "chainthought", name: "Chain of Thought", act: "chain", cool: 165, robe: "#713f98", hair: "#dfb7ff" }
+  ,{ id: "chainthought", name: "Chain of Thought", act: "chain", height: "chain", cool: 165, robe: "#713f98", hair: "#dfb7ff" }
 
   // Renders several possible futures, discards the embarrassing ones, and
   // commits to the first candidate that has somewhere solid to stand.
-  ,{ id: "specdecoder", name: "Speculative Decoder", act: "speculate", cool: 115, robe: "#146c5c", hair: "#74f0cf" }
+  ,{ id: "specdecoder", name: "Speculative Decoder", act: "speculate", height: "jetpack", cool: 115, robe: "#146c5c", hair: "#74f0cf" }
 
   // Every solution produces a cheaper copy of the model. The copies inherit
   // the confidence and progressively less of the sprite.
-  ,{ id: "collapse", name: "Model Collapse", act: "collapse", cool: 190, robe: "#7a3154", hair: "#f19ac2" }
+  ,{ id: "collapse", name: "Model Collapse", act: "collapse", height: "cushion", cool: 190, robe: "#7a3154", hair: "#f19ac2" }
 
   // Stops a crowd, then grudgingly returns one token at a time. It is the only
   // special whose signature move is making everybody else do less.
-  ,{ id: "ratelimit", name: "Rate Limiter", act: "limit", cool: 145, robe: "#315b8a", hair: "#f0c75e" }
+  ,{ id: "ratelimit", name: "Rate Limiter", act: "limit", height: "elevator", cool: 145, robe: "#315b8a", hair: "#f0c75e" }
 
   // Leaves the wall exactly where it is and makes it free. Everything else on
   // this roster solves a wall for itself; a ladder is still there twenty
   // seconds later for whoever arrives next, and it climbs walls too tall for
   // anybody to have climbed at all. The only special whose work outlives it.
-  ,{ id: "ladder", name: "Stack Overflow", act: "stack", cool: 150, robe: "#b5651d", hair: "#ffe9a8" }
+  ,{ id: "ladder", name: "Stack Overflow", act: "stack", height: "extender", cool: 150, robe: "#b5651d", hair: "#ffe9a8" }
 
   // Answers a danger by walking into it. Everybody else treats a live hazard
   // as a wall and turns round; this one raises a plate and keeps going, and
   // whoever is in its lee comes through with it. The only defensive move on
   // the board, and the only one that is worth more to the queue behind it than
   // to the agent doing it.
-  ,{ id: "bulwark", name: "Ada Blocker", act: "shield", cool: 150, robe: "#7b8794", hair: "#ffd23f" }
+  ,{ id: "bulwark", name: "Ada Blocker", act: "shield", height: "shieldglider", cool: 150, robe: "#7b8794", hair: "#ffd23f" }
 ]
 
 function specialSpec(id) {
@@ -2713,6 +2713,12 @@ function edgeAhead(w, ag, nx) {
   var depth = dropDepth(w, ax, footY)
   var far = landingAhead(w, ag.x, footY, ag.dir)
 
+  // The top of a ladder is approached from the wall it rests on, facing out
+  // over its drop. It is a route for everybody in both directions, so take it
+  // before personality, special moves or the usual judgement about the fall.
+  var ladder = ladderDownAt(w, Math.floor(ag.x), ag.dir, footY)
+  if (ladder) { startLadderDown(ag, ladder); return }
+
   // Nothing down there at all. This case has to come first: an umbrella is no
   // help over a shaft with no floor, and checking the floater branch ahead of
   // it is exactly how a floater ends up drifting serenely out of the world.
@@ -2888,6 +2894,18 @@ function beginUncontrolledFall(w, ag) {
 
 function startClimb(w, ag) {
   ag.state = "climb"
+  ag.climbDown = false
+  ag.timer = 0
+}
+
+function startLadderDown(ag, ladder) {
+  ag.state = "climb"
+  ag.climbDown = true
+  ag.dir = ladder.side
+  ag.x = ladder.x - ladder.side + 0.5
+  // Get the feet just below the top surface so ladderAt can identify the face
+  // on the first descending tick without a visible jump.
+  ag.y = ladder.top + CLIMB_SPEED
   ag.timer = 0
 }
 
@@ -2975,6 +2993,14 @@ function spawn(w) {
     ceilX: 0,
     ceilTo: 0,
     ropeY: 0,
+    heightMode: "",
+    heightTick: 0,
+    heightTicks: 0,
+    heightFromX: 0,
+    heightFromY: 0,
+    heightToX: 0,
+    heightToY: 0,
+    heightUp: false,
     specialX: 0,
     specialY: 0,
     modelGen: 0,
@@ -3147,11 +3173,34 @@ function stepFall(w, ag) {
 function stepClimb(w, ag) {
   var wallX = Math.floor(ag.x) + ag.dir
   var footY = Math.floor(ag.y)
+  var ladder = ag.climbDown
+    ? ladderRideAt(w, wallX, ag.dir, footY)
+    : ladderAt(w, wallX, ag.dir, footY)
+
+  if (ag.climbDown) {
+    // If somebody removes the supporting wall, stepLadders will take the
+    // ladder down too. Let go rather than descending an object that is no
+    // longer there.
+    if (!ladder) { ag.climbDown = false; beginUncontrolledFall(w, ag); return }
+    ag.y += CLIMB_SPEED
+    ag.anim++
+    if (ag.y >= ladder.bottom) {
+      ag.y = ladder.bottom
+      ag.state = "walk"
+      ag.climbDown = false
+      ag.dir = -ladder.side
+      ag.turns = 0
+    }
+    return
+  }
 
   // Head into a ceiling: nothing above to climb onto, so let go. Counts as a
   // failed attempt — an agent that keeps trying the same wall should end up
-  // concluding the way on is somewhere else.
-  if (solid(w, Math.floor(ag.x), footY - AGENT_H)) {
+  // concluding the way on is somewhere else. A ladder is the exception: its
+  // whole promise is a route up this face, including through an overhang on
+  // the approach side. The top still needs headroom before the agent can haul
+  // over, so this only permits the climb itself through the obstruction.
+  if (!ladder && solid(w, Math.floor(ag.x), footY - AGENT_H)) {
     ag.dir = -ag.dir
     ag.turns++
     beginUncontrolledFall(w, ag)
@@ -3333,6 +3382,22 @@ function ladderAt(w, x, side, footY) {
   for (var i = 0; i < w.ladders.length; i++) {
     var l = w.ladders[i]
     if (l.x === x && l.side === side && footY <= l.bottom && footY > l.top) return l
+  }
+  return null
+}
+
+function ladderRideAt(w, x, side, footY) {
+  for (var i = 0; i < w.ladders.length; i++) {
+    var l = w.ladders[i]
+    if (l.x === x && l.side === side && footY >= l.top && footY <= l.bottom) return l
+  }
+  return null
+}
+
+function ladderDownAt(w, x, dir, footY) {
+  for (var i = 0; i < w.ladders.length; i++) {
+    var l = w.ladders[i]
+    if (l.x === x && dir === -l.side && footY === l.top) return l
   }
   return null
 }
@@ -3927,12 +3992,191 @@ function stepCeiling(w, ag) {
   ag.anim++
 }
 
-// And at a drop. The passives do most of the work here: one of them is immune
-// to landing, one always has the umbrella, and the builders lay their own way
-// across. Anything else takes a survivable drop and turns back from a lethal
-// one, exactly like everybody else.
+// A precise landing at the far side of a gap. landingAhead() deliberately
+// returns only a distance because builders do not care about the row; flying
+// specials do, or they would finish their move embedded in the ledge.
+function specialHeightLanding(w, ag, far) {
+  if (far < 2) return null
+  var x = Math.floor(ag.x + ag.dir * far)
+  var footY = Math.floor(ag.y)
+  for (var dy = -1; dy <= 3; dy++)
+    if (solid(w, x, footY + dy + 1) && !solid(w, x, footY + dy)
+        && headroom(w, x, footY + dy)) return { x: x + 0.5, y: footY + dy }
+  return null
+}
+
+// Find a safe spot on the floor below, offset according to the machine. A
+// lethal drop used to send nineteen different props down the same plumb line;
+// this is what lets a glider actually glide, a recoil kick backwards and the
+// helicopter go somewhere before it lands. Work back toward the guaranteed
+// vertical landing if the preferred patch is obstructed.
+function specialDropLanding(w, ag, nx, depth, mode) {
+  var drift = {
+    recoil: -3, cyclone: 4, web: 0, logchute: 3, balloon: -4,
+    promptchute: 2, piledrive: 0, helicopter: 7, glasswing: 5,
+    ghost: -3, gunwing: 4, tractor: 1, steps: 3, chain: 5,
+    jetpack: 7, cushion: 2, elevator: 0, extender: 0, shieldglider: 5
+  }[mode] || 0
+  var footY = Math.floor(ag.y) + depth
+  var baseX = Math.floor(nx)
+  var sign = drift < 0 ? -ag.dir : ag.dir
+  for (var n = Math.abs(drift); n >= 0; n--) {
+    var x = baseX + sign * n
+    if (x <= 1 || x >= COLS - 2) continue
+    if (solid(w, x, footY + 1) && !solid(w, x, footY) && headroom(w, x, footY))
+      return { x: x + 0.5, y: footY }
+  }
+  return { x: nx, y: footY }
+}
+
+// Every special has its own answer to a lethal height. These are personal,
+// temporary pieces of theatre rather than toolbar skills: none leave a generic
+// umbrella behind, and only Stack Overflow's ordinary wall move makes a route
+// the rest of the colony can reuse.
+function startSpecialHeight(w, ag, nx, depth, far) {
+  var spec = specOf(ag)
+  var landing = specialHeightLanding(w, ag, far)
+  if (depth === Infinity && !landing) return false
+
+  var cross = ["recoil", "cyclone", "logchute", "helicopter", "glasswing",
+    "ghost", "gunwing", "tractor", "steps", "chain", "jetpack", "shieldglider"]
+  var target = landing && cross.indexOf(spec.height) >= 0 ? landing : null
+  if (!target) {
+    if (depth === Infinity) return false
+    target = specialDropLanding(w, ag, nx, depth, spec.height)
+  }
+
+  ag.state = "height"
+  ag.heightMode = spec.height
+  ag.heightFromX = ag.x
+  ag.heightFromY = ag.y
+  ag.heightToX = target.x
+  ag.heightToY = target.y
+  ag.heightUp = false
+  ag.heightTick = 0
+  var dx = Math.abs(target.x - ag.x)
+  var dy = Math.abs(target.y - ag.y)
+  ag.heightTicks = Math.max(24, Math.ceil(Math.max(dx / 0.24, dy / 0.25)))
+  // Model Collapse spends the opening beat visibly assembling the stunt pad.
+  if (spec.height === "cushion") ag.heightTicks += 18
+  if (spec.height === "helicopter") ag.heightTicks += 60
+  if (spec.height === "balloon") ag.heightTicks += 25
+  ag.x = nx
+  ag.timer = 0
+  w.lastEvent = spec.height === "cushion" ? "copies, cushion!" : spec.height
+  return true
+}
+
+// Powered, buoyant and anchored devices work both ways. Find a real ledge
+// above before launching: this keeps a jetpack from solving solid ceilings and
+// gives chains and tractor beams something visible to attach to. Hal Lucination
+// alone may phase through the obstruction on the way there.
+function startSpecialAscent(w, ag) {
+  var mode = specOf(ag).height
+  var upward = ["recoil", "balloon", "helicopter", "ghost", "gunwing",
+    "tractor", "chain", "jetpack"]
+  if (upward.indexOf(mode) < 0) return false
+
+  var fx = Math.floor(ag.x)
+  var fy = Math.floor(ag.y)
+  var target = null
+  for (var rise = 4; rise <= 30 && !target; rise++) {
+    var ty = fy - rise
+    for (var side = 0; side <= 12 && !target; side++) {
+      for (var turn = 0; turn < 2; turn++) {
+        if (side === 0 && turn === 1) continue
+        var sign = turn === 0 ? ag.dir : -ag.dir
+        var tx = fx + side * sign
+        if (!solid(w, tx, ty + 1) || solid(w, tx, ty) || !headroom(w, tx, ty)) continue
+        if (mode !== "ghost" && !lineClear(w, fx, fy - 2, tx, ty - 2)) continue
+        target = { x: tx + 0.5, y: ty }
+        break
+      }
+    }
+  }
+  if (!target) return false
+
+  ag.state = "height"
+  ag.heightMode = mode
+  ag.heightFromX = ag.x
+  ag.heightFromY = ag.y
+  ag.heightToX = target.x
+  ag.heightToY = target.y
+  ag.heightUp = true
+  ag.heightTick = 0
+  ag.heightTicks = Math.max(30, Math.ceil(Math.max(
+    Math.abs(target.x - ag.x) / 0.22, Math.abs(target.y - ag.y) / 0.22)))
+  if (mode === "helicopter") ag.heightTicks += 45
+  if (mode === "balloon") ag.heightTicks += 20
+  ag.dir = target.x >= ag.x ? 1 : -1
+  ag.timer = 0
+  ag.still = 0
+  w.lastEvent = mode + " up"
+  return true
+}
+
+function stepSpecialHeight(w, ag) {
+  ag.heightTick++
+  var p = Math.min(1, ag.heightTick / ag.heightTicks)
+  var moveP = p
+
+  // The copy pile is in place before the stunt begins; hold for that readable
+  // beat, then jump. The other machines leave immediately.
+  if (ag.heightMode === "cushion") moveP = Math.max(0, (p - 0.18) / 0.82)
+
+  ag.x = ag.heightFromX + (ag.heightToX - ag.heightFromX) * moveP
+  ag.y = ag.heightFromY + (ag.heightToY - ag.heightFromY) * moveP
+
+  // Even when the only safe landing is directly below, these devices travel
+  // through the air instead of wearing nineteen costumes for the same fall.
+  var sway = {
+    recoil: -2, cyclone: 3, web: 0.4, logchute: 2, balloon: -3,
+    promptchute: 1.5, piledrive: 0, helicopter: 5, glasswing: 3,
+    ghost: -2, gunwing: 2.5, tractor: 0.8, steps: 1.5, chain: 3,
+    jetpack: 4, cushion: 1.5, elevator: 0, extender: 0, shieldglider: 3
+  }[ag.heightMode] || 0
+  ag.x += ag.dir * sway * Math.sin(moveP * Math.PI)
+  if (ag.heightMode === "helicopter") {
+    // A lazy circuit rather than a rotor-assisted fall: out, back across its
+    // own line, then around to the selected landing.
+    ag.x += ag.dir * 2.5 * Math.sin(moveP * Math.PI * 2)
+    ag.y -= 2 * Math.sin(moveP * Math.PI) + 1.2 * Math.sin(moveP * Math.PI * 2)
+  }
+
+  // Crossing devices describe different silhouettes even though all arrive at
+  // the same deterministic safe landing. The rotor and jet climb, the chain
+  // swings, and the rest make shallower arcs.
+  var horizontal = Math.abs(ag.heightToX - ag.heightFromX) > 1
+  if (horizontal && moveP > 0 && moveP < 1) {
+    var lift = (ag.heightMode === "helicopter" || ag.heightMode === "jetpack") ? 4
+      : (ag.heightMode === "chain" ? 3 : 1.5)
+    ag.y -= Math.sin(moveP * Math.PI) * lift
+  }
+  ag.anim++
+  if (p < 1) return
+
+  ag.x = ag.heightToX
+  ag.y = ag.heightToY
+  ag.state = "walk"
+  ag.turns = 0
+  ag.heightTick = 0
+  if (ag.heightMode === "piledrive") addDust(w, ag.x, ag.y, 18)
+  if (ag.heightMode === "cushion") addDust(w, ag.x, ag.y, 8)
+}
+
+// And at a drop. Every special owns a signature height move for a lethal one;
+// survivable steps still use the ordinary fall so the machines only come out
+// when they mean something.
 function specialAtEdge(w, ag, nx, depth, far) {
   var spec = specOf(ag)
+
+  // A crawler uses a real roof when there is one. Its fallback is still a web,
+  // cast back to the lip, so it shares the universal promise without borrowing
+  // anybody else's umbrella or machine.
+  if (depth > SAFE_FALL) {
+    if (spec.act === "ceiling" && rappelAtEdge(w, ag, nx, depth)) return
+    if (startSpecialHeight(w, ag, nx, depth, far)) return
+  }
 
   if (spec.act === "complete" && ag.cool <= 0 && far > 2) {
     var foot = Math.floor(ag.y) + 1
@@ -3969,8 +4213,6 @@ function specialAtEdge(w, ag, nx, depth, far) {
   // only just used its horizontal ceiling walk. Treating both movements as
   // one cooldown is what made level 55's crawler turn away from the central
   // drop and eventually dig itself through several floors instead.
-  if (spec.act === "ceiling" && rappelAtEdge(w, ag, nx, depth)) return
-
   // The crossing it is actually for. A gap with a roof over it is exactly what
   // walking upside down solves, and going over one is a great deal more useful
   // than turning round at it.
@@ -4015,6 +4257,7 @@ function specialEscape(w, ag) {
   var fy = Math.floor(ag.y)
   var floor = Math.floor((fy + 1) / (w.corrGap || CORR_GAP))
   if (specOf(ag).act === "ceiling" && startWebEscape(w, ag)) return
+  if (exitAbove(w, ag) && startSpecialAscent(w, ag)) return
   if (exitBelow(w, ag) && solid(w, fx, fy + 1)
       && at(w, fx, fy + 1) !== STEEL && !ag.escapeFloors[floor]) {
     ag.escapeFloors[floor] = true
@@ -5089,6 +5332,7 @@ function step(w) {
       case "trick": stepTrick(w, ag); break
       case "ceil":  stepCeiling(w, ag); break
       case "rappel": stepRappel(w, ag); break
+      case "height": stepSpecialHeight(w, ag); break
       case "webup": stepWebEscape(w, ag); break
       case "limited": stepLimited(w, ag); break
       case "stunned": stepStunned(w, ag); break

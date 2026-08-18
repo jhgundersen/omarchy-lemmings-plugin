@@ -1921,6 +1921,129 @@ function drawAgent(ctx, w, pal, ag, opts) {
     ctx.globalAlpha = 1
   }
 
+  // No special borrows the colony's umbrella. At a lethal height each carries
+  // a device with its own silhouette; the movement is deliberately readable
+  // at panel scale before the label has to explain it.
+  if (st === "height") {
+    var hm = ag.heightMode
+    var hp = ag.heightTicks ? ag.heightTick / ag.heightTicks : 0
+    var hc = w.specialSpec ? w.specialSpec.hair : pal.label
+    ctx.fillStyle = hc
+    switch (hm) {
+      case "jetpack":
+        ctx.fillStyle = "#303039"; ctx.fillRect(ox - dir * 2, oy + 7, 3, 8)
+        ctx.fillStyle = (ag.anim >> 1) % 2 ? "#ffe68a" : "#ff8a35"
+        ctx.fillRect(ox - dir * 2, oy + 15, 2, 4 + ((ag.anim >> 1) % 2)); break
+      case "helicopter":
+        // Context Window does not merely wear a rotor: it becomes the whole
+        // tiny aircraft, tail, cockpit and skids included.
+        ctx.fillStyle = robe
+        ctx.fillRect(ox - 3, oy + 4, 15, 8)                 // cabin
+        ctx.fillRect(ox - 11, oy + 6, 9, 3)                // tail boom
+        ctx.fillRect(ox - 13, oy + 2, 2, 9)                // tail rotor
+        ctx.fillStyle = "#91d7e8"
+        ctx.fillRect(ox + 5, oy + 5, 6, 4)                 // cockpit
+        ctx.fillStyle = hc
+        ctx.fillRect(ox + 3, oy - 2, 2, 7)                 // mast
+        ctx.fillRect(ox - 10 - ((ag.anim >> 1) % 2) * 3, oy - 3,
+                     28 + ((ag.anim >> 1) % 2) * 6, 2)     // main rotor
+        ctx.fillRect(ox - 1, oy + 13, 14, 1)               // skids
+        ctx.fillRect(ox + 1, oy + 11, 1, 3)
+        ctx.fillRect(ox + 10, oy + 11, 1, 3)
+        break
+      case "cushion": {
+        var py = Math.round((ag.heightToY + 1) * C) - 3
+        var px = Math.round(ag.heightToX * C)
+        // Three progressively cheaper, visibly squashed little agents make the
+        // stuntman's landing pad. Bodies alone looked like an unexplained pink
+        // mattress; the separate heads are what sell the awful solution.
+        var copyAlpha = [0.75, 0.55, 0.35]
+        var copyX = [px - 10, px - 3, px + 4]
+        var copyH = [3, 5, 3]
+        for (var cp = 0; cp < 3; cp++) {
+          ctx.globalAlpha = copyAlpha[cp]
+          ctx.fillStyle = robe
+          ctx.fillRect(copyX[cp], py - copyH[cp], 7, copyH[cp])
+          ctx.fillStyle = hair
+          ctx.fillRect(copyX[cp] + 2, py - copyH[cp] - 2, 3, 2)
+        }
+        ctx.globalAlpha = 1
+        break
+      }
+      case "web":
+      case "chain": {
+        var anchorX = Math.round((ag.heightUp ? ag.heightToX : ag.heightFromX) * C)
+        var anchorY = Math.round(((ag.heightUp ? ag.heightToY : ag.heightFromY) - 2) * C)
+        ctx.fillStyle = hm === "web" ? "#e8e8f4" : hc
+        var lineSteps = Math.max(1, Math.round(Math.abs(anchorY - (oy + 7)) / 3))
+        for (var ls = 0; ls <= lineSteps; ls++)
+          ctx.fillRect(Math.round(anchorX + (ox + 4 - anchorX) * ls / lineSteps),
+                       Math.round(anchorY + (oy + 7 - anchorY) * ls / lineSteps), 1, 2)
+        break
+      }
+      case "balloon":
+        ctx.fillRect(ox - 2, oy - 11, 12, 8)
+        ctx.fillStyle = robe; ctx.fillRect(ox, oy - 4, 1, 6); ctx.fillRect(ox + 7, oy - 4, 1, 6); break
+      case "promptchute":
+        ctx.fillRect(ox - 6, oy - 10, 20, 6)
+        ctx.fillStyle = pal.eye; ctx.font = "bold 6px monospace"; ctx.textAlign = "center"
+        ctx.fillText("LAND", ox + 4, oy - 5); break
+      case "elevator":
+        ctx.fillRect(ox - 4, oy + 16, 16, 2)
+        ctx.fillRect(ox - 4, oy - 4, 2, 22); ctx.fillRect(ox + 10, oy - 4, 2, 22)
+        for (var eb = -2; eb < 16; eb += 4) ctx.fillRect(ox - 5, oy + eb, 18, 1); break
+      case "extender":
+        ctx.fillRect(ox - 3, oy - 3, 2, 22); ctx.fillRect(ox + 9, oy - 3, 2, 22)
+        for (var er = 0; er < 22; er += 5) ctx.fillRect(ox - 3, oy + er, 14, 1); break
+      case "shieldglider":
+        ctx.fillRect(ox - 8, oy - 7, 24, 3)
+        ctx.fillRect(ox - 5, oy - 4, 18, 2); break
+      case "glasswing":
+        ctx.globalAlpha = 0.55
+        ctx.fillRect(ox - 10, oy + 2, 10, 8); ctx.fillRect(ox + 8, oy + 2, 10, 8)
+        ctx.globalAlpha = 1; break
+      case "tractor":
+        ctx.globalAlpha = 0.5
+        ctx.fillRect(ox - 7, oy - 9, 22, 2)
+        ctx.fillRect(ox - 4, oy - 7, 16, 22); ctx.globalAlpha = 1; break
+      case "steps":
+        for (var hs = 0; hs < 4; hs++) ctx.fillRect(ox - dir * hs * 5, oy + 18 - hs * 4, 7, 2)
+        break
+      case "logchute":
+        ctx.fillStyle = "#8a4b22"; ctx.fillRect(ox - 7, oy + 15, 22, 4)
+        ctx.fillStyle = "#c8843f"; ctx.fillRect(ox - 6, oy + 16, 20, 1); break
+      case "recoil":
+      case "gunwing":
+        ctx.fillRect(ox - dir * 8, oy + 8, 9, 3)
+        ctx.fillStyle = "#ffe68a"; ctx.fillRect(ox - dir * 11, oy + 8, 4, 3); break
+      case "cyclone":
+        ctx.globalAlpha = 0.35
+        ctx.fillRect(ox - 8, oy + 5, 24, 2); ctx.fillRect(ox - 4, oy + 12, 16, 2)
+        ctx.globalAlpha = 1; break
+      case "ghost":
+        ctx.globalAlpha = 0.28 + Math.sin(hp * Math.PI) * 0.35; break
+      case "piledrive":
+        ctx.fillRect(ox - 3, oy + 14, 14, 3); break
+    }
+  }
+
+  // Model Collapse commits to the stunt: one full salto between the ledge and
+  // its pile of cheaper selves. Keep the pad and the label upright; rotate the
+  // original agent alone around the middle of its sprite.
+  var heightBodySaved = st === "height" && (ag.heightMode === "cushion" || ag.heightMode === "helicopter")
+  if (heightBodySaved) {
+    ctx.save()
+    if (ag.heightMode === "cushion") {
+      var salto = ag.heightTicks ? Math.max(0, (ag.heightTick / ag.heightTicks - 0.18) / 0.82) : 0
+      ctx.translate(ox + SPRITE_W / 2, oy + SPRITE_PX / 2)
+      ctx.rotate(Math.min(1, salto) * Math.PI * 2)
+      ctx.translate(-ox - SPRITE_W / 2, -oy - SPRITE_PX / 2)
+    } else {
+      // The cabin drawn above replaces the ordinary body completely.
+      ctx.globalAlpha = 0
+    }
+  }
+
   // Upside down: the whole sprite is mirrored vertically, so the one that
   // walks on ceilings reads as hanging rather than as floating.
   spriteFlip = (st === "ceil")
@@ -1945,7 +2068,7 @@ function drawAgent(ctx, w, pal, ag, opts) {
     blit(ctx, ox, oy, dir, 5, 3 + (ag.anim >> 3) % 2, 2, 4)   // hand over hand
     blit(ctx, ox, oy, dir, 3, 13, 3, 3)
 
-  } else if (st === "fall") {
+  } else if (st === "fall" || st === "height") {
     blit(ctx, ox, oy, dir, 1, 7, 6, 6)
     blit(ctx, ox, oy, dir, 0, 4, 2, 4)
     blit(ctx, ox, oy, dir, 6, 4, 2, 4)
@@ -2027,6 +2150,8 @@ function drawAgent(ctx, w, pal, ag, opts) {
     blit(ctx, ox, oy, dir, 5, 8, 2, 3)
   }
 
+  if (heightBodySaved) ctx.restore()
+
   // --- optional label ----------------------------------------------------
   // What it's doing when it's doing something, and who it is the rest of the
   // time. The trait is the more interesting half: watching two agents reach
@@ -2063,6 +2188,7 @@ function actionLabel(st) {
   if (st === "jump") return "hop"
   if (st === "ceil") return "ceiling"
   if (st === "rappel") return "rappel"
+  if (st === "height") return "height move"
   if (st === "webup") return "web climb"
   if (st === "stunned") return "wounded"
   if (st === "limited") return "rate limited"
