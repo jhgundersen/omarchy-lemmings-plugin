@@ -54,6 +54,7 @@ var FALL_SPEED = 0.55
 var FLOAT_SPEED = 0.22
 var CLIMB_SPEED = 0.16
 var RAPPEL_SPEED = 0.18
+var WEB_ASCEND_SPEED = 0.24
 
 var MAX_STEP = 2         // cells of rise a walker takes in stride
 var SAFE_FALL = 14       // cells; beyond this an unprotected landing splats
@@ -3261,6 +3262,54 @@ function stepRappel(w, ag) {
   ag.anim++
 }
 
+// A crawler trapped below a usable ledge does not reach for the communal
+// shovel. It fires a web at the nearest clear landing above and reels itself
+// up the line. Searching by rise first favours the lip of the current hole
+// over an unrelated platform near the top of the board.
+function startWebEscape(w, ag) {
+  var fx = Math.floor(ag.x)
+  var fy = Math.floor(ag.y)
+  for (var rise = 4; rise <= 30; rise++) {
+    var ty = fy - rise
+    for (var side = 0; side <= 10; side++) {
+      for (var sign = -1; sign <= 1; sign += 2) {
+        if (side === 0 && sign > -1) continue
+        var tx = fx + side * sign
+        if (!solid(w, tx, ty + 1) || solid(w, tx, ty) || !headroom(w, tx, ty)) continue
+        if (!lineClear(w, fx, fy - 2, tx, ty - 2)) continue
+        ag.specialX = tx + 0.5
+        ag.specialY = ty
+        ag.dir = ag.specialX >= ag.x ? 1 : -1
+        ag.state = "webup"
+        ag.timer = 0
+        ag.cool = specOf(ag).cool
+        ag.still = 0
+        return true
+      }
+    }
+  }
+  return false
+}
+
+function stepWebEscape(w, ag) {
+  var dx = ag.specialX - ag.x
+  var dy = ag.specialY - ag.y
+  var dist = Math.sqrt(dx * dx + dy * dy)
+  if (dist <= WEB_ASCEND_SPEED) {
+    ag.x = ag.specialX
+    ag.y = ag.specialY
+    ag.state = "walk"
+    ag.timer = 0
+    ag.turns = 0
+    ag.idle = 0
+    return
+  }
+  ag.x += dx / dist * WEB_ASCEND_SPEED
+  ag.y += dy / dist * WEB_ASCEND_SPEED
+  ag.timer++
+  ag.anim++
+}
+
 // Cast a line from the lip of a drop to the roof directly above the open
 // column. This is separate from startCeiling(): rappelling is how the crawler
 // goes down, not another terrain-crossing trick, so an earlier roof walk must
@@ -3410,6 +3459,7 @@ function specialEscape(w, ag) {
   var fx = Math.floor(ag.x)
   var fy = Math.floor(ag.y)
   var floor = Math.floor((fy + 1) / (w.corrGap || CORR_GAP))
+  if (specOf(ag).act === "ceiling" && startWebEscape(w, ag)) return
   if (exitBelow(w, ag) && solid(w, fx, fy + 1)
       && at(w, fx, fy + 1) !== STEEL && !ag.escapeFloors[floor]) {
     ag.escapeFloors[floor] = true
@@ -4016,6 +4066,7 @@ function step(w) {
       case "trick": stepTrick(w, ag); break
       case "ceil":  stepCeiling(w, ag); break
       case "rappel": stepRappel(w, ag); break
+      case "webup": stepWebEscape(w, ag); break
       case "limited": stepLimited(w, ag); break
       case "jump":  stepJump(w, ag); break
       case "camp":  stepCamp(w, ag); break

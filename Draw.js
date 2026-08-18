@@ -1397,6 +1397,19 @@ function drawAgent(ctx, w, pal, ag, opts) {
     ctx.fillRect(ropeX, ropeTop, 1, Math.max(1, ropeBottom - ropeTop))
   }
 
+
+  if (st === "webup") {
+    ctx.fillStyle = ag.special ? hair : pal.umbrellaStem
+    var webAnchorX = Math.round(ag.specialX * C)
+    var webAnchorY = Math.round((ag.specialY + 1) * C)
+    var webHandX = Math.round(ag.x * C)
+    var webHandY = oy + 5
+    var webSteps = Math.max(1, Math.round(Math.max(Math.abs(webAnchorX - webHandX), Math.abs(webAnchorY - webHandY))))
+    for (var ws = 0; ws <= webSteps; ws++)
+      ctx.fillRect(Math.round(webHandX + (webAnchorX - webHandX) * ws / webSteps),
+                   Math.round(webHandY + (webAnchorY - webHandY) * ws / webSteps), 1, 1)
+  }
+
   // --- umbrella, drawn behind nothing and above everything --------------
   if (ag.floater && st === "fall" && ag.fall > 2) {
     ctx.fillStyle = pal.umbrella
@@ -1588,6 +1601,12 @@ function drawAgent(ctx, w, pal, ag, opts) {
     blit(ctx, ox, oy, dir, 1, 12, 3, 2)            // feet braced apart
     blit(ctx, ox, oy, dir, 5, 13, 3, 2)
 
+  } else if (st === "webup") {
+    blit(ctx, ox, oy, dir, 1, 7, 6, 6)
+    blit(ctx, ox, oy, dir, 3, 2, 2, 7)              // both hands on the web
+    blit(ctx, ox, oy, dir, 0, 12, 3, 2)             // legs trailing in the swing
+    blit(ctx, ox, oy, dir, 5, 14, 3, 2)
+
   } else if (st === "block") {
     blit(ctx, ox, oy, dir, 1, 7, 6, 6)
     blit(ctx, ox, oy, dir, -2, 8, 3, 2)
@@ -1674,6 +1693,7 @@ function actionLabel(st) {
   if (st === "jump") return "hop"
   if (st === "ceil") return "ceiling"
   if (st === "rappel") return "rappel"
+  if (st === "webup") return "web climb"
   if (st === "limited") return "rate limited"
   if (st === "trick") return "!"
   if (st === "camp") return "camped"
