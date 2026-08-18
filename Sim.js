@@ -436,7 +436,7 @@ function generate(level, attempt) {
     // and the obstacles along them aren't all at the same three positions.
     var hj = irand(rng, 0, 7)
     c.handoffX = c.dir > 0 ? c.x1 - 10 - hj : c.x0 + 10 + hj
-    carveCorridor(w, c)
+    carveCorridor(w, c, rng, w.biome)
   }
 
   // At most one danger, and only on about half of levels. It takes over that
@@ -704,6 +704,8 @@ function fillEarth(w, rng) {
     }
   }
 
+  biomeSkin(w, rng)
+
   // Grit along the boundaries. Every cell that sits directly under a different
   // material has a chance of taking that material instead, which frays the
   // seam between two layers into something granular. This is the cheapest line
@@ -736,37 +738,169 @@ function fillEarth(w, rng) {
 //
 // Draw.js checks the cell underneath is still solid before drawing each one,
 // so a corridor that gets dug out loses its furniture on the way.
-function placeDecor(w, rng, corridors) {
-  var floorKinds = ["spire", "clump", "tuft", "tuft"]
-  for (var i = 0; i < corridors.length; i++) {
-    var c = corridors[i]
-    for (var x = c.x0 + 2; x < c.x1 - 2; x++) {
-      // Standing on the floor, where there is floor and room above it.
-      if (solid(w, x, c.floorY) && !solid(w, x, c.floorY - 1) && rng() < 0.13) {
-        w.decor.push({
-          x: x, y: c.floorY - 1, kind: pick(rng, floorKinds),
-          size: irand(rng, 1, 3), seed: Math.floor(rng() * 1000)
-        })
-        x += irand(rng, 1, 4)   // never a continuous hedge of the stuff
-        continue
+// What the earth is made of, biome by biome. All of this is material only, and
+// the three workable materials are identical to everything that makes a
+// decision, so a spaceship hull and a jungle can be as different as they like
+// without moving a single agent.
+function biomeSkin(w, rng) {
+  var x, y
+
+  if (w.biome === "Spaceship") {
+    // Not geology at all: plating. A regular grid of panels with seams between
+    // them, which is the one pattern on this board that could not possibly have
+    // formed by itself.
+    var pw = 9, ph = 5
+    for (y = SKY; y < ROWS - 2; y++) {
+      for (x = 3; x < COLS - 3; x++) {
+        if (at(w, x, y) === STEEL) continue
+        var seam = (x % pw === 0) || (y % ph === 0)
+        var plate = (Math.floor(x / pw) + Math.floor(y / ph)) % 3 === 0
+        setCell(w, x, y, seam ? ORE : (plate ? DIRT : ROCK))
       }
-      // Hanging from the ceiling, which is what makes a corridor read as cut
-      // through rock rather than as a shelf with things on it.
-      var ceil = c.floorY - CORR_H - 1
-      if (solid(w, x, ceil) && !solid(w, x, ceil + 1) && rng() < 0.07) {
-        w.decor.push({
-          x: x, y: ceil + 1, kind: "hang",
-          size: irand(rng, 1, 2), seed: Math.floor(rng() * 1000)
-        })
-        x += irand(rng, 2, 5)
+    }
+    // A few panels missing entirely, exposing the frame underneath.
+    for (var b = 0; b < 10; b++) {
+      var bx = irand(rng, 5, COLS - 12), by = irand(rng, SKY + 3, ROWS - 8)
+      for (y = by; y < by + ph - 1; y++)
+        for (x = bx; x < bx + pw - 1; x++)
+          if (at(w, x, y) !== STEEL) setCell(w, x, y, DIRT)
+    }
+
+  } else if (w.biome === "Ice Cave") {
+    // One mass of ice rather than layers. Strata read as sedimentary rock,
+    // which is the opposite of what a glacier looks like.
+    for (y = SKY; y < ROWS - 2; y++)
+      for (x = 3; x < COLS - 3; x++)
+        if (at(w, x, y) !== STEEL) setCell(w, x, y, DIRT)
+
+    var cracks = irand(rng, 14, 22)
+    for (var cr = 0; cr < cracks; cr++) {
+      var cx2 = irand(rng, 5, COLS - 6), cy2 = irand(rng, SKY + 2, ROWS - 5)
+      var len2 = irand(rng, 6, 20)
+      var slope2 = rng() < 0.5 ? -1 : 1
+      for (var st2 = 0; st2 < len2; st2++) {
+        cy2 += rng() < 0.55 ? slope2 : 0
+        cx2 += rng() < 0.7 ? 1 : 0
+        if (cx2 >= COLS - 4 || cy2 < SKY + 1 || cy2 >= ROWS - 3) break
+        if (at(w, cx2, cy2) !== STEEL) setCell(w, cx2, cy2, ORE)
+      }
+    }
+    // Denser, brighter ice toward the bottom, where it has been compressed.
+    for (y = ROWS - 14; y < ROWS - 2; y++)
+      for (x = 3; x < COLS - 3; x++)
+        if (at(w, x, y) === DIRT && rng() < 0.35) setCell(w, x, y, ROCK)
+
+  } else if (w.biome === "Jungle") {
+    // Overgrown. Roots and moss running everywhere through the soil, in blobs
+    // and runners rather than bands — nothing here should look like it settled
+    // quietly over millennia.
+    for (var bl = 0; bl < 26; bl++) {
+      var mx = irand(rng, 5, COLS - 6), my = irand(rng, SKY + 1, ROWS - 5)
+      var mr = irand(rng, 2, 5)
+      for (var dy2 = -mr; dy2 <= mr; dy2++)
+        for (var dx2 = -mr; dx2 <= mr; dx2++) {
+          if (dx2 * dx2 + dy2 * dy2 > mr * mr) continue
+          if (at(w, mx + dx2, my + dy2) === STEEL) continue
+          setCell(w, mx + dx2, my + dy2, rng() < 0.6 ? ORE : DIRT)
+        }
+    }
+    // Runners: long thin roots that wander down through everything.
+    var roots = irand(rng, 8, 14)
+    for (var rt = 0; rt < roots; rt++) {
+      var rx = irand(rng, 5, COLS - 6), ry = SKY + irand(rng, 0, 4)
+      for (var rs = 0; rs < 30; rs++) {
+        ry += rng() < 0.8 ? 1 : 0
+        rx += rng() < 0.4 ? (rng() < 0.5 ? -1 : 1) : 0
+        if (rx < 4 || rx >= COLS - 4 || ry >= ROWS - 3) break
+        if (at(w, rx, ry) !== STEEL) setCell(w, rx, ry, ORE)
       }
     }
   }
 }
 
-function carveCorridor(w, c) {
+function placeDecor(w, rng, corridors) {
+  // How thickly furnished, and with what. A jungle is defined by there being
+  // too much of everything; an ice cave by the ceiling; a spaceship by regular
+  // fittings rather than growth. The original four keep the sparse scatter they
+  // were tuned with.
+  var floorRate = 0.13, ceilRate = 0.07, gap = 4
+  var floorKinds = ["spire", "clump", "tuft", "tuft"]
+
+  if (w.biome === "Jungle") {
+    floorRate = 0.34; ceilRate = 0.26; gap = 2
+    floorKinds = ["spire", "spire", "tuft", "tuft", "tuft", "clump"]
+  } else if (w.biome === "Ice Cave") {
+    floorRate = 0.20; ceilRate = 0.30; gap = 3
+    floorKinds = ["spire", "spire", "clump", "tuft"]
+  } else if (w.biome === "Spaceship") {
+    floorRate = 0.18; ceilRate = 0.16; gap = 5
+    floorKinds = ["spire", "clump", "clump", "tuft"]
+  }
+
+  for (var i = 0; i < corridors.length; i++) {
+    var c = corridors[i]
+    for (var x = c.x0 + 2; x < c.x1 - 2; x++) {
+      // Standing on the floor, where there is floor and room above it.
+      if (solid(w, x, c.floorY) && !solid(w, x, c.floorY - 1) && rng() < floorRate) {
+        w.decor.push({
+          x: x, y: c.floorY - 1, kind: pick(rng, floorKinds),
+          size: irand(rng, 1, 3), seed: Math.floor(rng() * 1000)
+        })
+        x += irand(rng, 1, gap)
+        continue
+      }
+      // Hanging from the ceiling, which is what makes a corridor read as cut
+      // through rock rather than as a shelf with things on it — and in a jungle
+      // or an ice cave it is most of the character.
+      var ceil = c.floorY - CORR_H - 1
+      if (solid(w, x, ceil) && !solid(w, x, ceil + 1) && rng() < ceilRate) {
+        w.decor.push({
+          x: x, y: ceil + 1, kind: "hang",
+          size: irand(rng, 1, w.biome === "Jungle" ? 3 : 2), seed: Math.floor(rng() * 1000)
+        })
+        x += irand(rng, 1, gap + 1)
+      }
+    }
+  }
+}
+
+function carveCorridor(w, c, rng, biome) {
   for (var x = c.x0; x <= c.x1; x++)
     for (var y = c.floorY - CORR_H; y < c.floorY; y++) clearCell(w, x, y)
+  if (rng) roughFloor(w, c, rng, biome)
+}
+
+// The floor of a corridor, per biome. A perfectly flat floor across a hundred
+// cells is the single thing that makes every level read as the same level, and
+// it is the right look for exactly one of the seven: a spaceship, where flat is
+// the point.
+//
+// Everything here moves the floor by at most MAX_STEP between adjacent columns
+// and never raises it more than a stride above the original level, so it is
+// walked over in stride and no route is affected. It cannot make a level harder;
+// it can only make it look like somewhere.
+function roughFloor(w, c, rng, biome) {
+  var amp, lumpy
+  if (biome === "Jungle") { amp = 2; lumpy = 0.55 }        // roots, hollows, undergrowth
+  else if (biome === "Ice Cave") { amp = 2; lumpy = 0.20 } // long smooth drifts
+  else return   // everything else keeps the floor it had
+
+  // Cavern was given a gentle version of this and measured as the worst biome
+  // on the board for it — it is also the one people see first, and the one the
+  // original four were tuned flat against. It stays flat.
+
+  var h = 0
+  var run = 0
+  for (var x = c.x0; x <= c.x1; x++) {
+    if (run-- <= 0) {
+      // A new target height, held for a stretch. Rerolling every column gives
+      // a comb rather than ground.
+      var step = rng() < lumpy ? (rng() < 0.5 ? -1 : 1) : 0
+      h = Math.max(0, Math.min(amp, h + step))
+      run = irand(rng, biome === "Ice Cave" ? 4 : 1, biome === "Ice Cave" ? 11 : 5)
+    }
+    for (var d = 0; d < h; d++) setCell(w, x, c.floorY - 1 - d, DIRT)
+  }
 }
 
 // Between the corridor's start and its handoff point sit one to three

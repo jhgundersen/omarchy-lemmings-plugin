@@ -190,10 +190,33 @@ function drawDecor(ctx, w, pal) {
 
     } else if (d.kind === "hang") {
       var hh = 2 + d.size * 3
-      ctx.fillStyle = frost ? pal.decorLit : pal.decorDim
-      for (var g = 0; g < hh; g++) {
-        var gw = Math.max(0, Math.round((hh - g) / 2.6))
-        ctx.fillRect(px + 2 - gw, py + g, gw * 2 + 1, 1)
+      if (jungle) {
+        // A vine: a wavering line with leaves off it, and long enough to hang
+        // into the corridor properly. Nothing else on the board is soft.
+        ctx.fillStyle = pal.decor
+        var vlen = hh + 6
+        for (var v = 0; v < vlen; v++) {
+          var wob = Math.round(Math.sin((v + d.seed) * 0.4) * 1.4)
+          ctx.fillRect(px + 2 + wob, py + v, 1, 1)
+          if (v > 2 && v % 4 === (d.seed % 3)) {
+            ctx.fillStyle = pal.decorLit
+            ctx.fillRect(px + 2 + wob + (v % 8 < 4 ? 1 : -2), py + v, 2, 1)
+            ctx.fillStyle = pal.decor
+          }
+        }
+      } else if (foundry) {
+        // A cable loop off the ceiling.
+        ctx.fillStyle = pal.decorDim
+        for (var cbl = 0; cbl <= 6; cbl++) {
+          var sag = Math.round(Math.sin(cbl / 6 * Math.PI) * (2 + d.size))
+          ctx.fillRect(px + cbl - 1, py + sag, 1, 1)
+        }
+      } else {
+        ctx.fillStyle = frost ? pal.decorLit : pal.decorDim
+        for (var g = 0; g < hh; g++) {
+          var gw = Math.max(0, Math.round((hh - g) / 2.6))
+          ctx.fillRect(px + 2 - gw, py + g, gw * 2 + 1, 1)
+        }
       }
 
     } else if (d.kind === "clump") {
@@ -953,17 +976,48 @@ function drawHazard(ctx, w, pal) {
 
   // --- jungle -------------------------------------------------------------
   case "snake":
-    // Coiled on the floor, and it rears when it is about to strike.
+    // An S of body along the floor with a wedge head on the end of it, rather
+    // than the vertical post the first version drew — which, with a bright tip
+    // and a muzzle flash, read as a mounted gun and not as an animal at all.
+    var sdir = h.zx0 % 2 === 0 ? 1 : -1
+    var bodyY = y1 - 3
     ctx.fillStyle = pal.rigDark
-    ctx.fillRect(x0, y1 - 3, wide, 3)                 // the coil
-    ctx.fillRect(x0 + 2, y1 - 5, wide - 6, 2)
-    var rear = live ? 10 : (winding ? 6 : 3)
+    for (var sb = 0; sb < wide; sb++) {
+      // Two shallow humps: a snake at rest is a curve, and a curve is what
+      // separates it from every straight-edged machine on this board.
+      var hump = Math.round(Math.sin(sb * 0.55) * 1.6)
+      ctx.fillRect(x0 + sb, bodyY - hump, 1, 3)
+    }
+    // Scales along the back, a shade lighter.
+    ctx.fillStyle = pal.rig
+    for (var sc = 0; sc < wide; sc += 2) {
+      var hump2 = Math.round(Math.sin(sc * 0.55) * 1.6)
+      ctx.fillRect(x0 + sc, bodyY - hump2, 1, 1)
+    }
+
+    // The head, at the end it is facing, raised a little when it is winding up
+    // and thrown forward when it strikes.
+    var hx = sdir > 0 ? x1 - 4 : x0
+    var rear2 = live ? 0 : (winding ? 4 : 2)
+    var hy = bodyY - rear2 - 2
+    if (winding || live) {
+      // The raised neck curving up out of the coil.
+      ctx.fillStyle = pal.rigDark
+      for (var nk = 0; nk <= rear2 + 2; nk++)
+        ctx.fillRect(hx + (sdir > 0 ? 0 : 3), bodyY - nk, 2, 1)
+    }
     ctx.fillStyle = show ? hot : pal.rig
-    ctx.fillRect(cx - 1, y1 - 5 - rear, 2, rear)      // the raised neck
-    ctx.fillRect(cx - 2, y1 - 7 - rear, 4, 3)         // head
+    ctx.fillRect(hx, hy, 4, 3)                        // wedge head
+    ctx.fillRect(hx + (sdir > 0 ? 4 : -1), hy + 1, 1, 2)
+    ctx.fillStyle = pal.eye
+    ctx.fillRect(hx + (sdir > 0 ? 3 : 0), hy + 1, 1, 1)   // eye
     if (live) {
+      // Struck: the head is thrown out, and the tongue with it.
       ctx.fillStyle = pal.fireHot
-      ctx.fillRect(cx + 2, y1 - 6 - rear, 4, 1)       // strike
+      ctx.fillRect(hx + (sdir > 0 ? 5 : -6), hy + 1, 6, 1)
+    } else if (winding) {
+      ctx.fillStyle = pal.warn
+      ctx.fillRect(hx + (sdir > 0 ? 5 : -3), hy + 1, 3, 1)  // flicking tongue
     }
     break
 

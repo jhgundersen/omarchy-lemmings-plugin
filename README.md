@@ -227,7 +227,21 @@ fallen columns, ice needles, pipes and sparks, trees with canopies. The first
 four are mixed purely out of theme colours; a jungle has to be green and an ice
 cave has to be blue whatever your theme is, so those pull part of the way
 toward a fixed hue and keep the rest. Change your theme and the board changes
-with it. The agents are the one
+with it.
+
+The three new ones are built differently as well as coloured differently, since
+a recolour on its own still reads as the same cave:
+
+| | |
+| --- | --- |
+| **Jungle** | Overgrown rather than layered — root runners and blobs of moss through the soil instead of strata, vines hanging into the corridors, trees, and an uneven floor that rises and falls under your feet |
+| **Ice Cave** | One mass rather than layers, because strata read as sedimentary rock and a glacier is the opposite of that. Cracks run through it, the bottom is compressed harder, and the ceilings are thick with icicles |
+| **Spaceship** | Not geology at all: a regular grid of hull panels with seams between them, the one pattern on the board that could not have formed by itself, with a few plates missing. Its floors stay machined flat, which is the point of it |
+
+The uneven floors never move by more than a stride between one column and the
+next, so they are walked over without anyone noticing and no route is affected.
+They cost about a point of levels cleared, which is the price of a jungle floor
+not being a ruler. The agents are the one
 deliberately un-themed thing on it: green hair, blue robe, orange umbrella.
 
 ### Dangers
