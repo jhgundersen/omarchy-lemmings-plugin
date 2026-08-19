@@ -48,6 +48,7 @@ var MINE_RADIUS = 6      // just wider than the carried bomb
 var SPRAY_BURST = 12
 var SPRAY_SHOT_TICKS = 2
 var SPRAY_SLOPES = [-0.16, 0.10, -0.06, 0.14, 0, -0.12, 0.06, -0.18, 0.12, -0.03, 0.17, -0.09]
+var GUNWING_SHOTS = 12    // rounds RAMbo puts into the floor on the way past
 var ENEMY_WALK_SPEED = 0.24
 var GUN_AIM = 8           // regular shooter: a short visible tell, about a quarter-second
 var SNIPER_AIM = 36       // the planted sniper keeps its deliberate long sight picture
@@ -58,6 +59,23 @@ var ENEMY_JET_SINK = 0.10
 // Longer limits delayed stuck runs without rescuing additional agents in sweeps.
 var LEVEL_LIMIT = 30 * 110
 var NUKE_STAGGER = 5     // ticks between arming one agent and the next
+var BLOCK_PATIENCE = 600 // ticks a blocker will hold having stopped nobody
+var BLOCK_MAX = 900      // and the longest it will hold whatever happens
+
+// Infection. The incubation is long on purpose: the whole point is that an
+// infected agent is indistinguishable from the rest of the colony for most of
+// it — same trait, same label, same decisions, and the followers still take
+// their cue from it. The tell arrives late and small.
+//
+// The length is what splits the event's two outcomes, and it was tuned for
+// that rather than for realism: at 300 ticks about two in five carriers turn
+// and the rest reach the door still carrying it. Longer and the event mostly
+// evaporates; shorter and it stops being a story and becomes a casualty.
+var INCUBATION = 300     // ~10s from the touch to the turn
+var INCUBATION_TELL = 90 // ticks of visible wrongness before it happens
+var XENO_CAP = 3         // agents that may turn on one level, ever
+var XENO_REACH = 1.3     // how close it has to get to pass it on
+var XENO_COOL = 120      // and how long before it can do so again
 
 
 var SKILL_ORDER = ["climber", "floater", "bomber", "blocker", "builder", "basher", "miner", "digger"]
@@ -66,42 +84,113 @@ var SKILL_LABELS = {
   builder: "Build", basher: "Bash", miner: "Mine", digger: "Dig"
 }
 
-var BIOMES = ["Cavern", "Ruins", "Frost", "Foundry", "Jungle", "Ice Cave", "Spaceship"]
+// Appended rather than inserted: the biome is picked by level number, so
+// putting a new one anywhere but the end would re-skin every level above it.
+// Palette.js derives the same index with the same rule and must be kept in
+// step — see the note over poolTint there.
+var BIOMES = ["Cavern", "Ruins", "Frost", "Foundry", "Jungle", "Ice Cave", "Spaceship", "Factory"]
 
 var TRAITS = {
-  steady:   { label: "steady",   turnLimit: 3, fallMargin: 0, bridgeAt: 8,  bashFirst: false, blockBias: 0, buildCap: 2, noFloat: false, standDown: 0, digBias: 0 },
-  brave:    { label: "brave",    turnLimit: 5, fallMargin: 0, bridgeAt: 15, bashFirst: true,  blockBias: -1, buildCap: 1, noFloat: false, standDown: 0, digBias: 0 },
-  cautious: { label: "cautious", turnLimit: 2, fallMargin: 3, bridgeAt: 3,  bashFirst: false, blockBias: 2, buildCap: 2, noFloat: false, standDown: 0, digBias: 0 },
-  curious:  { label: "curious",  turnLimit: 2, fallMargin: 1, bridgeAt: 9,  bashFirst: false, blockBias: 0, buildCap: 2, noFloat: false, standDown: 0, digBias: 220 },
-  stubborn: { label: "stubborn", turnLimit: 8, fallMargin: 0, bridgeAt: 9,  bashFirst: true,  blockBias: -1, buildCap: 2, noFloat: false, standDown: 0, digBias: -160 },
-  tinkerer: { label: "tinkerer", turnLimit: 3, fallMargin: 2, bridgeAt: 7,  bashFirst: false, blockBias: 1, buildCap: 2, noFloat: false, standDown: 0, digBias: 150, mineFirst: true },
+  steady:   { label: "steady",   turnLimit: 3, fallMargin: 0, bridgeAt: 8,  bashFirst: false, blockBias: 0, buildCap: 2, noFloat: false, standDown: 0, digBias: 0, pace: 1 },
+  brave:    { label: "brave",    turnLimit: 5, fallMargin: 0, bridgeAt: 15, bashFirst: true,  blockBias: -1, buildCap: 1, noFloat: false, standDown: 0, digBias: 0, pace: 1.08 },
+  cautious: { label: "cautious", turnLimit: 2, fallMargin: 3, bridgeAt: 3,  bashFirst: false, blockBias: 2, buildCap: 2, noFloat: false, standDown: 0, digBias: 0, pace: 0.9, wary: true },
+  curious:  { label: "curious",  turnLimit: 2, fallMargin: 1, bridgeAt: 9,  bashFirst: false, blockBias: 0, buildCap: 2, noFloat: false, standDown: 0, digBias: 220, pace: 0.94 },
+  stubborn: { label: "stubborn", turnLimit: 8, fallMargin: 0, bridgeAt: 9,  bashFirst: true,  blockBias: -1, buildCap: 2, noFloat: false, standDown: 0, digBias: -160, pace: 1.05 },
+  tinkerer: { label: "tinkerer", turnLimit: 3, fallMargin: 2, bridgeAt: 7,  bashFirst: false, blockBias: 1, buildCap: 2, noFloat: false, standDown: 0, digBias: 150, pace: 0.92, wary: true, mineFirst: true },
 
-  engineer: { label: "engineer", turnLimit: 3, fallMargin: 1, bridgeAt: 1,  bashFirst: false, blockBias: 0, buildCap: 5, noFloat: true,  standDown: 0, digBias: 0 },
+  engineer: { label: "engineer", turnLimit: 3, fallMargin: 1, bridgeAt: 1,  bashFirst: false, blockBias: 0, buildCap: 5, noFloat: true,  standDown: 0, digBias: 0, pace: 0.96 },
 
   // standDown has to come in UNDER turnLimit: considerEscape zeroes `turns`
   // the moment it hits the limit, so a stand-down count above it can never be
   // reached and the sentinel blocked no more often than anybody else.
-  sentinel: { label: "sentinel", turnLimit: 4, fallMargin: 1, bridgeAt: 7,  bashFirst: false, blockBias: 3, buildCap: 1, noFloat: false, standDown: 3, digBias: 0 },
+  sentinel: { label: "sentinel", turnLimit: 4, fallMargin: 1, bridgeAt: 7,  bashFirst: false, blockBias: 3, buildCap: 1, noFloat: false, standDown: 3, digBias: 0, pace: 1 },
 
-  burrower: { label: "burrower", turnLimit: 2, fallMargin: 1, bridgeAt: 11, bashFirst: false, blockBias: 0, buildCap: 1, noFloat: false, standDown: 0, digBias: 340 }
+  burrower: { label: "burrower", turnLimit: 2, fallMargin: 1, bridgeAt: 11, bashFirst: false, blockBias: 0, buildCap: 1, noFloat: false, standDown: 0, digBias: 340, pace: 0.9 },
+
+  // The three below are the ones that reason about something other than the
+  // ground in front of them, which is what `reserve`, `herd` and `wary` are
+  // for. A trait built only out of the numeric dials is a relabelling of a
+  // trait that already exists; these each needed a rule of their own.
+
+  // Will not spend the last of a skill while anybody behind it might still
+  // need it. Every other trait treats the toolbar as infinite until the moment
+  // it isn't, which is how a colony arrives at the last wall with nothing left.
+  hoarder:  { label: "hoarder",  turnLimit: 4, fallMargin: 1, bridgeAt: 10, bashFirst: false, blockBias: 1, buildCap: 1, noFloat: false, standDown: 0, digBias: 0, pace: 0.95, reserve: 3 },
+
+  // Lands facing whichever way the nearest of its own is already walking. The
+  // sim dropped its horizontal beacon on purpose (see exitFloor) because it
+  // overrode what an agent could see; this is the one that still wants one,
+  // and it asks a neighbour rather than the level.
+  follower: { label: "follower", turnLimit: 3, fallMargin: 1, bridgeAt: 8,  bashFirst: false, blockBias: 0, buildCap: 2, noFloat: false, standDown: 0, digBias: 0, pace: 1.02, herd: 14 },
+
+  // Sees a hazard's reach from outside it, like cautious, reaches for the
+  // umbrella four cells before anybody else does, bridges rather than drops,
+  // and never volunteers to stand in the way. The fast walk is the tell: it is
+  // the one that is always somewhere else already.
+  skittish: { label: "skittish", turnLimit: 2, fallMargin: 4, bridgeAt: 4,  bashFirst: false, blockBias: -2, buildCap: 2, noFloat: false, standDown: 0, digBias: 60, pace: 1.14, wary: true }
 }
 
-// Keep steady common so distinctive traits remain legible.
-var TRAIT_POOL = [
-  "steady", "steady", "steady", "steady", "steady",
-  "brave", "brave", "brave",
-  "cautious", "cautious", "cautious",
-  "curious", "curious",
-  "stubborn", "stubborn",
-  "tinkerer", "tinkerer",
-  "engineer", "engineer",
-  "sentinel",
-  "burrower"
+// Who turns up is a cast, not a uniform draw. A colony picks CAST_SIZE of the
+// distinctive traits and fills the rest of its ranks with the ordinary three,
+// so two or three agents share each oddity and it reads as character; fifteen
+// different oddities read as noise. It also means a new trait widens the range
+// of colonies you can meet instead of thinning every one of them — under the
+// old flat pool, every trait added made all the others rarer.
+var TRAIT_COMMON = ["steady", "steady", "steady", "brave", "cautious"]
+
+// Only traits that are worth building a colony around. brave and cautious are
+// deliberately absent: they are already in the common fill, so casting one
+// would spend a slot on a personality that was turning up anyway.
+var TRAIT_DISTINCT = [
+  "curious", "stubborn", "tinkerer", "engineer", "sentinel",
+  "burrower", "hoarder", "follower", "skittish"
 ]
 
-var TRAIT_ORDER = ["steady", "brave", "cautious", "curious", "stubborn", "tinkerer", "engineer", "sentinel", "burrower"]
+var CAST_SIZE = 3
+
+// Share of a colony drawn from the ordinary three. The rest is the cast.
+var COMMON_SHARE = 0.55
+
+var TRAIT_ORDER = [
+  "steady", "brave", "cautious", "curious", "stubborn", "tinkerer",
+  "engineer", "sentinel", "burrower", "hoarder", "follower", "skittish"
+]
+
+// Fisher-Yates on the world's own stream, so a pinned colonySeed still
+// reproduces the colony exactly.
+function shuffleWith(rng, list) {
+  for (var i = list.length - 1; i > 0; i--) {
+    var j = Math.floor(rng() * (i + 1))
+    var t = list[i]; list[i] = list[j]; list[j] = t
+  }
+  return list
+}
+
+// The whole colony's traits, decided up front and dealt out one per release.
+// Dealing from a bag rather than rolling per agent is what makes the cast a
+// promise: pick sentinel for this colony and sentinels actually turn up.
+function traitBag(w, n) {
+  var cast = shuffleWith(w.traitRng, TRAIT_DISTINCT.slice()).slice(0, CAST_SIZE)
+  var bag = []
+  var commons = Math.round(n * COMMON_SHARE)
+  for (var i = 0; i < commons && bag.length < n; i++)
+    bag.push(TRAIT_COMMON[Math.floor(w.traitRng() * TRAIT_COMMON.length) % TRAIT_COMMON.length])
+  for (var j = 0; bag.length < n; j++) bag.push(cast[j % cast.length])
+  return shuffleWith(w.traitRng, bag)
+}
 
 function traitOf(ag) { return TRAITS[ag.trait] || TRAITS.steady }
+
+// How fast this one walks. The only dial that is on show the whole time an
+// agent is on its feet rather than only at the moment it meets an obstacle,
+// which is what makes the rest of a personality readable: you can tell the
+// dawdler from the strider before either of them reaches the ledge they are
+// going to disagree about. It is not decoration — hazardExposure asks the
+// same question, so a quick walker really can take a crossing a slow one
+// correctly refuses.
+function walkStep(ag) {
+  return WALK_SPEED * (traitOf(ag).pace || 1) * (ag.chilledFor > 0 ? 0.48 : 1)
+}
 
 // Out of bounds reads as STEEL to the sides and below, EMPTY above. That way
 // every "can I walk/dig here" test gets a sane answer at the edges without
@@ -242,7 +331,19 @@ function corridorPlan(rng) {
 var K = {
   COLS: COLS, ROWS: ROWS, CELL: CELL, SKY: SKY,
   EMPTY: EMPTY, DIRT: DIRT, ROCK: ROCK, STEEL: STEEL, ORE: ORE,
-  AGENT_H: AGENT_H
+  AGENT_H: AGENT_H,
+  // Draw.js needs this one to know how much of an incubation is left to show.
+  INCUBATION_TELL: INCUBATION_TELL,
+  // RAMbo's burst pattern: twelve rounds, none going quite where the last one
+  // did. Draw.js drew the tracers from its own copy of these numbers, which
+  // is a duplicate that only stays correct by luck. Both of his moves fan by
+  // it now — the wall he lays into an obstacle and the fan he rides down on —
+  // because they are the same gun.
+  SPRAY_SLOPES: SPRAY_SLOPES,
+  // Rounds in RAMbo's flight. Draw.js paces the sweep by it and the recoil
+  // kicks below are paced by the same number, so the shove always lands on
+  // the frame the shot leaves the barrel.
+  GUNWING_SHOTS: GUNWING_SHOTS
 }
 
 // `attempt` remains for deterministic tools and compatibility; hosts pass zero.
@@ -315,7 +416,29 @@ function generate(level, attempt, colonySeed) {
     // replayed exactly: generate(level, attempt, w.colonySeed).
     colonySeed: colonySeed,
     traitRng: makeRng(colonySeed),
+    // Events draw from their own stream, off the same seed. Sharing traitRng
+    // did two things wrong: the cast and the event schedule came out of the
+    // same run of draws and so were correlated — the same mistake the whims
+    // used to make — and eventSite consuming mid-level shifted the whims of
+    // every agent still waiting at the hatch, so an event that fired changed
+    // the personality of agents it had not met yet.
+    eventRng: makeRng(colonySeed + 7919),
     traitCounts: {},
+
+    // Events: what may happen to this level while it is being played, and the
+    // modifiers a live one has switched on. See the block above stepEvents.
+    events: [],
+    eventLog: [],
+    eventMechs: {},
+    infections: 0,
+    carrierHome: false,
+    eventWarn: "",
+    eventWarnFor: 0,
+    eventFlash: 0,
+    eventDrift: 0,
+    driftWhat: "",
+    eventBoost: 0,
+    eventMult: 1,
 
     progressMark: 0,
     stallTicks: 0,
@@ -453,7 +576,10 @@ function generate(level, attempt, colonySeed) {
   w.toRelease = irand(rng, 12, 18)
   w.releaseInterval = irand(rng, 24, 34)
 
-  w.target = Math.max(1, Math.round(w.toRelease * (0.65 + rng() * 0.15)))
+  // Every agent counts and the run continues either way, so there is no
+  // second, smaller number to reach: the bar is the whole colony. Anything
+  // that needs a pass/fail line for tuning sets its own — see tools/simcheck.
+  w.traitBag = traitBag(w, w.toRelease)
 
   w.skills = {
     climber: irand(rng, 12, 18) + attempt * 2,
@@ -670,6 +796,10 @@ function fillEarth(w, rng) {
     }
   }
   biomeSkin(w, rng)
+
+  // Last, because an event needs the corridors, the pits, the exit and the
+  // hatch all settled before it can be told where it is not allowed to go.
+  rollEvents(w, rng, w.eventRng)
 }
 
 function biomeSkin(w, rng) {
@@ -729,6 +859,61 @@ function biomeSkin(w, rng) {
       for (x = 3; x < COLS - 3; x++)
         if (at(w, x, y) === DIRT && rng() < 0.35) setCell(w, x, y, ROCK)
 
+  } else if (w.biome === "Factory") {
+    // Machinery bolted into concrete. The Spaceship is a uniform grid because
+    // a hull is manufactured all at once; a factory is not. Here the concrete
+    // is the ground and the machines are lumps set into it at a spacing that
+    // was decided by what fits, so the regularity is in the shapes and the
+    // mezzanine decks rather than in where anything sits.
+    // DIRT is the one material Palette tints; ROCK is derived from the theme
+    // foreground and comes out the same cold grey in every biome. So the room
+    // is DIRT and the machinery in it is ROCK, which is also the right way
+    // round to look at: warm concrete with cold metal set into it.
+    for (y = SKY; y < ROWS - 2; y++)
+      for (x = 3; x < COLS - 3; x++)
+        if (at(w, x, y) !== STEEL) setCell(w, x, y, DIRT)
+
+    // Housings: rectangles, never blobs. Nothing in here grew. A handful of
+    // big ones rather than a scatter of small ones — the first version had
+    // twenty-odd and they stopped reading as machines and started reading as
+    // texture, which is the failure this whole biome had to be pulled back
+    // from. A machine room is a few large things you walk around.
+    var housings = irand(rng, 5, 8)
+    for (var hs2 = 0; hs2 < housings; hs2++) {
+      var hx = irand(rng, 4, COLS - 16), hy = irand(rng, SKY + 1, ROWS - 12)
+      var hw2 = irand(rng, 8, 14), hh2 = irand(rng, 5, 9)
+      for (y = hy; y < hy + hh2; y++)
+        for (x = hx; x < hx + hw2; x++) {
+          if (at(w, x, y) === STEEL) continue
+          // Hollow-ish: a shell of ORE with DIRT innards, so a bash through a
+          // machine looks like it opened something rather than chipped a rock.
+          var shell = y === hy || y === hy + hh2 - 1 || x === hx || x === hx + hw2 - 1
+          setCell(w, x, y, shell ? ORE : ROCK)
+        }
+    }
+
+    // Mezzanine decks: thin horizontal plate at a regular pitch, the one thing
+    // in the room that was surveyed.
+    for (y = SKY + irand(rng, 4, 8); y < ROWS - 4; y += irand(rng, 13, 19)) {
+      for (x = 3; x < COLS - 3; x++) {
+        if (at(w, x, y) === STEEL) continue
+        if (rng() < 0.08) continue          // a missing plate here and there
+        setCell(w, x, y, ORE)
+      }
+    }
+
+    // Pipe runs dropping between the decks.
+    var pipes = irand(rng, 3, 5)
+    for (var pi2 = 0; pi2 < pipes; pi2++) {
+      var px2 = irand(rng, 5, COLS - 6), py2 = SKY + irand(rng, 0, 5)
+      var plen = irand(rng, 8, 26)
+      for (var ps2 = 0; ps2 < plen; ps2++) {
+        py2++
+        if (py2 >= ROWS - 3) break
+        if (at(w, px2, py2) !== STEEL) setCell(w, px2, py2, ORE)
+      }
+    }
+
   } else if (w.biome === "Jungle") {
     for (var bl = 0; bl < 26; bl++) {
       var mx = irand(rng, 5, COLS - 6), my = irand(rng, SKY + 1, ROWS - 5)
@@ -767,6 +952,11 @@ function placeDecor(w, rng, corridors) {
   } else if (w.biome === "Spaceship") {
     floorRate = 0.18; ceilRate = 0.16; gap = 5
     floorKinds = ["spire", "clump", "clump", "tuft"]
+  } else if (w.biome === "Factory") {
+    // The lowest rates of any biome. The fittings below carry this room's
+    // character on their own, and the general scatter was competing with them.
+    floorRate = 0.07; ceilRate = 0.05; gap = 7
+    floorKinds = ["spire", "spire", "clump"]
   }
 
   if (w.biome === "Spaceship") {
@@ -789,6 +979,40 @@ function placeDecor(w, rng, corridors) {
       for (var gx2 = sc.x0 + 2; gx2 < sc.x1 - 3; gx2 += 6) {
         if (solid(w, gx2, sc.floorY) && !solid(w, gx2, sc.floorY - 1))
           w.decor.push({ x: gx2, y: sc.floorY - 1, kind: "grate", size: 1, seed: gx2 })
+      }
+    }
+  }
+
+  if (w.biome === "Factory") {
+    for (var fi = 0; fi < corridors.length; fi++) {
+      var fc = corridors[fi]
+      // One flywheel per corridor at most, and a big one. Seventeen small
+      // cogs at random heights read as stickers on the level rather than as
+      // machinery in it; one large wheel on a bracket reads as a machine room.
+      var cgy = fc.floorY - CORR_H - 4
+      for (var cgTry = 0; cgTry < 8; cgTry++) {
+        var cgx = fc.x0 + 6 + irand(rng, 0, Math.max(1, (fc.x1 - fc.x0) - 16))
+        if (!solid(w, cgx, cgy) || !solid(w, cgx + 4, cgy)) continue
+        w.decor.push({ x: cgx, y: cgy, kind: "cog", size: irand(rng, 4, 6), seed: Math.floor(rng() * 1000) })
+        break
+      }
+
+      // Vents in the floor, breathing smoke up into the corridor.
+      for (var vx = fc.x0 + 6; vx < fc.x1 - 5; vx += irand(rng, 26, 42)) {
+        if (solid(w, vx, fc.floorY) && !solid(w, vx, fc.floorY - 1))
+          w.decor.push({ x: vx, y: fc.floorY - 1, kind: "vent", size: 2, seed: Math.floor(rng() * 1000) })
+      }
+
+      // A pressure gauge or two, set into the wall over the walkway. Ornament
+      // rather than repetition: this is the detail that says the place runs on
+      // steam and somebody is supposed to be reading it.
+      for (var gx3 = fc.x0 + 14; gx3 < fc.x1 - 8; gx3 += irand(rng, 46, 74)) {
+        var gy3 = fc.floorY - CORR_H - 2
+        // Two cells of backing, not one: a gauge is drawn wider than the cell
+        // it is anchored to, and on a single solid cell it hangs out over the
+        // dark and goes back to looking like a sticker on the level.
+        if (solid(w, gx3, gy3) && solid(w, gx3 + 1, gy3) && solid(w, gx3, gy3 - 1))
+          w.decor.push({ x: gx3, y: gy3, kind: "gauge", size: 2, seed: Math.floor(rng() * 1000) })
       }
     }
   }
@@ -1041,9 +1265,6 @@ var SPECIALS = [
   // the confidence and progressively less of the sprite.
   ,{ id: "collapse", name: "Model Collapse", act: "collapse", height: "cushion", cool: 190, robe: "#7a3154", hair: "#f19ac2" }
 
-  // Stops a crowd, then grudgingly returns one token at a time. It is the only
-  // special whose signature move is making everybody else do less.
-  ,{ id: "ratelimit", name: "Rate Limiter", act: "limit", height: "elevator", cool: 145, robe: "#315b8a", hair: "#f0c75e" }
 
   // Leaves the wall exactly where it is and makes it free. Everything else on
   // this roster solves a wall for itself; a ladder is still there twenty
@@ -1082,22 +1303,6 @@ function specialLanding(w, ag, reach) {
       return { x: tx + 0.5, y: fy }
   }
   return null
-}
-
-function freezeNearby(w, ag, count) {
-  var held = 0
-  for (var i = 0; i < w.agents.length && held < count; i++) {
-    var other = w.agents[i]
-    if (other === ag || other.gone || other.state === "saved"
-        || other.state === "bomb" || other.state === "block"
-        || other.state === "camp" || other.state === "limited") continue
-    if (Math.abs(other.x - ag.x) > 12 || Math.abs(other.y - ag.y) > 3) continue
-    other.state = "limited"
-    other.limitedFor = 35 + held * 24
-    other.limitedBy = ag.id
-    held++
-  }
-  return held
 }
 
 function collapseCopy(w, ag) {
@@ -1209,7 +1414,6 @@ function specialTraverse(w, ag, act, dry) {
       linked[i].fall = 0
     }
   } else if (act === "collapse") collapseCopy(w, ag)
-  else if (act === "limit") freezeNearby(w, ag, 5)
 
   ag.x = land.x
   ag.y = land.y
@@ -1298,7 +1502,7 @@ function specialCut(w, ag, act, dry) {
       ag.shotFor = 12
     }
 
-  } else if (act === "chain" || act === "speculate" || act === "collapse" || act === "limit") {
+  } else if (act === "chain" || act === "speculate" || act === "collapse") {
     return specialTraverse(w, ag, act, dry)
 
   } else if (act === "kick") {
@@ -1488,7 +1692,13 @@ var HAZARDS = [
   { id: "blackice", name: "Frozen State", mech: "plate", mount: "floor", reach: 3, charge: 12, fire: 22, rest: 48, w: 6, h: 2, only: ["Ice Cave"] },
   { id: "airlock",  name: "Forced Logout", mech: "cycle", mount: "floor", reach: 0, charge: 34, fire: 24, rest: 66, w: 6, h: 6, only: ["Spaceship"] },
   { id: "servo",    name: "ARM64", mech: "watch", mount: "ceiling", reach: 14, charge: 18, fire: 18, rest: 62, w: 4, h: 5, only: ["Spaceship"] },
-  { id: "packetloss", name: "Packet Loss", mech: "beam", mount: "ceiling", reach: 8, charge: 24, fire: 26, rest: 58, w: 7, h: 6, only: ["Spaceship"] }
+  { id: "packetloss", name: "Packet Loss", mech: "beam", mount: "ceiling", reach: 8, charge: 24, fire: 26, rest: 58, w: 7, h: 6, only: ["Spaceship"] },
+
+  // Factory. One of each of the three mechanisms that suit a machine room: a
+  // press that never stops, a wheel that reacts, and a vent that vents.
+  { id: "stamper",  name: "Batch Process", mech: "cycle", mount: "ceiling", reach: 0, charge: 30, fire: 22, rest: 54, w: 5, h: 7, only: ["Factory"] },
+  { id: "flywheel", name: "Spin Up", mech: "watch", mount: "wall", reach: 11, charge: 26, fire: 22, rest: 60, w: 4, h: 5, only: ["Factory"] },
+  { id: "steamvent",name: "Memory Dump", mech: "cycle", mount: "floor", reach: 0, charge: 26, fire: 28, rest: 58, w: 4, h: 6, only: ["Factory"] }
 ]
 
 // Open flame and steam have no business in an ice cave, and the industrial
@@ -1774,7 +1984,13 @@ function stepOneHazard(w, h) {
 }
 
 function stepHazard(w) {
-  for (var hi = 0; hi < w.hazards.length; hi++) stepOneHazard(w, w.hazards[hi])
+  // A live blackout event stops every fixture where it stands; an overclock
+  // runs them all twice as often. Both are the same dial, and both are the
+  // reason a corridor the colony had learned to time stops behaving.
+  var mult = w.eventBoost > 0 ? w.eventMult : 1
+  if (mult === 0) return
+  for (var pass = 0; pass < mult; pass++)
+    for (var hi = 0; hi < w.hazards.length; hi++) stepOneHazard(w, w.hazards[hi])
 }
 
 function stepSniper(w, h, spec) {
@@ -1896,7 +2112,7 @@ function hazardExposure(w, h, ag) {
   var near = h.dir > 0 ? mid - 1 : mid - spec.reach - 1
   var far = h.dir > 0 ? mid + spec.reach + 1 : mid + 1
   var edge = ag.dir > 0 ? far : near
-  return Math.abs(edge - ag.x) / WALK_SPEED
+  return Math.abs(edge - ag.x) / walkStep(ag)
 }
 
 var HAZARD_WAIT = 260    // ticks of waiting before somebody tries it regardless
@@ -1920,13 +2136,21 @@ function exitInSight(w, ag) {
   if (Math.abs(footY - exitFloor(w)) > 1) return 0
   var ex = e.x + e.w / 2
   var gap = ex - ag.x
-  if (Math.abs(gap) > EXIT_SIGHT || Math.abs(gap) < 1) return 0
+  // A sight drift — a swarm, a whiteout, a storm — shortens how far the door
+  // can be seen from. It is the only modifier that makes the wary traits worth
+  // having, because everybody else is now navigating by what is underfoot.
+  var sight = w.driftWhat === "sight" && w.eventDrift > 0 ? EXIT_SIGHT * 0.35 : EXIT_SIGHT
+  if (Math.abs(gap) > sight || Math.abs(gap) < 1) return 0
   if (!lineClear(w, Math.floor(ag.x), footY - 1, Math.floor(ex), footY - 1)) return 0
   return gap > 0 ? 1 : -1
 }
 
+// Sees a hazard's reach from outside it instead of discovering it by walking
+// in. Was a hardcoded pair of trait names; it is a dial now because it is the
+// most consequential thing a personality can differ about, and a new trait
+// should be able to have it without editing this function.
 function hazardPerceptive(ag) {
-  return ag.trait === "cautious" || ag.trait === "tinkerer"
+  return traitOf(ag).wary === true
 }
 
 function hazardAhead(w, ag, nx) {
@@ -1971,6 +2195,7 @@ function pitLiquid(biome) {
   if (biome === "Jungle" || biome === "Ruins") return "water"
   if (biome === "Foundry") return "lava"
   if (biome === "Spaceship") return "coolant"
+  if (biome === "Factory") return "oil"
   return null
 }
 
@@ -2130,7 +2355,7 @@ function sink(w, ag, pool) {
   w.lost++
   pool.ripple = w.ticks
   addDust(w, ag.x, pool.surfaceY, 12)
-  w.lastEvent = pool.liquid === "lava" ? "slag" : "splash"
+  w.lastEvent = pool.liquid === "lava" ? "slag" : (pool.liquid === "oil" ? "sump" : "splash")
 }
 
 
@@ -2206,7 +2431,10 @@ function anyBlockerNear(w, ag, nx) {
     // That agent may move only outward until it has separated. The old
     // absolute-distance test rejected both directions and made it alternate
     // left/right forever in the same pixel.
-    if (next < 1.8 && next < now) return true
+    if (next < 1.8 && next < now) {
+      B.blockIdle = 0        // it just did its job, so it keeps standing
+      return true
+    }
   }
   return false
 }
@@ -2221,6 +2449,31 @@ function take(w, skill) {
   w.skills[skill]--
   w.lastUsed[skill] = w.ticks
   return true
+}
+
+// take(), but the agent gets an opinion about whether it should be the one
+// spending this. Only a hoarder has one: it will not draw a skill down to its
+// last unit while anybody behind it might still need that unit, and gives way
+// the moment it is the last one walking. Everybody else treats the toolbar as
+// infinite until the moment it isn't, which is how a colony reaches the final
+// wall having spent its climbers on a ledge it could have walked around.
+//
+// Used only where a trait is already making the choice — the wall and the
+// edge. A rescue, a director top-up or a special's move is not somewhere an
+// agent's thrift gets a say.
+function spend(w, ag, skill) {
+  var reserve = traitOf(ag).reserve || 0
+  if (reserve > 0) {
+    // How many agents one unit of this skill has to serve. A flat "don't take
+    // the last one" almost never fired: the toolbar starts with a dozen of
+    // most things, so the stock only reaches one on levels that were already
+    // lost. Measured against the queue instead, the thrift shows up when
+    // supplies get tight, which is the only time it is worth anything.
+    var coming = countComing(w, ag)
+    var want = Math.ceil(coming / reserve)
+    if (coming > 0 && (w.skills[skill] || 0) - 1 < want) return false
+  }
+  return take(w, skill)
 }
 
 
@@ -2258,26 +2511,26 @@ function canDescendHere(w, ag, requireWorkable) {
 // Every ordinary downward rescue uses this gate. Keeping the corridor, steel,
 // preference and fallback rules together prevents one caller from rediscovering
 // the level-255 bug where an agent dug repeatedly outside the corridor.
-function startDescent(w, ag, spend, allowMine, traitPreference, fallback, requireWorkable) {
+function startDescent(w, ag, pay, allowMine, traitPreference, fallback, requireWorkable) {
   if (!canDescendHere(w, ag, requireWorkable)) return false
   var preferMine = allowMine && ((traitPreference && traitOf(ag).mineFirst === true) || ag.id % 2 === 0)
   if (!fallback) {
     var mine = preferMine && canPlantMine(w, ag)
-    if (!spend(w, mine ? "miner" : "digger")) return false
+    if (!pay(w, mine ? "miner" : "digger")) return false
     if (mine) plantMine(w, ag)
     else { ag.state = "dig"; ag.timer = 0 }
     return true
   }
-  if (preferMine && canPlantMine(w, ag) && spend(w, "miner")) {
+  if (preferMine && canPlantMine(w, ag) && pay(w, "miner")) {
     plantMine(w, ag)
     return true
   }
-  if (spend(w, "digger")) {
+  if (pay(w, "digger")) {
     ag.state = "dig"
     ag.timer = 0
     return true
   }
-  if (allowMine && canPlantMine(w, ag) && spend(w, "miner")) {
+  if (allowMine && canPlantMine(w, ag) && pay(w, "miner")) {
     plantMine(w, ag)
     return true
   }
@@ -2317,25 +2570,25 @@ function hitWall(w, ag) {
 
   if (wantUp) bashFirst = false
 
-  if (trait.bridgeAt <= 3 && h <= 6 && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
+  if (trait.bridgeAt <= 3 && h <= 6 && canStartBuild(w, ag) && spend(w, ag, "builder")) { startBuild(w, ag); return }
 
   if (bashFirst) {
-    if (t <= BASH_REACH && take(w, "basher")) { ag.state = "bash"; ag.timer = 0; return }
-    if (climbable && take(w, "climber")) { startClimb(w, ag); return }
+    if (t <= BASH_REACH && spend(w, ag, "basher")) { ag.state = "bash"; ag.timer = 0; return }
+    if (climbable && spend(w, ag, "climber")) { startClimb(w, ag); return }
   } else {
-    if (climbable && take(w, "climber")) { startClimb(w, ag); return }
+    if (climbable && spend(w, ag, "climber")) { startClimb(w, ag); return }
     // Climbers are the scarcest thing on the board and a pit will empty them.
     // A staircase is the other way up, and the one the level has plenty of —
     // so under the exit it comes before the bash rather than after it, and
     // brings its own allowance with it (see willBuild).
-    if (wantUp && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
-    if (t <= BASH_REACH && take(w, "basher")) { ag.state = "bash"; ag.timer = 0; return }
+    if (wantUp && canStartBuild(w, ag) && spend(w, ag, "builder")) { startBuild(w, ag); return }
+    if (t <= BASH_REACH && spend(w, ag, "basher")) { ag.state = "bash"; ag.timer = 0; return }
   }
 
-  if (h <= MAX_CLIMB && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
+  if (h <= MAX_CLIMB && canStartBuild(w, ag) && spend(w, ag, "builder")) { startBuild(w, ag); return }
 
   if (trait.standDown > 0 && ag.turns >= trait.standDown &&
-      countComing(w, ag) >= 1 && take(w, "blocker")) {
+      countComing(w, ag) >= 1 && spend(w, ag, "blocker")) {
     ag.state = "block"
     return
   }
@@ -2369,7 +2622,7 @@ function edgeAhead(w, ag, nx) {
     // danger and bridge to it. Level 15 is the worked example: every engineer
     // saw both the sentry below and a ledge sixteen cells ahead, but this early
     // return happened before any builder rule could consider the ledge.
-    if (far > 2 && canStartBuild(w, ag) && take(w, "builder")) {
+    if (far > 2 && canStartBuild(w, ag) && spend(w, ag, "builder")) {
       startBuild(w, ag, true)
       return
     }
@@ -2379,23 +2632,32 @@ function edgeAhead(w, ag, nx) {
 
 
   if (depth === Infinity) {
-    if (far > 2 && canStartBuild(w, ag, true) && take(w, "builder")) { startBuild(w, ag, true); return }
-    if (far <= 2 && countComing(w, ag) >= 2 - trait.blockBias && take(w, "blocker")) { ag.state = "block"; return }
+    if (far > 2 && crossingHelps(w, ag) && canStartBuild(w, ag, true) && spend(w, ag, "builder")) { startBuild(w, ag, true); return }
+    // Not when the way home is above: a blocker's job is to stop the colony
+    // walking into a hole on its route, and a hole below an agent that is
+    // already under the exit is not on anybody's route. Level 509 drops a
+    // third of its colony into a pocket at the bottom, and the ones that met
+    // the shaft down there planted their hands for a colony that could never
+    // arrive — x50,y55 held seven times as many blocker-ticks as the whole of
+    // the rest of that level. Turning round leaves them to the climb and dig
+    // rules, which are at least trying to get them out.
+    if (far <= 2 && !exitAbove(w, ag) && comingHere(w, ag) >= 2 - trait.blockBias
+        && spend(w, ag, "blocker")) { ag.state = "block"; return }
     turnAround(w, ag)
     return
   }
 
   if (far > 2 && !exitBelow(w, ag) && depth > trait.bridgeAt + ag.bridgeBias
-      && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
+      && canStartBuild(w, ag) && spend(w, ag, "builder")) { startBuild(w, ag); return }
 
   if (trait.noFloat && far > 2 && depth > SAFE_FALL - trait.fallMargin
-      && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
+      && canStartBuild(w, ag) && spend(w, ag, "builder")) { startBuild(w, ag); return }
 
   var wantsChute = depth > SAFE_FALL - trait.fallMargin
 
   if (!wantsChute) { ag.x = nx; startFall(w, ag); return }
 
-  if (take(w, "floater")) {
+  if (spend(w, ag, "floater")) {
     ag.floater = true
     ag.x = nx
     startFall(w, ag)
@@ -2406,6 +2668,30 @@ function edgeAhead(w, ag, nx) {
   if (depth <= SAFE_FALL) { ag.x = nx; startFall(w, ag); return }
 
   turnAround(w, ag)
+}
+
+// How many others could actually walk into this spot. countComing below counts
+// everybody still alive anywhere on the board, which is the right question for
+// "is the level finished" and the wrong one for "is a blocker here worth an
+// agent". An agent that has wandered into a pocket at the bottom of level 509,
+// or out to the left board edge on 519, sees a dozen colleagues coming and
+// plants its hands for them — and they were never going to arrive, so it
+// stands there until the clock nukes it. Blocking is the only decision in the
+// game an agent cannot undo, so it is worth asking the narrower question.
+//
+// Unreleased agents count only near the hatch, which is the one place they are
+// genuinely on their way to.
+function comingHere(w, ag) {
+  var n = 0
+  if (w.released < w.toRelease && w.hatch && Math.abs(w.hatch.x - ag.x) < 34)
+    n += w.toRelease - w.released
+  for (var i = 0; i < w.agents.length; i++) {
+    var O = w.agents[i]
+    if (O === ag || O.gone || O.state === "saved" || O.state === "block") continue
+    if (Math.abs(O.y - ag.y) > 6 || Math.abs(O.x - ag.x) > 30) continue
+    n++
+  }
+  return n
 }
 
 // How many others are still unaccounted for and might yet arrive here. Used
@@ -2422,7 +2708,7 @@ function countComing(w, ag) {
 
 var RESCUE_CLIMB = 16    // as far up as wallHeight looks; past that there is no top
 
-function climbOut(w, ag, spend) {
+function climbOut(w, ag, pay) {
   if (!exitAbove(w, ag)) return false
   var footY = Math.floor(ag.y)
   for (var side = 0; side < 2; side++) {
@@ -2430,7 +2716,7 @@ function climbOut(w, ag, spend) {
     var ax = Math.floor(ag.x) + dir
     if (!solid(w, ax, footY)) continue
     if (wallHeight(w, ax, footY) > RESCUE_CLIMB) continue
-    if (!spend(w, "climber")) return false
+    if (!pay(w, "climber")) return false
     ag.dir = dir
     ag.idle = 0
     startClimb(w, ag)
@@ -2456,7 +2742,7 @@ function considerEscape(w, ag) {
   // not. The climb comes first: it costs one skill and gains sixteen courses,
   // where a build costs one and gains four.
   if (climbOut(w, ag, take)) return true
-  if (canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return true }
+  if (canStartBuild(w, ag) && spend(w, ag, "builder")) { startBuild(w, ag); return true }
   return false
 }
 
@@ -2498,7 +2784,39 @@ function startLadderDown(ag, ladder) {
   ag.timer = 0
 }
 
+// Is crossing this bottomless gap worth a builder, or is turning round the
+// better answer? Bricks over a shaft are for a crossing that is on the way
+// somewhere — the bottom pit between the landing and the exit is the case the
+// rule was written for. An agent that has wandered past the exit and met a
+// hole on the far side is not crossing toward anything, and the bridge it
+// builds leads further from home than the ground it is standing on.
+function crossingHelps(w, ag) {
+  // Vertical business overrides horizontal: if the door is above or below,
+  // which side of the shaft it is on tells you nothing useful.
+  if (exitBelow(w, ag) || exitAbove(w, ag)) return true
+  var exitMid = w.exit.x + w.exit.w / 2
+  if (Math.abs(exitMid - ag.x) <= 2) return true
+  return (exitMid > ag.x ? 1 : -1) === ag.dir
+}
+
 function buildDirection(w, ag) {
+  // A bridge that answers a hole goes across that hole. The exit steer below
+  // is for builds that are a free choice — a stalled agent, a director grant,
+  // a wall met on open ground — and it must never turn a crossing round.
+  //
+  // Level 359 is the worked example: its pit sits to the left of the exit, so
+  // an agent that walked left, met the lip and correctly decided to bridge a
+  // bottomless gap had its direction flipped to face the exit, and laid the
+  // bricks rightward along the floor it was already standing on. Seven agents
+  // spent a builder each on that floor. It looked like a build in the wrong
+  // place because it was one: the decision and the direction were being made
+  // by two rules that never consulted each other.
+  //
+  // canStartBuild cannot catch this on its own — it tests the cells at foot
+  // height, which are the open air above any floor, so building along solid
+  // ground always looks possible.
+  if (!solid(w, Math.floor(ag.x) + ag.dir, Math.floor(ag.y) + 1)) return ag.dir
+
   if (!exitBelow(w, ag)) {
     var exitMid = w.exit.x + w.exit.w / 2
     if (Math.abs(exitMid - ag.x) > 1) return exitMid > ag.x ? 1 : -1
@@ -2561,16 +2879,20 @@ function spawn(w) {
   // 42 is the same level every time and never the same colony twice. Which one
   // is the stubborn one, and how far down the queue it is, is the difference
   // between watching a level again and watching a recording of it.
-  var trait = TRAIT_POOL[Math.floor(w.traitRng() * TRAIT_POOL.length) % TRAIT_POOL.length]
-  var whim = w.traitRng()
+  var trait = w.traitBag && w.traitBag.length ? w.traitBag.pop() : "steady"
   return {
     id: w.nextId++,
     trait: trait,
     // Individual variation inside the personality, so two cautious agents
     // aren't the same agent twice. Shifts where its bridge-or-jump line
     // sits, and one in five reverses its instinct at a wall outright.
-    bridgeBias: Math.round(whim * 5) - 2,
-    contrary: whim < 0.2,
+    //
+    // Two draws, not one. Deriving both from a single number tied them
+    // together: `whim < 0.2` forces the rounding below to -2 or -1, so every
+    // contrary agent was also an eager bridger and no contrary agent could
+    // ever be a reluctant one. Half the combinations did not exist.
+    bridgeBias: Math.round(w.traitRng() * 5) - 2,
+    contrary: w.traitRng() < 0.2,
     x: w.hatch.x + 0.5,
     y: w.hatch.y + AGENT_H,
     dir: w.startDir,
@@ -2579,6 +2901,10 @@ function spawn(w) {
     // fall" and is folded away on landing; there is no climber flag at all,
     // because every climb is paid for when it happens.
     floater: false,
+    // Ticks until it turns, or 0. Deliberately affects nothing else: an
+    // infected agent walks, builds, blocks and reads to the rest of the
+    // colony exactly as it did before, which is the entire joke.
+    infected: 0,
     fall: 0,
     timer: 0,
     bricks: 0,
@@ -2609,8 +2935,6 @@ function spawn(w) {
     specialX: 0,
     specialY: 0,
     modelGen: 0,
-    limitedFor: 0,
-    limitedBy: 0,
     flipTicks: 0,
     wounds: 0,
     stunFor: 0,
@@ -2639,11 +2963,286 @@ function spawn(w) {
 }
 
 // ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+// A hazard is decided at generation and then runs on a timer. An event changes
+// the level's premise while it is being played: the colony agreed on a route,
+// and now the route is somewhere else. That re-decision is the thing worth
+// watching, and it is why every event here moves terrain, water or the rules
+// rather than simply dealing damage — damage is what the hazards are for.
+//
+// Each event is a row in a table over five mechanisms, in the same way every
+// hazard is a row over six. Twenty-four bespoke events would be twenty-four
+// sets of bugs; twenty-four rows over five mechanisms are five.
+//
+// Which events a level may see comes from the level seed, so level 42 is still
+// recognisably level 42 — it is always the one that can flood. Whether and
+// when they actually fire comes from the colony stream, so a retry is not a
+// recording of the last attempt.
+
+var EVENT_TELEGRAPH = 75    // ticks of warning before one lands
+var EVENT_EARLIEST = 300    // nothing in the first ten seconds: let them commit
+var EVENT_GAP = 450         // ticks between the two on a level that gets two
+
+var EVENTS = [
+  // --- Cavern ---
+  { id: "cavein",   name: "Cache Eviction",   biome: "Cavern", mech: "collapse", at: "ceiling", span: 9, deep: 4 },
+  { id: "spring",   name: "Data Leak",        biome: "Cavern", mech: "spill",    rise: 2 },
+  { id: "bats",     name: "Swarm Intelligence",biome: "Cavern", mech: "drift",   what: "sight", ticks: 420 },
+
+  // --- Ruins ---
+  { id: "givesway", name: "Legacy Collapse",  biome: "Ruins",  mech: "collapse", at: "floor",   span: 7, deep: 2 },
+  { id: "sandfall", name: "Backfill",         biome: "Ruins",  mech: "growth",   span: 12, high: 2 },
+  { id: "waking",   name: "Daemon Restart",   biome: "Ruins",  mech: "blackout", mult: 2, ticks: 420 },
+
+  // --- Frost ---
+  { id: "whiteout", name: "Signal Loss",      biome: "Frost",  mech: "drift",    what: "sight", ticks: 480 },
+  { id: "thaw",     name: "Thermal Throttle", biome: "Frost",  mech: "collapse", at: "floor",   span: 6, deep: 2 },
+  { id: "avalanche",name: "Snowball Effect",  biome: "Frost",  mech: "growth",   span: 16, high: 2 },
+
+  // --- Foundry ---
+  { id: "pour",     name: "Hot Deploy",       biome: "Foundry",mech: "spill",    rise: 3 },
+  { id: "surge",    name: "Overclock",        biome: "Foundry",mech: "blackout", mult: 2, ticks: 360 },
+  { id: "cooling",  name: "Cold Storage",     biome: "Foundry",mech: "growth",   span: 10, high: 1 },
+
+  // --- Jungle ---
+  { id: "overgrow", name: "Dependency Hell",  biome: "Jungle", mech: "growth",   span: 14, high: 2 },
+  { id: "downpour", name: "Cloud Burst",      biome: "Jungle", mech: "spill",    rise: 2 },
+  { id: "forkbomb", name: "Fork Bomb",        biome: "Jungle", mech: "spawn",    kind: "gun", count: 2 },
+
+  // --- Ice Cave ---
+  { id: "freezeover",name: "Frozen Snapshot", biome: "Ice Cave", mech: "growth", span: 12, high: 1 },
+  { id: "thecrack", name: "Breaking Change",  biome: "Ice Cave", mech: "collapse", at: "floor", span: 8, deep: 3 },
+  { id: "blizzard", name: "Packet Storm",     biome: "Ice Cave", mech: "drift",  what: "sight", ticks: 450 },
+
+  // --- Spaceship ---
+  { id: "breach",   name: "Buffer Overflow",  biome: "Spaceship", mech: "collapse", at: "ceiling", span: 8, deep: 5 },
+  { id: "nullgrav", name: "Null Gravity",     biome: "Spaceship", mech: "drift",  what: "fall",  ticks: 400 },
+  { id: "xeno",     name: "Adversarial Input",biome: "Spaceship", mech: "infect" },
+
+  // --- Factory ---
+  { id: "scaleup",  name: "Scale Up",         biome: "Factory", mech: "blackout", mult: 2, ticks: 380 },
+  { id: "oilspill", name: "Technical Debt",   biome: "Factory", mech: "spill",   rise: 3 },
+  { id: "hardfault",name: "Hard Fault",       biome: "Factory", mech: "collapse", at: "ceiling", span: 7, deep: 4 }
+]
+
+function eventsFor(biome) {
+  var out = []
+  for (var i = 0; i < EVENTS.length; i++) if (EVENTS[i].biome === biome) out.push(EVENTS[i])
+  return out
+}
+
+// Rolled at generation. `rng` is the level's stream and picks which of the
+// biome's three are on the card; `trng` is the colony's and decides whether
+// either of them actually happens, and when.
+function rollEvents(w, rng, trng) {
+  w.events = []
+  w.eventLog = []
+  w.eventMechs = {}
+  var card = eventsFor(w.biome)
+  if (!card.length) return
+  card = shuffleWith(rng, card.slice())
+
+  // A third of levels get one, and a twelfth of those get a second. Rare
+  // enough to stay an event, often enough that you meet the whole table.
+  var roll = trng()
+  var count = roll < 0.08 ? 2 : (roll < 0.35 ? 1 : 0)
+  if (count === 0) return
+
+  var last = EVENT_EARLIEST
+  for (var n = 0; n < count && n < card.length; n++) {
+    var at = last + Math.floor(trng() * 420)
+    if (at > LEVEL_LIMIT - 240) break
+    w.events.push({ spec: card[n], at: at, fired: false })
+    last = at + EVENT_GAP
+  }
+}
+
+// Everything an event may not touch. The way home and the way in are the two
+// places where a change of premise stops being drama and starts being a level
+// that cannot be finished.
+function eventSafeX(w, x) {
+  if (w.exit && x >= w.exit.x - 6 && x <= w.exit.x + w.exit.w + 6) return false
+  if (w.hatch && x >= w.hatch.x - 5 && x <= w.hatch.x + 5) return false
+  return x > 3 && x < COLS - 4
+}
+
+function stepEvents(w) {
+  if (!w.events || w.nuking || w.done) return
+  w.eventDrift = Math.max(0, (w.eventDrift || 0) - 1)
+  w.eventBoost = Math.max(0, (w.eventBoost || 0) - 1)
+  if (w.eventDrift === 0) w.driftWhat = ""
+
+  for (var i = 0; i < w.events.length; i++) {
+    var e = w.events[i]
+    if (e.fired) continue
+    // The telegraph: named on the board before anything moves, so a level that
+    // changes under the colony is never a level that changed without warning.
+    if (w.ticks === e.at - EVENT_TELEGRAPH) {
+      w.eventWarn = e.spec.name
+      w.eventWarnFor = EVENT_TELEGRAPH
+      w.lastEvent = e.spec.name
+    }
+    if (w.ticks >= e.at) { e.fired = true; fireEvent(w, e.spec) }
+  }
+  if (w.eventWarnFor > 0) w.eventWarnFor--
+  if (w.eventFlash > 0) w.eventFlash--
+  stepSpill(w)
+}
+
+function fireEvent(w, ev) {
+  w.lastEvent = ev.name
+  w.eventLog.push(ev.id)
+  // The mechanism travels on the world, because Outcome.js needs it and the
+  // core files cannot call each other. See the note in check-core-refs.
+  w.eventMechs[ev.mech] = true
+  w.eventFlash = 40
+  if (ev.mech === "collapse") eventCollapse(w, ev)
+  else if (ev.mech === "growth") eventGrowth(w, ev)
+  else if (ev.mech === "spill") eventSpill(w, ev)
+  else if (ev.mech === "blackout") { w.eventBoost = ev.ticks; w.eventMult = ev.mult }
+  else if (ev.mech === "drift") { w.eventDrift = ev.ticks; w.driftWhat = ev.what }
+  else if (ev.mech === "spawn") eventSpawn(w, ev)
+  else if (ev.mech === "infect") eventInfect(w)
+}
+
+// Pick a corridor stretch the event is allowed to work on.
+function eventSite(w, span) {
+  if (!w.corridors || !w.corridors.length) return null
+  for (var tries = 0; tries < 24; tries++) {
+    var c = w.corridors[Math.floor(w.eventRng() * w.corridors.length) % w.corridors.length]
+    var x = c.x0 + 3 + Math.floor(w.eventRng() * Math.max(1, (c.x1 - c.x0) - span - 6))
+    if (!eventSafeX(w, x) || !eventSafeX(w, x + span)) continue
+    return { c: c, x: x }
+  }
+  return null
+}
+
+function eventCollapse(w, ev) {
+  var site = eventSite(w, ev.span)
+  if (!site) return
+  var top = ev.at === "ceiling" ? site.c.floorY - CORR_H - 1 - ev.deep : site.c.floorY
+  for (var x = site.x; x < site.x + ev.span; x++)
+    for (var y = top; y < top + ev.deep; y++) clearCell(w, x, y)
+  addDust(w, site.x + ev.span / 2, top + ev.deep, 26)
+}
+
+function eventGrowth(w, ev) {
+  var site = eventSite(w, ev.span)
+  if (!site) return
+  for (var x = site.x; x < site.x + ev.span; x++) {
+    if (!solid(w, x, site.c.floorY)) continue
+    for (var h = 0; h < ev.high; h++) {
+      var y = site.c.floorY - 1 - h
+      if (agentAt(w, x, y)) continue      // never close terrain over somebody
+      setCell(w, x, y, DIRT)
+    }
+  }
+  addDust(w, site.x + ev.span / 2, site.c.floorY - 1, 18)
+}
+
+// Is anybody standing in this cell? Growth that ignores this buries an agent
+// in the ground it is walking on, which reads as the sim eating people.
+function agentAt(w, x, y) {
+  for (var i = 0; i < w.agents.length; i++) {
+    var a = w.agents[i]
+    if (a.gone || a.state === "saved") continue
+    if (Math.floor(a.x) === x && (Math.floor(a.y) === y || Math.floor(a.y) - 1 === y)) return true
+  }
+  return false
+}
+
+function eventSpill(w, ev) {
+  if (!w.pits || !w.pits.length) return
+  for (var i = 0; i < w.pits.length; i++) {
+    var p = w.pits[i]
+    if (!p.liquid) continue
+    // Never above the lip: a pool that climbs into the corridor is a level
+    // that drowns everybody standing still, which is not a re-decision.
+    p.rising = (p.rising || 0) + ev.rise
+    p.floor2 = p.floorY + 2
+    p.ripple = w.ticks
+  }
+}
+
+function stepSpill(w) {
+  if (!w.pits) return
+  for (var i = 0; i < w.pits.length; i++) {
+    var p = w.pits[i]
+    if (!p.rising || p.rising <= 0) continue
+    if (w.ticks % 26 !== 0) continue
+    var to = Math.max(p.floor2 || p.floorY + 2, p.surfaceY - 1)
+    if (to === p.surfaceY) { p.rising = 0; continue }
+    p.surfaceY = to
+    p.rising--
+    p.ripple = w.ticks
+    w.liquidVersion = -1     // the flood map is cached on terrainVersion
+  }
+}
+
+// Something came aboard. There is nothing to see when it lands: the event
+// names itself, one agent is quietly carrying it, and the level goes on
+// looking exactly as it did.
+function eventInfect(w) {
+  var pool = []
+  for (var i = 0; i < w.agents.length; i++) {
+    var a = w.agents[i]
+    if (a.gone || a.state === "saved" || a.infected > 0) continue
+    pool.push(a)
+  }
+  if (!pool.length) return
+  // Somewhere in the middle of the queue. The one out in front is too easy to
+  // watch and the one at the back turns after everybody else is already home.
+  infectAgent(w, pool[Math.floor(w.eventRng() * pool.length) % pool.length])
+}
+
+function infectAgent(w, ag) {
+  if (!ag || ag.gone || ag.state === "saved" || ag.infected > 0) return false
+  if (w.infections >= XENO_CAP) return false
+  ag.infected = INCUBATION
+  w.infections++
+  w.lastEvent = "carrier"
+  return true
+}
+
+// The turn. The agent is lost to the colony and something else is standing
+// where it was — which is the one threat in this game that arrives from
+// inside the fifteen rather than out of the guard house.
+function turnAgent(w, ag) {
+  ag.gone = true
+  ag.state = "dead"
+  w.lost++
+  w.lastEvent = "turned"
+  addBlood(w, ag.x, ag.y - 1.5, 18)
+  w.enemies.push(makeXeno(w, ag.x, ag.y, ag.dir))
+}
+
+// Built here rather than by spawnEnemy, which always starts things at the
+// enemy hatch. This one starts wherever the colony was standing, and a level
+// with no guard house at all can still have one.
+function makeXeno(w, x, y, dir) {
+  return {
+    id: w.nextEnemyId++, kind: "xeno",
+    x: x, y: y, dir: dir || 1,
+    state: "walk", deployLeft: 0,
+    timer: 0, fall: 0, anim: 0, shoves: 0,
+    targetId: 0, lineTo: 0, lineY: 0, shotFor: 0,
+    touchCool: 0,
+    gone: false
+  }
+}
+
+function eventSpawn(w, ev) {
+  if (!w.enemyHatch) return
+  for (var n = 0; n < ev.count; n++) w.enemies.push(spawnEnemy(w, ev.kind))
+}
+
+// ---------------------------------------------------------------------------
 // Per-state updates
 // ---------------------------------------------------------------------------
 
 function stepWalk(w, ag) {
-  var nx = ag.x + ag.dir * WALK_SPEED * (ag.chilledFor > 0 ? 0.48 : 1)
+  var nx = ag.x + ag.dir * walkStep(ag)
   var cx = Math.floor(nx)
   var footY = Math.floor(ag.y)
 
@@ -2654,7 +3253,7 @@ function stepWalk(w, ag) {
   if (seen && seen !== ag.dir) {
     ag.dir = seen
     ag.turns = 0
-    nx = ag.x + ag.dir * WALK_SPEED * (ag.chilledFor > 0 ? 0.48 : 1)
+    nx = ag.x + ag.dir * walkStep(ag)
     cx = Math.floor(nx)
   }
 
@@ -2716,7 +3315,7 @@ function stepWalk(w, ag) {
       var out = Math.abs(lipOn - ag.x) < Math.abs(lipBack - ag.x) ? lipOn : lipBack
       var away = out > ag.x ? 1 : -1
       if (ag.dir !== away) { ag.dir = away; ag.turns++ }
-      var outX = ag.x + ag.dir * WALK_SPEED
+      var outX = ag.x + ag.dir * walkStep(ag)
       return advanceWalk(w, ag, outX, Math.floor(outX), footY)
     }
 
@@ -2765,8 +3364,36 @@ function advanceWalk(w, ag, nx, cx, footY) {
   ag.anim++
 }
 
+// A follower lands facing whichever of its own is nearest and still on its
+// feet. This is the horizontal beacon the simulation deliberately dropped —
+// see the note above exitFloor — handed back to exactly one personality and
+// sourced from a neighbour rather than from the level, so it steers one agent
+// in the colony without overriding anything the others can see for themselves.
+//
+// Landing is the only moment it applies, and that is not a shortcut: a steer
+// that ran every tick would be two followers turning to face each other for
+// the rest of the level. Vertical distance counts double so it picks somebody
+// on its own floor rather than somebody directly overhead.
+function herdSteer(w, ag) {
+  var reach = traitOf(ag).herd || 0
+  if (reach <= 0) return
+  var best = null
+  var bestD = reach
+  for (var i = 0; i < w.agents.length; i++) {
+    var O = w.agents[i]
+    if (O === ag || O.gone || O.state !== "walk") continue
+    var d = Math.abs(O.x - ag.x) + Math.abs(O.y - ag.y) * 2
+    if (d < bestD) { bestD = d; best = O }
+  }
+  if (best) ag.dir = best.dir
+}
+
 function stepFall(w, ag) {
   var speed = ag.floater && ag.fall > 2 ? FLOAT_SPEED : FALL_SPEED
+  // Null gravity. Everything falls at umbrella speed for the duration, which
+  // does not change what is survivable — SAFE_FALL is a distance, not a speed
+  // — but does change how long everybody spends in the air deciding.
+  if (w.driftWhat === "fall" && w.eventDrift > 0) speed = Math.min(speed, FLOAT_SPEED)
   var cx = Math.floor(ag.x)
   var ny = ag.y + speed
 
@@ -2821,6 +3448,7 @@ function stepFall(w, ag) {
       ag.state = "walk"
       ag.fall = 0
       ag.floater = false
+      herdSteer(w, ag)
       return
     }
   }
@@ -3098,10 +3726,38 @@ function unsupported(w, ag) {
   return !solid(w, Math.floor(ag.x), Math.floor(ag.y) + 1)
 }
 
+// A blocker is the only thing on the board that chooses never to move again,
+// and until now nothing ever released one. That is fine where the queue keeps
+// arriving, and a disaster where it does not: on level 509 a third of the
+// colony drops into a pocket at the bottom of the level, and the ones that
+// meet the shaft lip down there plant their hands to protect a colony that
+// cannot reach them, then stand in a dead end until the clock nukes them.
+// x50,y55 accounted for seven times as many blocker-ticks as everywhere else
+// on that level put together.
+//
+// So a blocker that has stopped nobody for BLOCK_PATIENCE gives up and walks.
+// A blocker on a route anybody is actually using gets its counter reset long
+// before that and stands as long as it is needed. Nothing is refunded: the
+// skill was spent, and standing down only gets the agent its legs back.
 function stepBlock(w, ag) {
   if (unsupported(w, ag)) { beginUncontrolledFall(w, ag); return }
   ag.anim++
+  ag.blockIdle = (ag.blockIdle || 0) + 1
+  ag.blockHeld = (ag.blockHeld || 0) + 1
 
+  // The ceiling is not redundant with the patience above it. A blocker that
+  // has trapped a handful of agents against itself gets its patience reset by
+  // every one of them bouncing off it, so the pocket keeps the blocker
+  // standing and the blocker keeps the pocket full — the counter that was
+  // meant to release it is fed by the very thing it is causing.
+  if (ag.blockIdle > BLOCK_PATIENCE || ag.blockHeld > BLOCK_MAX) {
+    ag.blockIdle = 0
+    ag.blockHeld = 0
+    ag.state = "walk"
+    ag.turns = 0
+    ag.idle = 0
+    w.lastEvent = "stood down"
+  }
 }
 
 function stepBomb(w, ag) {
@@ -3562,7 +4218,7 @@ function specialDropLanding(w, ag, nx, depth, mode) {
     recoil: -3, cyclone: 4, web: 0, logchute: 3, balloon: -4,
     promptchute: 2, piledrive: 0, helicopter: 7, glasswing: 5,
     ghost: -3, gunwing: 4, tractor: 1, steps: 3, chain: 5,
-    jetpack: 7, cushion: 2, elevator: 0, extender: 0, shieldglider: 5
+    jetpack: 7, cushion: 2, extender: 0, shieldglider: 5
   }[mode] || 0
   var footY = Math.floor(ag.y) + depth
   var baseX = Math.floor(nx)
@@ -3676,7 +4332,7 @@ function stepSpecialHeight(w, ag) {
     recoil: -2, cyclone: 3, web: 0.4, logchute: 2, balloon: -3,
     promptchute: 1.5, piledrive: 0, helicopter: 5, glasswing: 3,
     ghost: -2, gunwing: 2.5, tractor: 0.8, steps: 1.5, chain: 3,
-    jetpack: 4, cushion: 1.5, elevator: 0, extender: 0, shieldglider: 3
+    jetpack: 4, cushion: 1.5, extender: 0, shieldglider: 3
   }[ag.heightMode] || 0
   ag.x += ag.dir * sway * Math.sin(moveP * Math.PI)
   if (ag.heightMode === "helicopter") {
@@ -3692,8 +4348,18 @@ function stepSpecialHeight(w, ag) {
   var horizontal = Math.abs(ag.heightToX - ag.heightFromX) > 1
   if (horizontal && moveP > 0 && moveP < 1) {
     var lift = (ag.heightMode === "helicopter" || ag.heightMode === "jetpack") ? 4
-      : (ag.heightMode === "chain" ? 3 : 1.5)
+      : (ag.heightMode === "chain" || ag.heightMode === "gunwing" ? 3 : 1.5)
     ag.y -= Math.sin(moveP * Math.PI) * lift
+  }
+
+  // RAMbo is not carrying the gun across, he is being pushed by it: he fires
+  // at the floor and rides the recoil. So his climb arrives in kicks rather
+  // than as one smooth arc — five shots, each a shove upward that sags before
+  // the next one. The sine envelope is what keeps the trick honest: it goes to
+  // zero at both ends, so the landing is still exactly where it was computed.
+  if (ag.heightMode === "gunwing") {
+    var kick = 1 - ((moveP * GUNWING_SHOTS) % 1)
+    ag.y -= Math.sin(moveP * Math.PI) * kick * 0.55
   }
   ag.anim++
   if (p < 1) return
@@ -3742,7 +4408,7 @@ function specialAtEdge(w, ag, nx, depth, far) {
   }
 
   if ((spec.act === "chain" || spec.act === "speculate"
-       || spec.act === "collapse" || spec.act === "limit")
+       || spec.act === "collapse")
       && ag.cool <= 0 && far > 1 && specialLanding(w, ag, 14)) {
     ag.state = "trick"
     ag.timer = 0
@@ -3878,8 +4544,23 @@ function stepSlide(w, ag) {
       || !crouchroom(w, cx, footY)) {
     ag.dir = -ag.dir
     ag.turns++
+    // Reversing is only an answer if the other way is open. Wedged in a crouch
+    // pocket with both ends shut, this flipped the agent's direction every
+    // tick on the same spot for the rest of the level — and nothing came for
+    // it, because the stuck detector only ever considers agents in `walk`.
+    // Level 509 drops about a third of its colony into a pocket at the bottom
+    // and that is where they stayed. Hand it back to walking after both ends
+    // have been tried: a wall is something bashers and diggers have answers to,
+    // and forceEscape can see it again.
+    ag.slideStuck = (ag.slideStuck || 0) + 1
+    if (ag.slideStuck >= 3) {
+      ag.slideStuck = 0
+      ag.state = "walk"
+      ag.timer = 0
+    }
     return
   }
+  ag.slideStuck = 0
 
   ag.x = nx
   ag.anim++
@@ -3919,15 +4600,6 @@ function stepTrick(w, ag) {
   // Nothing shifted, so whatever is in the way is steel and always will be.
   // Turning is the only honest answer.
   if (!cut) turnAround(w, ag)
-}
-
-function stepLimited(w, ag) {
-  ag.limitedFor--
-  if (ag.limitedFor > 0) return
-  ag.limitedFor = 0
-  ag.limitedBy = 0
-  if (unsupported(w, ag)) beginUncontrolledFall(w, ag)
-  else ag.state = "walk"
 }
 
 function stepStunned(w, ag) {
@@ -4317,7 +4989,25 @@ function stepEnemyWalk(w, en) {
     return
   }
 
-  var target = enemyTarget(w, en, 24)
+  // A xeno does not shoot, so it never enters the aim-and-retreat branch
+  // below. It closes, and what it does on contact is not damage.
+  if (en.kind === "xeno") {
+    if (en.touchCool > 0) en.touchCool--
+    var prey = enemyTarget(w, en, 26)
+    if (prey) {
+      en.targetId = prey.id
+      en.dir = prey.x >= en.x ? 1 : -1
+      if (Math.abs(prey.x - en.x) < XENO_REACH && Math.abs(prey.y - en.y) < 2.2) {
+        // Past the cap it stops passing it on and is simply hostile, so a bad
+        // roll cannot turn the whole colony into the thing hunting it.
+        if (en.touchCool === 0 && infectAgent(w, prey)) en.touchCool = XENO_COOL
+        else woundFriendly(w, prey, en.x, false)
+        return
+      }
+    } else en.targetId = 0
+  }
+
+  var target = en.kind === "xeno" ? null : enemyTarget(w, en, 24)
   if (target) {
     en.targetId = target.id
     var delta = target.x - en.x
@@ -4759,6 +5449,7 @@ function stepAgents(w) {
     // doing is working: clear both counters and let it get on with it.
     w.acting = ag
     if (ag.cool > 0) ag.cool--
+    if (ag.infected > 0 && --ag.infected === 0) { turnAgent(w, ag); continue }
     if (ag.blockFor > 0) ag.blockFor--
     if (ag.coveredFor > 0) ag.coveredFor--
     if (ag.mineCool > 0) ag.mineCool--
@@ -4802,18 +5493,6 @@ function stepAgents(w) {
       }
     }
     if (ag.rescueCool > 0) ag.rescueCool--
-
-    // Rate Limiter does not wait for terrain. A sufficiently dense queue is
-    // already an incident: stop the nearest requests and let them resume one
-    // by one. The stagger is stored on each victim, so removing the limiter
-    // does not release the whole thundering herd at once.
-    if (ag.special && ag.state === "walk" && specOf(ag).act === "limit" && ag.cool <= 0) {
-      var rateHeld = freezeNearby(w, ag, 5)
-      if (rateHeld >= 2) {
-        ag.cool = specOf(ag).cool
-        ag.timer = 10
-      }
-    }
 
     // Stuck inside one cell. Not "getting nowhere" in the goalDist sense — the
     // literal same cell, tick after tick, which is what pacing in a pocket
@@ -4873,7 +5552,6 @@ function stepAgents(w) {
       case "rappel": stepRappel(w, ag); break
       case "height": stepSpecialHeight(w, ag); break
       case "webup": stepWebEscape(w, ag); break
-      case "limited": stepLimited(w, ag); break
       case "stunned": stepStunned(w, ag); break
       case "jump":  stepJump(w, ag); break
       case "slide": stepSlide(w, ag); break
@@ -4902,7 +5580,11 @@ function stepAgents(w) {
       ag.state = "saved"
       ag.fade = 0
       w.saved++
-      w.lastEvent = "saved"
+      // A carrier that beats its own incubation to the door goes home with it
+      // and counts, like everybody else, as a rescue. It is the best outcome
+      // this event has and the colony has no idea it happened.
+      if (ag.infected > 0) { w.carrierHome = true; w.lastEvent = "carrier home" }
+      else w.lastEvent = "saved"
       continue
     }
 
@@ -4928,6 +5610,7 @@ function finishWorldStep(w, active, blockers, moving) {
     }
   }
 
+  stepEvents(w)
   stepHazard(w)
   stepMines(w)
   stepLadders(w)

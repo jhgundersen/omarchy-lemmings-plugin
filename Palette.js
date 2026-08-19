@@ -60,9 +60,17 @@ var JUNGLE = { r: 0.24, g: 0.52, b: 0.20 }
 var GLACIER = { r: 0.55, g: 0.78, b: 0.92 }
 var HULL = { r: 0.46, g: 0.52, b: 0.60 }
 
+// Copper rather than the yellower brass it started as: redder, and further
+// from the Ruins' urgent red only because that biome is pink-red where this
+// one is orange-brown. Steampunk lives in the warm half of the wheel.
+var BRASS = { r: 0.80, g: 0.46, b: 0.14 }
+
 var WATER = { r: 0.13, g: 0.42, b: 0.52 }
 var LAVA = { r: 0.88, g: 0.26, b: 0.06 }
 var COOLANT = { r: 0.20, g: 0.80, b: 0.76 }
+// Not a colour anything is: near-black with a green-violet bias, so the sheen
+// drawn on top of it reads as a film on the surface rather than as the depth.
+var OIL = { r: 0.10, g: 0.12, b: 0.09 }
 var VOID = { r: 0, g: 0, b: 0 }
 
 // Which one this level's biome floods with. Sim.js decides the same thing from
@@ -70,24 +78,29 @@ var VOID = { r: 0, g: 0, b: 0 }
 // number by the same rule, which is how every other per-biome difference in
 // this game stays in step across two files that cannot call each other.
 function poolTint(level) {
-  switch ((level - 1) % 7) {
+  switch ((level - 1) % 8) {
     case 1: return WATER      // Ruins: a flooded cistern
     case 3: return LAVA       // Foundry: what the place is for
     case 4: return WATER      // Jungle: the swamp, and what lives in it
     case 6: return COOLANT    // Spaceship: something leaking
+    case 7: return OIL        // Factory: what has been draining out for years
     default: return WATER     // dry biomes; unused, but never undefined
   }
 }
 
 function biomeTint(theme, level) {
-  switch ((level - 1) % 7) {
+  switch ((level - 1) % 8) {
     case 0: return theme.accent                              // Cavern
     case 1: return theme.urgent                              // Ruins
     case 2: return lighter(theme.accent, 1.7)                // Frost
     case 3: return theme.muted                               // Foundry
     case 4: return toward(theme.accent, JUNGLE, 0.72)        // Jungle
     case 5: return toward(lighter(theme.accent, 1.4), GLACIER, 0.66)  // Ice Cave
-    default: return toward(theme.muted, HULL, 0.6)           // Spaceship
+    case 6: return toward(theme.muted, HULL, 0.6)            // Spaceship
+    // Factory has to sit apart from both of the other industrial biomes: the
+    // Foundry is the theme's own muted grey and the Spaceship is pulled toward
+    // hull, so this one goes warm. Brass and old machine paint, not heat.
+    default: return toward(theme.accent, BRASS, 0.88)        // Factory
   }
 }
 

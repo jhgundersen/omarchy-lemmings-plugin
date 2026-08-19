@@ -102,6 +102,32 @@ function drawTerrain(ctx, w, pal) {
     }
   }
 
+  // Factory only. ORE is this biome's machinery and mezzanine plate, so it
+  // gets riveted and seamed. The room's character has to come from detail on
+  // the structures that are already there — the first version tried to get it
+  // from objects floating in front of them, and seventeen free cogs read as
+  // noise while the surfaces underneath stayed blank.
+  if (w.biome === "Factory") {
+    for (var ry = k.SKY; ry < rows; ry++) {
+      var rbase = ry * cols
+      for (var rx = 1; rx < cols - 1; rx++) {
+        if (w.terrain[rbase + rx] !== k.ORE) continue
+        // Rivets on a two-cell checker: dense enough to read as a fixing
+        // pattern, sparse enough not to become a texture of its own.
+        if ((rx + ry) % 2 === 0) {
+          ctx.fillStyle = pal.oreEdge
+          ctx.fillRect(rx * C + 1, ry * C + 1, 1, 1)
+        }
+        // A plate seam every fourth column, so the decks read as bolted
+        // sections rather than one extruded girder.
+        if (rx % 4 === 0) {
+          ctx.fillStyle = pal.oreShade
+          ctx.fillRect(rx * C, ry * C, 1, C)
+        }
+      }
+    }
+  }
+
   var wash = ctx.createLinearGradient(0, k.SKY * C, 0, rows * C)
   wash.addColorStop(0, pal.washTop)
   wash.addColorStop(1, pal.washLow)
@@ -174,7 +200,7 @@ function drawDecor(ctx, w, pal) {
     // palette plus a detail or two does the rest.
     var ruins = w.biome === "Ruins"
     var frost = w.biome === "Frost" || w.biome === "Ice Cave"
-    var foundry = w.biome === "Foundry" || w.biome === "Spaceship"
+    var foundry = w.biome === "Foundry" || w.biome === "Spaceship" || w.biome === "Factory"
     var jungle = w.biome === "Jungle"
 
     if (d.kind === "spire") {
@@ -371,6 +397,21 @@ function drawExitBack(ctx, w, pal) {
     ctx.fillRect(cx3 - 2, y - 9, 4, 2)                  // lamp over the door
     break
 
+  case "Factory":
+    // A roller shutter in a bolted frame, with the slats drawn in above the
+    // opening as though it has been wound up and is waiting to come down.
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x - 5, y - 8, ww + 10, 3)                  // the header box
+    ctx.fillRect(x - 4, y - 5, 3, hh + 5)
+    ctx.fillRect(x + ww + 1, y - 5, 3, hh + 5)
+    ctx.fillStyle = pal.rigDark
+    for (var sl2 = 0; sl2 < 4; sl2++)                       // rolled-up slats
+      ctx.fillRect(x - 2, y - 7 + sl2 * 2, ww + 4, 1)
+    ctx.fillStyle = pal.warn
+    ctx.fillRect(x - 4, y - 5, 3, 3)                        // the two lamps
+    ctx.fillRect(x + ww + 1, y - 5, 3, 3)
+    break
+
   default:
     // Cavern: the original stepped lintel, two courses, the upper one wider.
     ctx.fillRect(x - 4, y - 6, ww + 8, 3)
@@ -384,9 +425,166 @@ function drawExitBack(ctx, w, pal) {
 // Actor layer
 // ---------------------------------------------------------------------------
 
+// Factory fittings, drawn on the per-tick layer rather than with the rest of
+// the decor. drawDecor runs inside drawTerrain, which only repaints when the
+// terrain changes — a cog painted there is a cog that never turns and smoke
+// that never rises, which is most of what this biome is supposed to be. They
+// go in first so the machinery sits behind the agents working in front of it.
+function drawMachines(ctx, w, pal) {
+  if (w.biome !== "Factory") return
+  var k = w.k
+  var C = k.CELL
+  for (var i = 0; i < w.decor.length; i++) {
+    var d = w.decor[i]
+    if (d.kind !== "cog" && d.kind !== "vent" && d.kind !== "gauge") continue
+    var px = d.x * C
+    var py = d.y * C
+
+    // Factory fittings. The cog turns and the vent breathes on their own
+    // clocks, because the one thing a machine room has to do is look like it
+    // is running even on the stretches where nothing is trying to kill anybody.
+    if (d.kind === "cog") {
+      if (w.terrain[d.y * k.COLS + d.x] === k.EMPTY) continue
+      var cr = 3 + d.size
+      var ccx = px + cr, ccy = py + cr
+      // Slow. A big wheel that whips round reads as a fan; the whole point of
+      // a flywheel is mass, and mass is legible as unhurried.
+      var spin = (w.ticks * 0.012 + d.seed) % (Math.PI * 2)
+
+      // The bracket it hangs on, so the wheel belongs to the wall behind it
+      // rather than floating in front of the level.
+      ctx.fillStyle = pal.rigDark
+      ctx.fillRect(ccx - 2, ccy - cr - 4, 4, cr + 4)
+      ctx.fillRect(ccx - cr - 3, ccy - 2, 4, 4)
+      ctx.fillRect(ccx + cr - 1, ccy - 2, 4, 4)
+
+      // A thin bright rim with nothing inside it. The first version filled the
+      // disc in a dim colour and it read as a mud ball: the wheel only works
+      // if the background shows through between the spokes.
+      ctx.fillStyle = pal.oreEdge
+      for (var a3 = 0; a3 < 72; a3++) {
+        var th3 = (a3 / 72) * Math.PI * 2
+        ctx.fillRect(Math.round(ccx + Math.cos(th3) * cr), Math.round(ccy + Math.sin(th3) * cr), 2, 2)
+      }
+      // Teeth, clear of the rim and few enough to count as they go past.
+      ctx.fillStyle = pal.ore
+      for (var tk = 0; tk < 10; tk++) {
+        var a2 = spin + tk * Math.PI / 5
+        ctx.fillRect(Math.round(ccx + Math.cos(a2) * (cr + 3)) - 1,
+                     Math.round(ccy + Math.sin(a2) * (cr + 3)) - 1, 3, 3)
+      }
+      // Four spokes, a rivet where each meets the rim, and a heavy hub.
+      for (var spk = 0; spk < 4; spk++) {
+        var sa2 = spin + spk * Math.PI / 2
+        ctx.fillStyle = pal.ore
+        for (var rr = 3; rr < cr; rr++)
+          ctx.fillRect(Math.round(ccx + Math.cos(sa2) * rr), Math.round(ccy + Math.sin(sa2) * rr), 2, 2)
+        ctx.fillStyle = pal.oreEdge
+        ctx.fillRect(Math.round(ccx + Math.cos(sa2) * (cr - 1)) - 1,
+                     Math.round(ccy + Math.sin(sa2) * (cr - 1)) - 1, 2, 2)
+      }
+      ctx.fillStyle = pal.rigDark
+      ctx.fillRect(ccx - 3, ccy - 3, 6, 6)
+      ctx.fillStyle = pal.oreEdge
+      ctx.fillRect(ccx - 1, ccy - 1, 2, 2)
+      continue
+    }
+
+    // A pressure gauge: a brass case, a pale face and a needle that wanders.
+    // Ornament rather than repetition, and the one fitting in here that
+    // implies somebody is supposed to be reading it.
+    if (d.kind === "gauge") {
+      if (w.terrain[d.y * k.COLS + d.x] === k.EMPTY) continue
+      var gr = 4
+      var gcx = px + gr, gcy = py + gr
+      ctx.fillStyle = pal.rigDark
+      ctx.fillRect(gcx - gr - 1, gcy - gr - 1, gr * 2 + 2, gr * 2 + 2)
+      ctx.fillStyle = pal.decorLit
+      ctx.fillRect(gcx - gr + 1, gcy - gr + 1, gr * 2 - 2, gr * 2 - 2)
+      ctx.fillStyle = pal.rigDark
+      ctx.fillRect(gcx - gr - 1, gcy - gr - 1, 2, 2)
+      ctx.fillRect(gcx + gr - 1, gcy - gr - 1, 2, 2)
+      ctx.fillRect(gcx - gr - 1, gcy + gr - 1, 2, 2)
+      ctx.fillRect(gcx + gr - 1, gcy + gr - 1, 2, 2)
+      // Mostly in the safe half, drifting toward the red now and then.
+      var swing = Math.sin(w.ticks * 0.01 + d.seed) * 0.9 - 2.2
+      ctx.fillStyle = pal.warn
+      for (var nl = 1; nl <= gr - 1; nl++)
+        ctx.fillRect(Math.round(gcx + Math.cos(swing) * nl), Math.round(gcy + Math.sin(swing) * nl), 1, 1)
+      continue
+    }
+
+    if (d.kind === "vent") {
+      if (w.terrain[(d.y + 1) * k.COLS + d.x] === k.EMPTY) continue
+      ctx.fillStyle = pal.rigDark
+      ctx.fillRect(px, py + C - 3, 8, 3)                    // the cowl
+      ctx.fillStyle = pal.rig
+      ctx.fillRect(px + 1, py + C - 4, 6, 1)
+      // Three puffs on a long cycle, rising and fading. Smoke is the whole
+      // reason this fitting exists, so it gets the pixels.
+      // How far it may rise. These fittings are on the per-tick layer, which
+      // paints over the terrain rather than under it, so an unclamped plume
+      // would pour straight up through the ceiling of its own corridor.
+      var head = 0
+      while (head < 14 && w.terrain[(d.y - head - 1) * k.COLS + d.x] === k.EMPTY) head++
+      var span = Math.max(1, head * C - 2)
+
+      for (var sm = 0; sm < 4; sm++) {
+        var ph2 = (w.ticks * 0.5 + sm * 30 + d.seed) % 120
+        if (ph2 > 100) continue
+        if (ph2 * 0.5 > span) continue
+        // Smoke over a dark board needs more than a hint of alpha or it is
+        // simply not there. Fades from most of the way opaque, and grows.
+        ctx.globalAlpha = 0.55 * (1 - ph2 / 100)
+        ctx.fillStyle = pal.decorLit
+        var puff = 3 + Math.round(ph2 / 14)
+        ctx.fillRect(Math.round(px + 4 - puff / 2 + Math.sin(ph2 * 0.05 + sm) * 3),
+                     Math.round(py + C - 6 - ph2 * 0.5), puff, puff)
+      }
+      ctx.globalAlpha = 1
+      continue
+    }
+
+  }
+}
+
+// The warning, and then the name of what just happened. An event that changes
+// the level without saying so is indistinguishable from the sim misbehaving,
+// so the telegraph is not decoration: it is the difference between "the floor
+// went" and "the floor went, and it said Legacy Collapse first".
+function drawEventBanner(ctx, w, pal) {
+  var warn = w.eventWarnFor > 0
+  var flash = w.eventFlash > 0
+  if (!warn && !flash) return
+  var k = w.k
+  var mid = (k.COLS * k.CELL) / 2
+  var y = (k.SKY + 1) * k.CELL
+
+  ctx.save()
+  ctx.font = "9px monospace"
+  ctx.textAlign = "center"
+  if (warn) {
+    // Blinks while it is coming, and faster as it gets closer.
+    var near = w.eventWarnFor < 25
+    if (Math.floor(w.ticks / (near ? 3 : 7)) % 2 === 0) {
+      ctx.globalAlpha = 0.9
+      ctx.fillStyle = pal.warn
+      ctx.fillText("\u25b2 " + w.eventWarn + " \u25b2", mid, y)
+    }
+  } else {
+    // Held for a moment after it lands, fading out.
+    ctx.globalAlpha = Math.min(1, w.eventFlash / 40)
+    ctx.fillStyle = pal.fireHot
+    ctx.fillText(w.eventWarn, mid, y)
+  }
+  ctx.restore()
+  ctx.globalAlpha = 1
+}
+
 function drawActors(ctx, w, pal, opts) {
   var k = w.k
   clearLayer(ctx, w)
+  drawMachines(ctx, w, pal)
   drawPits(ctx, w, pal)
   drawSpecialCard(ctx, w, pal)
   drawHatch(ctx, w, pal)
@@ -394,6 +592,8 @@ function drawActors(ctx, w, pal, opts) {
   drawExitGlow(ctx, w, pal)
 
   for (var dhi = 0; dhi < w.hazards.length; dhi++) drawHazard(ctx, w, pal, w.hazards[dhi], opts)
+
+  drawEventBanner(ctx, w, pal)
 
   // Planted mines are separate actors: a small pulsing charge on the floor
   // with its own three-second countdown, rather than a tool hidden in a pose.
@@ -577,6 +777,17 @@ function drawPool(ctx, w, pal, p, px, pw, bot) {
       ctx.globalAlpha = 1 - eph / 60
       ctx.fillStyle = e % 2 ? pal.poolGlint : pal.poolLip
       ctx.fillRect(ex, sy - Math.round(eph * 0.22), 1, 2)
+    }
+    ctx.globalAlpha = 1
+  } else if (p.liquid === "oil") {
+    // Neither glints nor churns. A slick drifts: broad bands of sheen that
+    // slide along the surface, so the pool reads as something with a skin on
+    // it rather than something with a depth to it.
+    for (var sl = 0; sl < 3; sl++) {
+      var band = (t * 0.22 + sl * 47 + p.seed) % (pw + 30) - 15
+      ctx.globalAlpha = 0.16 + 0.07 * Math.sin(t * 0.02 + sl)
+      ctx.fillStyle = sl % 2 ? pal.poolGlint : pal.poolLip
+      ctx.fillRect(px + Math.round(band), sy + 1 + sl, 18, 1)
     }
     ctx.globalAlpha = 1
   } else if (p.liquid === "coolant") {
@@ -949,18 +1160,6 @@ var SPECIAL_FACTS = {
     "creates synthetic agents from organic mistakes.",
     "the third copy is mostly robe and conviction.",
     "collapsed the distribution into a small crowd."
-  ],
-  ratelimit: [
-    "received five agents and returned 429.",
-    "allows one thought per billing interval.",
-    "fixed congestion by making it stationary.",
-    "has asked the colony to retry later.",
-    "protects capacity from anything getting done.",
-    "releases tokens one deeply considered pixel at a time.",
-    "calls the queue a successful backpressure strategy.",
-    "throttles first and measures never.",
-    "the request was valid. The timing was personal.",
-    "has plenty of bandwidth and a strict principle."
   ]
 }
 
@@ -1677,6 +1876,74 @@ function drawHazardKind(ctx, w, pal, h) {
     }
     break
 
+  // --- Factory ------------------------------------------------------------
+  case "stamper":
+    // A press on a ram. The head sits high while it winds and is driven to the
+    // floor of its zone when it fires, so the whole cycle is in one moving part.
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0 + 1, y0, wide - 2, 3)                   // the gantry
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(cx - 2, y0 + 3, 4, live ? tall - 9 : 6)    // the ram
+    var headY = live ? y1 - 6 : y0 + 9
+    ctx.fillRect(x0 + 2, headY, wide - 4, 6)                // the head
+    ctx.fillStyle = pal.rigDark
+    for (var sb = 0; sb < wide - 6; sb += 4)                // its bolts
+      ctx.fillRect(x0 + 3 + sb, headY + 2, 2, 2)
+    if (show) {
+      ctx.fillStyle = hot
+      ctx.fillRect(x0 + 2, live ? y1 - 1 : headY + 6, wide - 4, 1)
+    }
+    break
+
+  case "flywheel":
+    // A wheel that idles and then runs up. Dormant it turns slowly, live it
+    // blurs into a disc and throws its spokes out as a ring.
+    var fr = Math.min(wide, tall) / 2 - 1
+    var fcx = cx, fcy = y0 + tall / 2
+    var rate = live ? 0.42 : (winding ? 0.16 : 0.04)
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(fcx - fr - 1, fcy - 1, fr * 2 + 2, 2)      // the shaft
+    ctx.fillStyle = pal.rig
+    for (var sp = 0; sp < 6; sp++) {
+      var sa = t * rate + sp * Math.PI / 3
+      ctx.fillRect(Math.round(fcx + Math.cos(sa) * fr) - 1,
+                   Math.round(fcy + Math.sin(sa) * fr) - 1, 2, 2)
+    }
+    ctx.fillStyle = live ? hot : pal.rigDark
+    ctx.fillRect(fcx - 2, fcy - 2, 4, 4)                    // the hub
+    if (live) {
+      ctx.globalAlpha = 0.4
+      ctx.fillStyle = hot
+      for (var rg = 0; rg < 10; rg++) {
+        var ra = t * rate * 1.6 + rg * Math.PI / 5
+        ctx.fillRect(Math.round(fcx + Math.cos(ra) * (fr + 3)) - 1,
+                     Math.round(fcy + Math.sin(ra) * (fr + 3)) - 1, 2, 2)
+      }
+      ctx.globalAlpha = 1
+    }
+    break
+
+  case "steamvent":
+    // A floor pipe that lets go upward. Nothing to see between times except
+    // the cowl, which is the point: the danger is the column, not the fitting.
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(cx - 4, y1 - 4, 8, 4)                      // the cowl
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(cx - 3, y1 - 6, 6, 2)
+    if (show) {
+      // The column, widening as it rises and thinning as it loses pressure.
+      for (var jv = 0; jv < tall - 6; jv += 2) {
+        var lift = live ? 1 : 0.45
+        var wj = 2 + Math.round(jv * 0.22 * lift)
+        ctx.globalAlpha = (live ? 0.75 : 0.35) * (1 - jv / (tall - 6))
+        ctx.fillStyle = jv % 4 === 0 ? hot : pal.decorLit
+        ctx.fillRect(cx - wj / 2 + Math.sin((t * 0.12) + jv * 0.4) * 2,
+                     y1 - 7 - jv, wj, 2)
+      }
+      ctx.globalAlpha = 1
+    }
+    break
+
   case "servo":
     // An arm on a rail that swings down and sweeps.
     var swing2 = live ? 1 : (winding ? 0.5 : 0)
@@ -1826,6 +2093,53 @@ function drawEnemy(ctx, w, pal, en, opts) {
       ctx.fillText("Drone Operator", ox + 4, oy - 4)
     }
     ctx.globalAlpha = 1
+    return
+  }
+
+  // The xenomorph. It has to read as not-an-agent at a glance and from a
+  // silhouette alone, because the whole event turns on noticing that one of
+  // the blue rectangles is now a low, long, wrong-coloured thing. Nothing
+  // about it is square: it crouches, it is longer than it is tall, and the
+  // head is out in front of the body rather than on top of it.
+  if (en.kind === "xeno") {
+    var xg = "#3f7d4a"
+    var xgLit = "#7de37a"
+    var lope = Math.floor(en.anim / 5) % 4
+    var bob = lope === 1 || lope === 3 ? 1 : 0
+
+    ctx.fillStyle = xg
+    blit(ctx, ox, oy, dir, 1, 11 + bob, 8, 4)        // the long body
+    blit(ctx, ox, oy, dir, 7, 8 + bob, 4, 4)         // shoulders, forward
+    ctx.fillStyle = xgLit
+    blit(ctx, ox, oy, dir, 9, 7 + bob, 5, 3)         // the head, out in front
+    ctx.fillStyle = "#0f1a12"
+    blit(ctx, ox, oy, dir, 11, 8 + bob, 2, 1)        // no eyes, just the socket
+
+    // The tail: a counterweight that swings against the legs, which is most
+    // of what makes it read as moving rather than sliding.
+    ctx.fillStyle = xg
+    var sway = Math.round(Math.sin(en.anim * 0.22) * 2)
+    blit(ctx, ox, oy, dir, -3, 10 + sway, 4, 2)
+    blit(ctx, ox, oy, dir, -6, 9 + sway * 2, 3, 2)
+
+    // Legs, out of phase with each other.
+    ctx.fillStyle = "#2c5a35"
+    blit(ctx, ox, oy, dir, 2, 15 + bob, 2, 3 - bob)
+    blit(ctx, ox, oy, dir, 6, 15 + (1 - bob), 2, 3 - (1 - bob))
+
+    if (en.touchCool > 0) {
+      // Sated, briefly. The one moment it is not a threat, and it says so.
+      ctx.globalAlpha = 0.5
+      ctx.fillStyle = xgLit
+      blit(ctx, ox, oy, dir, 9, 5 + bob, 2, 1)
+      ctx.globalAlpha = 1
+    }
+    if (opts && opts.labels) {
+      ctx.fillStyle = xgLit
+      ctx.font = "7px monospace"
+      ctx.textAlign = "center"
+      ctx.fillText("Adversarial Input", ox + 4, oy - 4)
+    }
     return
   }
 
@@ -2012,7 +2326,7 @@ function drawAgentTrick(ctx, w, pal, ag, ox, oy, dir, robe, hair) {
         ctx.fillStyle = pal.rigDark
         ctx.fillRect(gunX, mid - 1, 9, 3)          // receiver and long barrel
         ctx.fillRect(dir > 0 ? gunX - 3 : gunX + 8, mid + 2, 4, 4)
-        var spraySlopes = [-0.16, 0.10, -0.06, 0.14, 0, -0.12, 0.06, -0.18, 0.12, -0.03, 0.17, -0.09]
+        var spraySlopes = w.k.SPRAY_SLOPES
         var shotIndex = Math.min(11, Math.floor(Math.max(0, ag.timer - 1) / 2))
         var muzzleCellY = Math.floor(ag.y) - 2
         var shotSlope = spraySlopes[shotIndex]
@@ -2077,13 +2391,6 @@ function drawAgentTrick(ctx, w, pal, ag, ox, oy, dir, robe, hair) {
         ctx.fillRect(tx + dir * 6 - (dir < 0 ? 1 : 0), oy + SPRITE_PX - 4 - rungs * 5, 1, rungs * 5)
         ctx.globalAlpha = 0.35
         ctx.fillRect(tx + dir * 2 - (dir < 0 ? 5 : 0), oy + SPRITE_PX - 9 - rungs * 5, 6, 2)
-        break
-
-      case "limit":                             // a gate closes on the queue
-        var gate = Math.round(12 * reach)
-        ctx.fillRect(ox - gate, oy + 2, 2, 14)
-        ctx.fillRect(ox + SPRITE_W + gate, oy + 2, 2, 14)
-        ctx.fillRect(ox - gate, oy + 2, SPRITE_W + gate * 2, 2)
         break
     }
     ctx.globalAlpha = 1
@@ -2160,10 +2467,6 @@ function drawAgentHeightGear(ctx, w, pal, ag, ox, oy, dir, robe, hair) {
         ctx.fillRect(ox - 6, oy - 10, 20, 6)
         ctx.fillStyle = pal.eye; ctx.font = "bold 6px monospace"; ctx.textAlign = "center"
         ctx.fillText("LAND", ox + 4, oy - 5); break
-      case "elevator":
-        ctx.fillRect(ox - 4, oy + 16, 16, 2)
-        ctx.fillRect(ox - 4, oy - 4, 2, 22); ctx.fillRect(ox + 10, oy - 4, 2, 22)
-        for (var eb = -2; eb < 16; eb += 4) ctx.fillRect(ox - 5, oy + eb, 18, 1); break
       case "extender":
         ctx.fillRect(ox - 3, oy - 3, 2, 22); ctx.fillRect(ox + 9, oy - 3, 2, 22)
         for (var er = 0; er < 22; er += 5) ctx.fillRect(ox - 3, oy + er, 14, 1); break
@@ -2185,9 +2488,76 @@ function drawAgentHeightGear(ctx, w, pal, ag, ox, oy, dir, robe, hair) {
         ctx.fillStyle = "#8a4b22"; ctx.fillRect(ox - 7, oy + 15, 22, 4)
         ctx.fillStyle = "#c8843f"; ctx.fillRect(ox - 6, oy + 16, 20, 1); break
       case "recoil":
-      case "gunwing":
         ctx.fillRect(ox - dir * 8, oy + 8, 9, 3)
         ctx.fillStyle = "#ffe68a"; ctx.fillRect(ox - dir * 11, oy + 8, 4, 3); break
+
+      // RAMbo rides his own recoil: the gun points at the floor and each shot
+      // kicks him higher. It used to share Max Tokens' sideways barrel, which
+      // read as a man carrying a gun through the air rather than a man being
+      // pushed up by one — and the two specials were indistinguishable in
+      // flight. The beat here is the same five shots the climb is built from
+      // in stepSpecialHeight, so the flash lands on the kick.
+      case "gunwing": {
+        // One round at a time, each at the next angle in the burst, with the
+        // gun swinging to follow it — the same thing his spray move does at a
+        // wall, pointed at the floor instead. Not a fan: the weapon fires one
+        // tracer per shot and sweeps between them.
+        //
+        // Two things this drawing has to stay away from. The gun is small and
+        // held out to the side, because a long barrel hanging from the middle
+        // of an eight-pixel sprite does not read as a gun at all. And there is
+        // exactly one stream of anything: ejected brass was drawn here once
+        // and read as a second burst being fired sideways.
+        var slopes = w.k.SPRAY_SLOPES
+        var shots = w.k.GUNWING_SHOTS
+        var shotIx = Math.min(shots - 1, Math.floor(hp * shots))
+        var beat = (hp * shots) % 1
+        var slope = slopes[shotIx % slopes.length]
+
+        // The slopes are gentle because the spray move throws them down a long
+        // corridor, where a shallow angle is a wide deviation by the far end.
+        // Here the throw is a few body-lengths, so they open right out.
+        var aimX = slope * 8
+        var len = Math.sqrt(aimX * aimX + 1)
+        var ux = aimX / len, uy = 1 / len
+
+        // Rounds stop at the ground: this layer paints over the terrain, so
+        // an unclamped tracer carries on through the floor it is fired at.
+        var gcx = Math.floor(ag.x)
+        var toFloor = 0
+        while (toFloor < 34
+               && w.terrain[(Math.floor(ag.y) + 1 + toFloor) * w.k.COLS + gcx] === w.k.EMPTY) toFloor++
+        var floorPx = Math.max(5, toFloor * w.k.CELL - 2)
+
+        // Held out on whichever side it is aiming, not on the side he happens
+        // to be facing: gripped on the leading side it swung back across his
+        // own body every other round and spent half the burst hidden behind
+        // him. Moving the grip with the aim is also what the swing looks like.
+        var gripX = ox + 3 + (ux < -0.05 ? -3 : (ux > 0.05 ? 3 : 0))
+        var gripY = oy + 9
+        var muzX = gripX + ux * 6
+        var muzY = gripY + uy * 6
+
+        ctx.fillStyle = "#6f7180"
+        for (var gb = 1; gb <= 6; gb += 2)
+          ctx.fillRect(Math.round(gripX + ux * gb), Math.round(gripY + uy * gb), 2, 2)
+        ctx.fillStyle = hc
+        ctx.fillRect(Math.round(gripX), gripY - 1, 2, 3)         // the hand on it
+
+        // The round, out along the line the barrel is pointing.
+        var travel = 3 + beat * (floorPx - 3)
+        ctx.fillStyle = "#ffe68a"
+        ctx.fillRect(Math.round(muzX + ux * travel), Math.round(muzY + uy * travel), 2, 3)
+        ctx.globalAlpha = 0.35
+        ctx.fillRect(Math.round(muzX + ux * (travel - 5)), Math.round(muzY + uy * (travel - 5)), 1, 2)
+        ctx.globalAlpha = 1
+
+        if (beat < 0.3) {
+          ctx.fillStyle = "#ffe68a"
+          ctx.fillRect(Math.round(muzX), Math.round(muzY), 2, 2)
+        }
+        break
+      }
       case "cyclone":
         ctx.globalAlpha = 0.35
         ctx.fillRect(ox - 8, oy + 5, 24, 2); ctx.fillRect(ox - 4, oy + 12, 16, 2)
@@ -2249,17 +2619,6 @@ function drawAgent(ctx, w, pal, ag, opts) {
     ctx.fillStyle = hair
     for (var mg = 0; mg < ag.modelGen + 1; mg++)
       ctx.fillRect(ox - 2 + ((ag.id + mg * 5) % 13), oy + ((ag.anim + mg * 7) % 16), 1, 1)
-  }
-
-  if (st === "limited") {
-    // Two hard bars and a shrinking quota pip: unmistakably stopped, without
-    // making the held agent look dead or blocked forever.
-    ctx.fillStyle = pal.warn
-    ctx.fillRect(ox - 2, oy + 3, 2, 11)
-    ctx.fillRect(ox + SPRITE_W, oy + 3, 2, 11)
-    ctx.fillRect(ox - 2, oy + 3, SPRITE_W + 4, 1)
-    ctx.fillStyle = pal.label
-    ctx.fillRect(ox - 1, oy, Math.max(1, Math.min(10, Math.ceil(ag.limitedFor / 8))), 2)
   }
 
   if (st === "stunned") {
@@ -2509,6 +2868,20 @@ function drawAgent(ctx, w, pal, ag, opts) {
     blit(ctx, ox, oy, dir, 5, 8, 2, 3)
   }
 
+  // Nothing at all for the first two thirds of an incubation — that is the
+  // point of it. Then something under the skin starts keeping its own time,
+  // and it is deliberately small: the reward for watching one agent closely
+  // rather than a klaxon that plays the ending early.
+  if (ag.infected > 0 && ag.infected < w.k.INCUBATION_TELL && st !== "saved") {
+    var pulse = 0.35 + 0.45 * Math.sin(w.ticks * 0.32)
+    if (pulse > 0.45) {
+      ctx.globalAlpha = Math.min(1, (w.k.INCUBATION_TELL - ag.infected) / 60) * pulse
+      ctx.fillStyle = "#7de37a"
+      blit(ctx, ox, oy, dir, 3, 9, 2, 2)
+      ctx.globalAlpha = 1
+    }
+  }
+
   if (heightBodySaved) ctx.restore()
 
   // --- optional label ----------------------------------------------------
@@ -2550,7 +2923,6 @@ function actionLabel(st) {
   if (st === "height") return "height move"
   if (st === "webup") return "web climb"
   if (st === "stunned") return "wounded"
-  if (st === "limited") return "rate limited"
   if (st === "trick") return "!"
   if (st === "camp") return "camped"
   return ""

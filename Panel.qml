@@ -118,7 +118,6 @@ Panel {
       saved: world.saved,
       out: world.released,
       total: world.toRelease,
-      target: world.target || world.toRelease,
       lost: world.lost,
       active: world.active || 0,
       done: world.done,
@@ -358,7 +357,7 @@ Panel {
             // whole way turns something you're watching to unwind into
             // something with a deadline, which is the opposite of the point —
             // but the nuke arriving out of a clear sky is worse.
-            text: "Home " + root.stats.saved + "/" + root.stats.target
+            text: "Home " + root.stats.saved + "/" + root.stats.total
                   + (root.stats.lost > 0 ? "  ·  Lost " + root.stats.lost : "")
                   + (root.stats.nuking ? "  ·  NUKE"
                      : ((root.stats.secondsLeft !== undefined && root.stats.secondsLeft <= 30)
@@ -383,8 +382,8 @@ Panel {
             color: Qt.darker(root.bar.foreground, 3.5)
 
             Rectangle {
-              width: parent.width * (root.stats.target > 0
-                                     ? Math.min(1, root.stats.saved / root.stats.target) : 0)
+              width: parent.width * (root.stats.total > 0
+                                     ? Math.min(1, root.stats.saved / root.stats.total) : 0)
               height: parent.height
               radius: height / 2
               color: Color.accent
