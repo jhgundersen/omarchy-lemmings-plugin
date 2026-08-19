@@ -46,13 +46,31 @@ function materialShade(k, pal, m) {
   return pal.steelShade
 }
 
+// Wipe a layer back to nothing.
+//
+// This used to be ctx.reset(), which is the tidy way to say it and the way that
+// is least reliably implemented. It is recent (Safari only got it in 16.4), it
+// throws outright where it is missing — the reason web.js carried a polyfill —
+// and on iOS it has been seen to return without the displayed surface actually
+// being cleared, which shows up as a few pixels of an agent left behind on the
+// ground it walked over, sometimes, on one device and not the next.
+//
+// clearRect is as old as canvas itself and is the path every engine keeps
+// working. The state reset/ that reset() gave for free is done by hand: the two
+// draw passes both leave globalAlpha at 1 already, and this makes sure of it.
+function clearLayer(ctx, w) {
+  if (typeof ctx.setTransform === "function") ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.globalAlpha = 1
+  ctx.clearRect(0, 0, w.k.COLS * w.k.CELL, w.k.ROWS * w.k.CELL)
+}
+
 function drawTerrain(ctx, w, pal) {
   var k = w.k
   var C = k.CELL
   var cols = k.COLS
   var rows = k.ROWS
 
-  ctx.reset()
+  clearLayer(ctx, w)
 
   // Sky: a shallow gradient so the open air above the earth has some depth
   // rather than reading as a flat panel background.
@@ -420,7 +438,8 @@ function drawExitBack(ctx, w, pal) {
 
 function drawActors(ctx, w, pal, opts) {
   var k = w.k
-  ctx.reset()
+  clearLayer(ctx, w)
+  drawPits(ctx, w, pal)
   drawSpecialCard(ctx, w, pal)
   drawHatch(ctx, w, pal)
   drawEnemyHatch(ctx, w, pal, opts)
@@ -499,6 +518,250 @@ function drawActors(ctx, w, pal, opts) {
   for (var ei = 0; ei < w.enemies.length; ei++) {
     var enemy = w.enemies[ei]
     if (!enemy.gone) drawEnemy(ctx, w, pal, enemy, opts)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The pit
+//
+// On the actors layer rather than the terrain layer, because the surface moves
+// and the terrain layer only repaints when a cell changes. Nothing is ever
+// drawn in front of it: the shaft is empty terrain all the way down, and a
+// bridge laid over the hole sits at the corridor floor, several cells above
+// the waterline.
+// ---------------------------------------------------------------------------
+
+function drawPits(ctx, w, pal) {
+  if (!w.pits || !w.pits.length) return
+  var k = w.k
+  var C = k.CELL
+
+  for (var i = 0; i < w.pits.length; i++) {
+    var p = w.pits[i]
+    var px = p.x0 * C
+    var pw = (p.x1 - p.x0 + 1) * C
+    var top = p.floorY * C
+    var bot = k.ROWS * C
+
+    // Depth first, and every pit gets it. A hole cut through the bedrock is
+    // exactly the same colour as the corridor it opens off, so undrawn it reads
+    // as a doorway rather than as a drop — which is a poor thing for the one
+    // feature on the board that kills whatever walks into it.
+    var deep = ctx.createLinearGradient(0, top, 0, bot)
+    deep.addColorStop(0, pal.pitLip)
+    deep.addColorStop(1, pal.pitDeep)
+    ctx.fillStyle = deep
+    ctx.fillRect(px, top, pw, bot - top)
+
+    if (!p.liquid) continue
+    drawPool(ctx, w, pal, p, px, pw, bot)
+  }
+}
+
+function drawPool(ctx, w, pal, p, px, pw, bot) {
+  var C = w.k.CELL
+  var sy = p.surfaceY * C
+  var t = w.ticks
+
+  var body = ctx.createLinearGradient(0, sy, 0, bot)
+  body.addColorStop(0, pal.poolBody)
+  body.addColorStop(1, pal.poolDeep)
+  ctx.fillStyle = body
+  ctx.fillRect(px, sy, pw, bot - sy)
+
+  // The order from here is what makes a half-submerged animal work without a
+  // single clip or a second sprite. The whole creature is drawn first, then the
+  // water is laid back over everything below the line — so the part that is
+  // under goes green-through-water and the part that is out stays sharp, and
+  // an animal rising through the surface does it a pixel at a time for free.
+  if (p.croc) drawCroc(ctx, w, pal, p, px, pw, sy)
+
+  ctx.globalAlpha = 0.74
+  ctx.fillStyle = pal.poolBody
+  ctx.fillRect(px, sy + 1, pw, Math.min(20, bot - sy - 1))
+  ctx.globalAlpha = 1
+
+  // The waterline: two slow sine waves of different periods laid over each
+  // other, so the surface never repeats on a count anybody can follow. Drawn
+  // two pixels at a time, which at this scale is what keeps it a drawn line
+  // rather than an anti-aliased smear.
+  ctx.fillStyle = pal.poolLip
+  for (var c = 0; c < pw; c += 2) {
+    var wob = Math.sin(c * 0.11 + t * 0.045 + p.seed)
+            + Math.sin(c * 0.047 - t * 0.028)
+    ctx.fillRect(px + c, sy + Math.round(wob), 2, 2)
+  }
+
+  // What the surface does when nobody is in it. Lava spits, coolant strobes
+  // along its length, water catches the light — three pools that behave
+  // differently enough that the biome is legible from the hole alone.
+  if (p.liquid === "lava") {
+    for (var e = 0; e < 5; e++) {
+      var eph = (t * 0.9 + e * 137 + p.seed) % 220
+      if (eph > 60) continue
+      var ex = px + ((e * 53 + p.seed) % Math.max(1, pw - 2))
+      ctx.globalAlpha = 1 - eph / 60
+      ctx.fillStyle = e % 2 ? pal.poolGlint : pal.poolLip
+      ctx.fillRect(ex, sy - Math.round(eph * 0.22), 1, 2)
+    }
+    ctx.globalAlpha = 1
+  } else if (p.liquid === "coolant") {
+    var scan = (t * 1.6 + p.seed) % (pw + 40) - 20
+    ctx.globalAlpha = 0.5
+    ctx.fillStyle = pal.poolGlint
+    ctx.fillRect(px + Math.round(scan), sy + 2, 14, 1)
+    ctx.globalAlpha = 1
+  } else {
+    for (var g = 0; g < 3; g++) {
+      var gx = px + ((g * 29 + p.seed + Math.floor(t / 40) * 7) % Math.max(1, pw - 6))
+      ctx.globalAlpha = 0.30 + 0.22 * Math.sin(t * 0.06 + g)
+      ctx.fillStyle = pal.poolGlint
+      ctx.fillRect(gx, sy + 3, 4, 1)
+    }
+    ctx.globalAlpha = 1
+  }
+
+  // Somebody went in. Rings, for about a second and a half after.
+  var age = t - p.ripple
+  if (age >= 0 && age < 45) {
+    ctx.globalAlpha = 1 - age / 45
+    ctx.fillStyle = pal.poolLip
+    for (var r = 0; r < 3; r++) {
+      var rad = age * 0.9 + r * 7
+      ctx.fillRect(px + pw / 2 - rad, sy + r, 2, 1)
+      ctx.fillRect(px + pw / 2 + rad, sy + r, 2, 1)
+    }
+    ctx.globalAlpha = 1
+  }
+}
+
+// Something lives in the swamp.
+//
+// It is scenery and nothing else: the water kills on contact whether or not
+// anything is showing, and the simulation has never heard of this. But a jungle
+// pool that is only ever a flat green rectangle is a texture, and the difference
+// between a texture and a place is that something in it keeps its own schedule.
+// It surfaces about every twenty-five seconds, crosses a stretch of the pool
+// with its eyes and back ridges out, opens up once in the middle, and goes
+// under — long enough to be worth catching, rare enough to still be worth
+// catching the second time.
+//
+// The silhouette is the whole job at this size. A crocodile from the side is
+// three lengths of nothing much — a long flat snout, a body a little thicker,
+// and a tail — with exactly two things that say what it is: the brow with the
+// eye on top of it, and the row of ridges down the back. Draw those two and it
+// reads at forty pixels; leave them out and it is a floating log, which is what
+// the first attempt looked like.
+var CROC_CYCLE = 760
+var CROC_SHOW = 230
+var CROC_LEN = 34        // nose to tail tip, in pixels
+
+// Un-themed, like the green hair and the orange umbrella. At this size it has
+// to read as what it is without help from the palette.
+var CROC_HIDE = "#3a7033"
+var CROC_BACK = "#254a20"
+var CROC_LIT = "#6aa855"
+var CROC_EYE = "#f2d03a"
+var CROC_TOOTH = "#f4f0e2"
+
+// Every measurement in drawCroc is "this far back from the snout", whichever
+// way the animal is pointing, which is what makes the mirror free: one set of
+// numbers draws it swimming either way.
+function crocBar(ctx, nose, dir, y, back, len, top, h) {
+  var a = nose - dir * back
+  var b = nose - dir * (back + len)
+  ctx.fillRect(Math.min(a, b), y + top, len, h)
+}
+
+function drawCroc(ctx, w, pal, p, px, pw, sy) {
+  // Wide pools only. A pit five cells across is twenty pixels, which is not
+  // somewhere an animal swims across, it is somewhere one is wedged. In a pool
+  // with just enough room to hold it and none to spare, it surfaces on the
+  // spot instead of crossing — same rise, same gape, same slow sink.
+  if (pw < CROC_LEN + 8) return
+  var span = Math.max(0, pw - CROC_LEN - 10)
+
+  var ph = (w.ticks + p.seed * 7) % CROC_CYCLE
+  if (ph >= CROC_SHOW) return
+  var u = ph / CROC_SHOW
+
+  // Which way it swims alternates between visits, so the pool is not a conveyor
+  // belt running one way forever.
+  var dir = Math.floor((w.ticks + p.seed * 7) / CROC_CYCLE) % 2 ? -1 : 1
+  var travel = dir > 0 ? u : 1 - u
+  var nose = Math.round(px + 5 + travel * span + (dir > 0 ? CROC_LEN : 0))
+
+  // Up on the way in, down on the way out, riding the swell in between. The
+  // water is painted back over it afterwards, so "under" needs no special case:
+  // it is the same animal, four pixels lower.
+  var sink = 0
+  if (u < 0.16) sink = (1 - u / 0.16) * 8
+  else if (u > 0.84) sink = ((u - 0.84) / 0.16) * 8
+  var y = sy + Math.round(sink + Math.sin(w.ticks * 0.05 + p.seed) * 0.8)
+  if (sink > 7) return
+
+  // Tail, swept and swaying. Two lengths rather than a taper, because a taper
+  // at this size is one pixel of nothing.
+  var sway = Math.round(Math.sin(w.ticks * 0.11 + p.seed) * 1.4)
+  ctx.fillStyle = CROC_BACK
+  crocBar(ctx, nose, dir, y, 26, 8, 3 + sway, 2)
+  crocBar(ctx, nose, dir, y, 34, 5, 3 + sway * 2, 1)
+
+  // Body, one pixel thicker than the snout and sitting a shade lower than the
+  // head. That step from snout to body is most of what separates a crocodile
+  // from a floating branch.
+  ctx.fillStyle = CROC_HIDE
+  crocBar(ctx, nose, dir, y, 15, 12, 0, 4)
+
+  // Ridges: three bumps along the back, breathing out of step with each other,
+  // so the line of them is never quite straight.
+  ctx.fillStyle = CROC_BACK
+  for (var b = 0; b < 3; b++)
+    crocBar(ctx, nose, dir, y, 17 + b * 4, 3,
+            -2 + Math.round(Math.sin(w.ticks * 0.08 + b * 0.9 + p.seed) * 0.5), 2)
+
+  // The snout: long, flat and two pixels thick, which is the difference between
+  // a crocodile and a hippopotamus. It gapes once, in the middle of the
+  // crossing, and that is the whole performance.
+  var gape = u > 0.42 && u < 0.62 ? Math.sin((u - 0.42) / 0.20 * Math.PI) : 0
+  var jaw = Math.round(gape * 4)
+
+  ctx.fillStyle = CROC_HIDE
+  crocBar(ctx, nose, dir, y, 0, 13, 1, 2)              // lower jaw, on the water
+  crocBar(ctx, nose, dir, y, 1, 12, -1 - jaw, 2)       // upper, hinged at the brow
+  if (jaw > 0) {
+    ctx.fillStyle = CROC_TOOTH
+    for (var t2 = 0; t2 < 4; t2++) crocBar(ctx, nose, dir, y, 3 + t2 * 3, 1, 1 - jaw, jaw)
+  }
+
+  // A lit top edge, the same trick the earth uses: at this size a silhouette in
+  // one flat colour is a shape, and a shape with a bright line along its top is
+  // a thing with a back.
+  ctx.fillStyle = CROC_LIT
+  crocBar(ctx, nose, dir, y, 1, 11, -1 - jaw, 1)
+  crocBar(ctx, nose, dir, y, 16, 11, 0, 1)
+
+  // The brow, and the eye on top of it. This is the pixel that does the work.
+  ctx.fillStyle = CROC_HIDE
+  crocBar(ctx, nose, dir, y, 11, 5, -2, 5)
+  ctx.fillStyle = CROC_EYE
+  crocBar(ctx, nose, dir, y, 13, 2, -3, 2)
+  ctx.fillStyle = pal.eye
+  crocBar(ctx, nose, dir, y, dir > 0 ? 13 : 14, 1, -3, 2)
+
+  // Nostril at the very tip. One pixel, and without it the snout is a plank.
+  ctx.fillStyle = CROC_BACK
+  crocBar(ctx, nose, dir, y, 2, 1, -1 - jaw, 1)
+
+  // Wake, behind the tail and only when there is pool left to put it in — the
+  // animal is drawn from its nose, so at one end of a crossing the wake would
+  // otherwise be a bright line lying on the rock.
+  var wake = nose - dir * (CROC_LEN + 4)
+  if (wake > px + 2 && wake + 6 < px + pw) {
+    ctx.globalAlpha = 0.45
+    ctx.fillStyle = pal.poolLip
+    ctx.fillRect(Math.min(wake, wake - 6), y + 2, 6, 1)
+    ctx.globalAlpha = 1
   }
 }
 

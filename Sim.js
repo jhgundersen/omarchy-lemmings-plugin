@@ -417,6 +417,11 @@ function generate(level, attempt, colonySeed) {
     nextEnemyId: 1,
     mines: [],
     ladders: [],
+    // The hole in the bottom of the world, and whatever is at the bottom of
+    // it. A list because the shape is rolled per level and one roll cuts two;
+    // `pit` is the first, kept for the same reason `hazard` is.
+    pits: [],
+    pit: null,
     particles: [],
     buildSites: [],
     ticks: 0,
@@ -511,12 +516,6 @@ function generate(level, attempt, colonySeed) {
   for (var j = 0; j < corridors.length; j++) {
     var cur = corridors[j]
     placeObstacles(w, rng, cur, j, corridors)
-    // Middle corridors only: not the first (its near end is the hatch's
-    // landing pad) and not the last (its near end is where the exit goes).
-    // Last corridor only — see placeVoid for why anywhere else holes the
-    // floors underneath it.
-    if (j === corridors.length - 1 && hazardCorridors.indexOf(j) < 0 && rng() < 0.85)
-      placeVoid(w, cur, corridors[j - 1])
     if (j < corridors.length - 1) {
       carveDescent(w, rng, cur, corridors[j + 1])
       // (No hazard call: carveDescent now takes the whole stretch past the
@@ -688,6 +687,19 @@ function generate(level, attempt, colonySeed) {
   }
 
   for (var s = 0; s < SKILL_ORDER.length; s++) w.granted[SKILL_ORDER[s]] = 0
+
+  // The hole in the bottom of the world. It goes in here, after the exit and
+  // the wall in front of it are settled — a crossing has to be placed relative
+  // to both — and before the floors are roughened.
+  placeBottomPit(w, rng, last, corridors.length > 1 ? corridors[corridors.length - 2] : null, sealFrom)
+  w.pit = w.pits.length ? w.pits[0] : null
+
+  // A hole the whole colony has to get over is a bridge the whole colony
+  // depends on, and it is unlike every other obstacle on the board in having
+  // exactly one answer: no climb tops it, no bash goes through it, and nobody
+  // walks round it. Pay for it here rather than letting the colony discover at
+  // the last corridor that the bricks went on a chasm three floors up.
+  for (var bp = 0; bp < w.pits.length; bp++) if (w.pits[bp].crossing) w.skills.builder += 6
 
   // Last, once every wall, shaft and doorway is where it is going to be, so
   // nothing gets furnished and then carved away before anyone sees it.
@@ -2354,36 +2366,130 @@ function hazardStrike(w, h) {
 // would be backing off forever, and since the response is a blocker and a
 // blocker never stands down, that would wall off the route for good. Winding
 // up or firing is a reason to be elsewhere; resting is not.
+// The ground one danger can reach. Geometry only — no phase, no memory — so
+// that the two questions the colony actually asks can share it.
+function hazardCovers(w, h, ax, footY) {
+  var hspec = hazardSpec(h.kind)
+  // The sniper's dangerous ground is its current sight line.
+  if (h.kind === "sniper") {
+    if (h.lineTo === undefined || h.lineTo < 0 || Math.abs(footY - h.zy1) > CORR_H) return false
+    var a = Math.min(h.zx0, h.lineTo)
+    var b = Math.max(h.zx1, h.lineTo)
+    return ax >= a - 1 && ax <= b + 1
+  }
+  if (h.kind === "sentry" || h.kind === "darts" || h.kind === "frostjet"
+      || h.kind === "scarab" || h.kind === "snake") {
+    var along = (ax - hazardMid(h).x) * h.dir
+    return Math.abs(footY - h.floorY) <= CORR_H && along >= -1 && along <= hspec.reach + 1
+  }
+  if (h.kind === "echobat")
+    return Math.abs(footY - h.floorY) <= CORR_H
+        && Math.abs(ax - hazardMid(h).x) <= hspec.reach + 1
+  if (footY < h.zy0 - 2 || footY > h.zy1 + 2) return false
+  return ax >= h.zx0 - 2 && ax <= h.zx1 + 2
+}
+
+// How many ticks this agent would spend inside the reach if it kept walking
+// the way it is facing, measured to the far lip rather than to the fixture.
+function hazardExposure(w, h, ag) {
+  var spec = hazardSpec(h.kind)
+  var mid = hazardMid(h).x
+  var near = h.dir > 0 ? mid - 1 : mid - spec.reach - 1
+  var far = h.dir > 0 ? mid + spec.reach + 1 : mid + 1
+  var edge = ag.dir > 0 ? far : near
+  return Math.abs(edge - ag.x) / WALK_SPEED
+}
+
+// Crossing a `watch` danger is a timing problem rather than a wall, and this is
+// the piece of judgement the colony did not have.
+//
+// One of these sleeps until somebody is inside its reach, takes about a second
+// to wind up, fires, and then reloads for two or three. Its reach is eleven to
+// sixteen cells and crossing that takes forty to sixty ticks — longer than the
+// wind-up and shorter than the reload. So walking in while it sleeps is death
+// on a delay, and walking in the moment it has fired is free. Every level with
+// one of these across the only corridor was being solved by the colony walking
+// in one at a time forever; the answer was always to wait for the shot and then
+// leg it, which is what a person does at the same fixture without being told.
+var HAZARD_WAIT = 260    // ticks of waiting before somebody tries it regardless
+
+function canCrossHazard(w, h, ag) {
+  var spec = hazardSpec(h.kind)
+  var need = hazardExposure(w, h, ag) * 1.15
+  // Reloading: the window is what is left of the reload.
+  if (h.phase === "rest") return (spec.rest - h.t) > need
+  // Asleep: only worth it where the whole crossing fits inside a wind-up,
+  // which is true of the short-reach fixtures and never of the long ones.
+  if (h.phase === "idle") return spec.charge > need
+  return false
+}
+
+// Home, seen rather than known.
+//
+// The agents carry no map and no compass: the one non-local thing they have is
+// whether the exit is on this floor, above or below, and that is deliberate —
+// most of what makes them fun to watch is that they are working it out. But it
+// produced one genuinely silly thing. An agent that drops onto the last
+// corridor three cells from the exit, facing away, walks eighty cells to the
+// dead end, turns, and walks eighty cells back, and on level 4 that is most of
+// the clock: the colony lands next to the door and goes for a walk.
+//
+// A lit doorway at the end of an open corridor is not a map. It is the same
+// kind of local sense as "there is a wall two body-lengths ahead", so this is
+// eyesight, with the range and the clear line to prove it, and it only ever
+// applies on the floor the exit is actually on.
+var EXIT_SIGHT = 30
+
+function exitInSight(w, ag) {
+  var e = w.exit
+  var footY = Math.floor(ag.y)
+  if (Math.abs(footY - exitFloor(w)) > 1) return 0
+  var ex = e.x + e.w / 2
+  var gap = ex - ag.x
+  if (Math.abs(gap) > EXIT_SIGHT || Math.abs(gap) < 1) return 0
+  if (!lineClear(w, Math.floor(ag.x), footY - 1, Math.floor(ex), footY - 1)) return 0
+  return gap > 0 ? 1 : -1
+}
+
+function hazardPerceptive(ag) {
+  return ag.trait === "cautious" || ag.trait === "tinkerer"
+}
+
+// Is the next step into somewhere lethal RIGHT NOW: known about, and winding
+// up or firing. This is the question for a decision an agent can take back on
+// the following tick, which is what a step is.
 function hazardAhead(w, ag, nx) {
   var ax = Math.floor(nx)
   var footY = Math.floor(ag.y)
   for (var hi = 0; hi < w.hazards.length; hi++) {
     var h = w.hazards[hi]
-    var perceptive = ag.trait === "cautious" || ag.trait === "tinkerer"
-    if (h.wrecked || (!h.known && !perceptive)
+    if (h.wrecked || (!h.known && !hazardPerceptive(ag))
         || (h.phase !== "charge" && h.phase !== "fire")) continue
-    var hspec = hazardSpec(h.kind)
-    // The sniper's dangerous ground is its current sight line.
-    if (h.kind === "sniper") {
-      if (h.lineTo === undefined || h.lineTo < 0 || Math.abs(footY - h.zy1) > CORR_H) continue
-      var a = Math.min(h.zx0, h.lineTo)
-      var b = Math.max(h.zx1, h.lineTo)
-      if (ax >= a - 1 && ax <= b + 1) return true
-      continue
-    }
-    if (h.kind === "sentry" || h.kind === "darts" || h.kind === "frostjet"
-        || h.kind === "scarab" || h.kind === "snake") {
-      var hmid = (h.zx0 + h.zx1) / 2
-      var along = (ax - hmid) * h.dir
-      if (Math.abs(footY - h.floorY) <= CORR_H && along >= -1 && along <= hspec.reach + 1) return true
-      continue
-    }
-    if (h.kind === "echobat" && Math.abs(footY - h.floorY) <= CORR_H
-        && Math.abs(ax - (h.zx0 + h.zx1) / 2) <= hspec.reach + 1) return true
-    if (footY < h.zy0 - 2 || footY > h.zy1 + 2) continue
-    if (ax >= h.zx0 - 2 && ax <= h.zx1 + 2) return true
+    if (hazardCovers(w, h, ax, footY)) return true
   }
   return false
+}
+
+// Is this spot inside the reach of something the colony has watched kill
+// somebody — resting or not.
+//
+// This is the question nothing was asking, and levels 15 and 19 are what that
+// costs. A `watch` danger sleeps until somebody is inside its reach and then
+// takes about a second to wind up, and its reach is eleven to sixteen cells —
+// wider than an agent can walk out of in that second. So every decision that
+// leaves an agent standing inside one is fatal on a delay: a blocker posted at
+// the mouth of the zone, a shaft sunk in the middle of it, a drop taken into
+// it from the corridor above. The colony was reading the danger correctly and
+// then walking round it into the same ground from a different direction, over
+// and over, because "is it firing this instant" is the wrong question to ask
+// about a place you intend to stay.
+function hazardZoneAt(w, x, y, perceptive) {
+  for (var i = 0; i < w.hazards.length; i++) {
+    var h = w.hazards[i]
+    if (h.wrecked || (!h.known && !perceptive)) continue
+    if (hazardCovers(w, h, x, y)) return h
+  }
+  return null
 }
 
 // The link down to the next corridor, always carved open — either as a plain
@@ -2432,44 +2538,210 @@ function carveDescent(w, rng, c, next) {
   }
 }
 
-// A hole with no bottom at the corridor's NEAR end — the short stretch behind
-// where agents drop in, on the opposite side from the handoff they're headed
-// for. This is the one place a blocker earns its keep.
+// ---------------------------------------------------------------------------
+// The bottom of the world
 //
-// Everything about the placement is about not standing on the route. Agents
-// land facing away from it and walk off toward the handoff, so the only ones
-// who ever meet it are those who turned back from an obstacle — and for them
-// it is genuinely lethal, being open all the way through the bedrock. The
-// first one to reach it stands and turns the rest around, which costs the
-// level nothing because the way on was always the other way.
+// The last corridor gets the one drop on the board with nothing underneath it.
+// It cannot go anywhere else. A shaft cut through the bedrock from a higher
+// corridor runs through the floor of every corridor beneath it on its way
+// down, at whatever column it happened to start at: on level 298 that column
+// was where the last corridor starts and where the colony lands, sixteen out
+// of sixteen walked straight into it on two attempts running, and the level
+// was not winnable at all. Anywhere it CAN be bottomless it is also underneath
+// somewhere the colony has to walk — except here, where there is nothing below
+// to ruin.
 //
-// Putting the same hazard on the route was tried and is much worse: a blocker
-// at a void the colony has to cross walls off the only way forward, and
-// all-home fell from 90% to 65%.
-// The one drop on the board with nothing at the bottom of it, which is what the
-// blocker rule keys off. It has to be cut through the bedrock to read as
-// bottomless — dropDepth() scans real terrain and stops at the first solid cell
-// — and that is precisely what made it dangerous to put anywhere but here.
+// It has to be cut through the bedrock rather than merely deep, because
+// dropDepth() scans real terrain and stops at the first solid cell, and
+// "nothing down there" is what the whole decision at the lip keys off.
 //
-// It used to go on a middle corridor. A shaft from corridor one runs through
-// corridors two and three on its way to the bedrock, so it punched a hole in
-// the floor of every corridor beneath it, at whatever column happened to be
-// three cells off the side wall. On level 298 that column was where the last
-// corridor starts and where the colony lands: sixteen agents out of sixteen
-// walked straight into it on two attempts running, and the level was not
-// winnable at all. Anywhere it can be bottomless, it is also underneath
-// somewhere the colony has to walk.
+// What has changed is the shape. It used to be one hole in one place — three
+// cells wide, hard at the near end, on 85% of levels — which is a fine hazard
+// and a poor thing to keep meeting, because by the second level you know where
+// it is before the board is drawn. Now the level rolls one of:
 //
-// So it goes on the last corridor, where there is nothing below to ruin. Its
-// near end is dead ground — the exit is at the far end — so a blocker posted
-// here still costs the level nothing, which was the whole point of it.
-function placeVoid(w, c, prev) {
-  var nearX = c.dir > 0 ? c.x0 + 3 : c.x1 - 3
-  var landing = prev ? prev.handoffX : (c.dir > 0 ? c.x1 : c.x0)
-  if (Math.abs(landing - nearX) < 6) return
+//   none       no hole at all
+//   shaft      the old one: narrow, at the near end, on dead ground
+//   crossing   on the route between the landing and the exit, anything from a
+//              slot the bold step over to a lake nobody crosses without bricks
+//
+// and a crossing level may get a shaft behind the colony as well.
+//
+// `crossing` is the one with teeth, and it only works because of the rule that
+// went in with it — see edgeAhead, where a bottomless drop with ground on the
+// far side now gets bricks instead of a blocker. Putting a hole on the route
+// under the OLD rule was tried and measured, and cost twenty-five points of
+// all-home: the first agent to reach it planted itself in the only doorway on
+// the level and the other fourteen queued up politely behind it.
 
-  for (var vx = nearX - 1; vx <= nearX + 1; vx++)
-    for (var vy = c.floorY; vy < ROWS; vy++) setCell(w, vx, vy, EMPTY)
+// What is at the bottom, by biome. Three of the seven stay dry, which is the
+// point of doing it per biome at all: a crevasse in the ice and a black hole in
+// the rock are the right answer for those, and flooding all seven would make
+// this read as a texture swap rather than as somewhere else.
+//
+// Nothing about the fall changes. The shaft is cut through the bedrock either
+// way and an agent that goes in is gone either way — the liquid gives it a
+// surface to be gone AT, which is the difference between an event and a sprite
+// sliding quietly out of the bottom of the board. It is also what lets the
+// Jungle have something living in it.
+function pitLiquid(biome) {
+  if (biome === "Jungle" || biome === "Ruins") return "water"
+  if (biome === "Foundry") return "lava"
+  if (biome === "Spaceship") return "coolant"
+  return null
+}
+
+// Cut the shaft and record it. `openAbove` clears the corridor's headroom over
+// the hole and a few cells past each lip as well: a crossing is placed without
+// regard for the last corridor's obstacle, and half a bashable wall left
+// standing on the very lip of a bottomless drop is an agent that goes through
+// it and straight over the edge without ever getting to look.
+function cutPit(w, rng, c, x0, x1, openAbove) {
+  x0 = Math.max(1, x0)
+  x1 = Math.min(COLS - 2, x1)
+  if (x1 < x0) return null
+
+  if (openAbove)
+    for (var ax = x0 - 4; ax <= x1 + 4; ax++)
+      for (var ay = c.floorY - CORR_H; ay < c.floorY; ay++) clearCell(w, ax, ay)
+
+  // setCell rather than clearCell: the bedrock is STEEL and clearCell will not
+  // touch it, which is exactly right for every skill and exactly wrong here.
+  for (var x = x0; x <= x1; x++)
+    for (var y = c.floorY; y < ROWS; y++) setCell(w, x, y, EMPTY)
+
+  var pit = {
+    x0: x0,
+    x1: x1,
+    floorY: c.floorY,
+    liquid: pitLiquid(w.biome),
+    // Deep enough to be something at the bottom of a hole rather than a lid on
+    // it, and never so deep it falls off the board.
+    surfaceY: Math.min(ROWS - 3, c.floorY + irand(rng, 7, 12)),
+    // Something lives in the swamp. Purely a thing to look at — the water is
+    // what kills, and it kills whether or not anyone is home.
+    croc: w.biome === "Jungle",
+    seed: irand(rng, 0, 9973),
+    ripple: -999
+  }
+  w.pits.push(pit)
+  return pit
+}
+
+// Rolled after the exit and the wall in front of it are final, because a
+// crossing has to know where both of them ended up, and before the floors are
+// roughened, which declines to hang dirt over a cell with no floor under it
+// and so can never bridge one of these by accident.
+function placeBottomPit(w, rng, c, prev, sealFrom) {
+  var landing = prev ? prev.handoffX : (c.dir > 0 ? c.x1 : c.x0)
+  var roll = rng()
+  if (roll < 0.12) return
+
+  var crossing = roll >= 0.52
+  if (crossing) crossing = cutCrossing(w, rng, c, landing, sealFrom) !== null
+
+  // A shaft on its own on the levels that rolled one, and behind the colony as
+  // well on some of the levels that rolled a crossing — so a level can have
+  // both the hole they have to get over and the hole they have to be stopped
+  // from walking into.
+  if (!crossing || rng() < 0.4) cutShaft(w, rng, c, landing)
+}
+
+// The old hole, with two differences. Its width is rolled rather than fixed at
+// three, and it runs hard into the side wall instead of leaving a couple of
+// cells of floor beyond it.
+//
+// That last one is not cosmetic. The rule at the lip now asks whether there is
+// anything on the far side within a bridge's reach, and a two-cell shelf
+// against the wall is an answer to that question: agents would bridge out to
+// it, one after another, and the blocker — the one skill whose whole point is
+// that somebody gives up going home — would never be posted again. Ending the
+// corridor at the wall makes the far side genuinely nothing.
+function cutShaft(w, rng, c, landing) {
+  // Stop well short of where the colony comes down. The descent from the
+  // corridor above lands them near here, and a hole under the landing is not a
+  // hazard, it is the level refusing to start.
+  var edge = c.dir > 0 ? c.x0 - 1 : c.x1 + 1
+  var limit = landing - c.dir * 7
+  var room = (limit - edge) * c.dir + 1
+  if (room < 3) return null
+
+  var wide = Math.min(room, irand(rng, 3, 9))
+  var lo = c.dir > 0 ? edge : edge - wide + 1
+  return cutPit(w, rng, c, lo, lo + wide - 1, false)
+}
+
+// The hole on the route. Anywhere between the landing and the wall in front of
+// the exit, at any width from a stride to a third of the corridor — which is
+// the whole of the variety being asked for here, since the two ends of that
+// range produce completely different levels: the narrow one splits the colony
+// by personality at the lip, and the wide one stops all of them dead until
+// somebody lays bricks.
+//
+// Capped at seventeen because a builder lays twelve bricks two cells apart and
+// BUILD_REACH is what that spans. A gap it cannot cross is not a harder level,
+// it is an unwinnable one.
+function cutCrossing(w, rng, c, landing, sealFrom) {
+  var lo, hi
+  if (c.dir > 0) { lo = landing + 10; hi = sealFrom - 6 }
+  else { lo = sealFrom + 9; hi = landing - 10 }
+  lo = Math.max(lo, c.x0 + 2)
+  hi = Math.min(hi, c.x1 - 2)
+  if (hi - lo + 1 < 9) return null
+
+  // Only where the ceiling above it is intact, and this is the whole ball game.
+  //
+  // Every chasm, gap and cliff on the corridor ABOVE is cut down to exactly
+  // this floor: that floor is what makes them survivable, and an agent that
+  // walks into one up there is taking a shortcut, not dying. Cut the floor out
+  // from under one and the shortcut becomes a fall out of the world — a second
+  // bottomless drop, three floors up, in the middle of a route, which is the
+  // one thing the whole placement rule exists to prevent.
+  //
+  // Level 1 is the worked example. Its crossing landed at 31-40, directly
+  // beneath the chasm on the corridor above, and every agent that met that
+  // chasm walked into a hole that now went to the bedrock. Across two hundred
+  // levels this on its own cost thirty-two points of home.
+  //
+  // The roof row of a corridor is the one cell above its carved headroom, and
+  // if that cell is solid nothing above can come through.
+  var roof = c.floorY - CORR_H - 1
+  var runs = []
+  var open = lo - 1
+  for (var x = lo; x <= hi + 1; x++) {
+    if (x <= hi && solid(w, x, roof)) continue
+    if (x - open > 9) runs.push([open + 1, x - 1])
+    open = x
+  }
+  if (!runs.length) return null
+
+  var span = runs[irand(rng, 0, runs.length - 1)]
+  var room = span[1] - span[0] + 1
+  var wide = Math.min(irand(rng, 5, 17), room - 2)
+  var x0 = irand(rng, span[0] + 1, span[1] - wide)
+  var pit = cutPit(w, rng, c, x0, x0 + wide - 1, true)
+  if (pit) pit.crossing = true
+  return pit
+}
+
+// The surface of whatever is in the pit under this column, or null. Only the
+// surface matters: the shaft below it is cut through the bedrock, so nothing
+// that reaches the liquid was ever going to reach anything else.
+function liquidAt(w, x) {
+  for (var i = 0; i < w.pits.length; i++) {
+    var p = w.pits[i]
+    if (p.liquid && x >= p.x0 && x <= p.x1) return p
+  }
+  return null
+}
+
+function sink(w, ag, pool) {
+  ag.y = pool.surfaceY
+  ag.gone = true
+  w.lost++
+  pool.ripple = w.ticks
+  addDust(w, ag.x, pool.surfaceY, 12)
+  w.lastEvent = pool.liquid === "lava" ? "slag" : "splash"
 }
 
 // A steel pillar (a wall no skill touches, so they simply turn back) or a shaft
@@ -2524,7 +2796,18 @@ function dropDepth(w, x, footY) {
 
 // Is there ground to land on at roughly this height within a bridge's reach?
 // Returns the distance, or -1.
+//
+// The floor() is not tidying. `x` arrives as `ag.x`, which is a position and
+// almost never a whole number, and `at()` indexes a Uint8Array: a fractional
+// index reads `undefined`, `undefined !== EMPTY` is true, so every cell this
+// scanned came back solid and the answer was -1 essentially always. That is
+// three separate build rules — the one at a gap, the one at a bottomless drop
+// and the engineer's whole character — silently switched off, which is why
+// bridges were rare enough to look like a personality quirk rather than the
+// answer to a hole in the floor. Everything that lays bricks in the game got
+// noticeably keener the moment this line changed.
 function landingAhead(w, x, footY, dir) {
+  x = Math.floor(x)
   for (var i = 2; i <= BUILD_REACH; i++) {
     var px = x + dir * i
     for (var dy = -1; dy <= 3; dy++) {
@@ -2726,11 +3009,36 @@ function edgeAhead(w, ag, nx) {
 
   if (ag.special) { specialAtEdge(w, ag, nx, depth, far); return }
 
+  // Do not drop into something that shoots. A step can be taken back on the
+  // next tick and a fall cannot: an agent that goes over the lip lands inside
+  // the reach with no say in where, and on levels 15 and 19 that was the
+  // single biggest way the colony fed the hazard — the ones that had learned
+  // to walk round it at floor level came down into it from the corridor above
+  // instead, one after another, all afternoon.
+  if (depth !== Infinity
+      && hazardZoneAt(w, ax, footY + depth, hazardPerceptive(ag))) { turnAround(w, ag); return }
+
+
   if (depth === Infinity) {
-    // Someone should stand here. Worth a blocker while there are still others
-    // on their way to walk into it — which is the whole job of the skill.
-    if (countComing(w, ag) >= 2 - trait.blockBias && take(w, "blocker")) { ag.state = "block"; return }
-    if (far > 2 && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
+    // Two different holes, told apart by the one thing an agent standing at the
+    // lip can actually see: whether there is anything on the far side.
+    //
+    // Nothing within a bridge's reach means this is the end of the world as far
+    // as this agent is concerned, and the blocker is the right answer — stand
+    // in it, turn the rest around, and cost the level nothing, because a hole
+    // like that is only ever cut into ground the route does not use.
+    //
+    // Ground on the far side means it is a gap, and a gap is something to get
+    // over. The blocker is the WORST answer there: it is permanent, it plants
+    // itself in the doorway, and the level ends with fourteen agents queued
+    // politely behind one of their own. So bricks come first now, and the
+    // blocker is kept for the drop that has no far side at all.
+    //
+    // The old rule reached for the blocker first either way. That was safe only
+    // while the one bottomless hole on the board was always behind the colony;
+    // it is not any more — see placeBottomPit.
+    if (far > 2 && canStartBuild(w, ag, true) && take(w, "builder")) { startBuild(w, ag, true); return }
+    if (far <= 2 && countComing(w, ag) >= 2 - trait.blockBias && take(w, "blocker")) { ag.state = "block"; return }
     turnAround(w, ag)
     return
   }
@@ -2740,7 +3048,16 @@ function edgeAhead(w, ag, nx) {
   // personality does to an agent's behaviour: a cautious one bridges a drop a
   // brave one walks straight off, and you can watch them disagree about the
   // same ledge, one after the other.
-  if (far > 2 && depth > trait.bridgeAt + ag.bridgeBias && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
+  //
+  // But only where down is not the way on. On every corridor above the last,
+  // the drop in front is a floor gained — an agent that bridges it has spent a
+  // builder to stay exactly where it was, and left a ledge and a wall behind
+  // for the next one to get stuck on. Measured over two hundred levels that is
+  // eight points of home and a third again on the clock, for a bridge that
+  // achieves nothing. On the exit's own floor there is nothing below to gain
+  // and a drop is pure loss, which is where bricks earn their keep.
+  if (far > 2 && !exitBelow(w, ag) && depth > trait.bridgeAt + ag.bridgeBias
+      && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
 
   // The umbrella comes out early for the ones who like a margin. It can only
   // ever come out EARLIER than the lethal limit, never later — a personality
@@ -2748,7 +3065,14 @@ function edgeAhead(w, ag, nx) {
   // The engineer's whole character. Anyone else facing a drop this deep reaches
   // for the umbrella; it looks for something to build to first, and only takes
   // the chute when there is nothing on the far side worth reaching.
-  if (trait.noFloat && far > 2 && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
+  //
+  // "This deep" is the point, and it was missing: with no depth test at all
+  // this fired at every ledge on the board, and an engineer lays five. One or
+  // two per colony spent the level paving the corridors they were supposed to
+  // be descending. The test is the same one the umbrella is about to make, so
+  // the two really are alternatives to the same problem.
+  if (trait.noFloat && far > 2 && depth > SAFE_FALL - trait.fallMargin
+      && canStartBuild(w, ag) && take(w, "builder")) { startBuild(w, ag); return }
 
   var wantsChute = depth > SAFE_FALL - trait.fallMargin
 
@@ -2909,11 +3233,18 @@ function startLadderDown(ag, ladder) {
   ag.timer = 0
 }
 
-function startBuild(w, ag) {
+function startBuild(w, ag, flat) {
   ag.state = "build"
   ag.bricks = 12
   ag.buildWait = 0
   ag.timer = 0
+  // Lay level rather than climbing. A bridge normally gains a course every
+  // third brick, which is what gives a build its staircase look — and over a
+  // hole with the far side at the same height it is exactly wrong: twelve
+  // bricks gain four courses, a corridor has six, and the build ends with the
+  // builder's head in the ceiling a few cells short of the far lip. That was a
+  // quarter of every bridge started at a crossing.
+  ag.buildFlat = !!flat
   ag.built++
   w.buildSites.push({ x: ag.x, y: ag.y, tick: w.ticks })
 }
@@ -2939,14 +3270,42 @@ function willBuild(ag, wantUp) {
 // after eight seconds the colony is free to disagree and try the site again.
 // Without it, a queue can spend a dozen builders on the same few cells before
 // the first bridge has even settled into terrain.
-function canStartBuild(w, ag) {
+// `urgent` is for the one place where a half-finished bridge is worse than no
+// bridge at all: the lip of a drop with nothing at the bottom of it. Everywhere
+// else a build that stops short is a ledge somebody walks round, and the lock
+// below is what stops a queue spending a dozen builders on the same few cells.
+// At a bottomless gap there is nothing to walk round — the agent that arrives
+// eight seconds too early to be allowed to add the last two bricks turns away,
+// paces, and gets written off with the gap still open in front of it.
+//
+// So the lip gets a shorter rule rather than no rule. The eight-second memory
+// is what has to go; "somebody is laying bricks here RIGHT NOW" does not, and
+// dropping that too was visible on level 5, where two agents arriving together
+// started the same bridge four ticks apart and one of the two builders was
+// simply thrown away. A queue at a lip should watch the first one work and then
+// pick up wherever it stopped.
+function canStartBuild(w, ag, urgent) {
   if (!willBuild(ag, exitAbove(w, ag))) return false
+  if (urgent) return !someoneBuildingNear(w, ag)
   for (var i = w.buildSites.length - 1; i >= 0; i--) {
     var site = w.buildSites[i]
     if (w.ticks - site.tick > 240) break
     if (Math.abs(site.y - ag.y) < 4 && Math.abs(site.x - ag.x) < 8) return false
   }
   return true
+}
+
+// Is one of the others putting bricks down within sight of here, this tick?
+// Unlike the site list this forgets the moment they stop, which is the whole
+// point of it: the ledge is evidence while it is being worked on and nothing at
+// all afterwards.
+function someoneBuildingNear(w, ag) {
+  for (var i = 0; i < w.agents.length; i++) {
+    var O = w.agents[i]
+    if (O === ag || O.gone || O.state !== "build") continue
+    if (Math.abs(O.y - ag.y) < 5 && Math.abs(O.x - ag.x) < 12) return true
+  }
+  return false
 }
 
 function spawn(w) {
@@ -3020,6 +3379,7 @@ function spawn(w) {
     rescueCool: 0,     // do not reconsider the same escape every simulation tick
     markD: Infinity,   // closest it has ever been; see goalDist()
     fuse: 0,
+    waitFor: 0,       // holding at a danger for its reload, rather than pacing
     mineCool: 0,      // one charge at a time, and not again until it has gone off
     shieldFor: 0,     // ticks left on the plate; renewed while a threat is in front
     shieldHeld: 0,    // how long it has been up for, which is what tires it out
@@ -3041,7 +3401,44 @@ function stepWalk(w, ag) {
   var cx = Math.floor(nx)
   var footY = Math.floor(ag.y)
 
+  // Turn toward a door it can see. Only when it is walking away from one, so
+  // this steers rather than drives: everything else about the crossing — walls,
+  // drops, dangers, personality — is decided exactly as before.
+  var seen = exitInSight(w, ag)
+  if (seen && seen !== ag.dir) {
+    ag.dir = seen
+    ag.turns = 0
+    nx = ag.x + ag.dir * WALK_SPEED * (ag.chilledFor > 0 ? 0.48 : 1)
+    cx = Math.floor(nx)
+  }
+
   if (anyBlockerNear(w, ag, nx)) { turnAround(w, ag); return }
+
+  // About to step from clear ground into something it has watched kill
+  // somebody. This is not the same question as hazardAhead's — the fixture is
+  // resting, so nothing is firing — it is whether the crossing can be finished
+  // before it wakes up. Wait at the lip if it cannot, and take the window when
+  // it comes.
+  //
+  // Somebody still has to find out, and a sleeping fixture never reloads on its
+  // own: after HAZARD_WAIT of nobody getting anywhere, the one at the front
+  // walks in regardless. It usually dies, the rest cross in the reload it just
+  // bought them, and that is as close to a plan as this colony gets.
+  var crossPerceptive = hazardPerceptive(ag)
+  var stepInto = hazardZoneAt(w, cx, footY, crossPerceptive)
+  if (stepInto && !ag.special && ag.idle < HAZARD_WAIT
+      && !hazardZoneAt(w, Math.floor(ag.x), footY, crossPerceptive)
+      && !shieldCovering(w, ag, nx)
+      && !canCrossHazard(w, stepInto, ag)) {
+    // Waiting is not pacing. Both look like an agent walking back and forth in
+    // one place, and the loop detector cannot tell them apart — so on level 15
+    // the colony stopped dying to the sentry and started being written off as
+    // stuck instead, bombed one at a time at the lip of the zone it was
+    // correctly refusing to enter. This says: it knows why it is here.
+    ag.waitFor = 12
+    turnAround(w, ag)
+    return
+  }
 
   // Somewhere it has learned is lethal. Treated exactly like a drop with no
   // bottom, because to an agent it is the same problem: a place ahead that
@@ -3068,12 +3465,41 @@ function stepWalk(w, ag) {
     if (cover && cover.shieldHeld < SHIELD_MAX - SHIELD_MARGIN) return advanceWalk(w, ag, nx, cx, footY)
 
     var htrait = traitOf(ag)
+    var perceptive = hazardPerceptive(ag)
+
+    // Already inside its reach. Turning round is the answer at a wall, and
+    // here it is a coin toss between walking out of the zone and walking
+    // further into it — and since the reach is wider than the wind-up is long,
+    // walking further in is fatal. Head away from the fixture, whichever way
+    // that is, and keep going until the ground is clear.
+    var inside = hazardZoneAt(w, Math.floor(ag.x), footY, perceptive)
+    if (inside) {
+      // Out by the nearer lip, which is not always the way it came in: an
+      // agent four fifths of the way across a sixteen-cell reach should finish
+      // the crossing, not turn round and re-run the whole thing.
+      var hspec = hazardSpec(inside.kind)
+      var hmid = hazardMid(inside).x
+      var lipBack = inside.dir > 0 ? hmid - 1 : hmid + 1
+      var lipOn = inside.dir > 0 ? hmid + hspec.reach + 1 : hmid - hspec.reach - 1
+      var out = Math.abs(lipOn - ag.x) < Math.abs(lipBack - ag.x) ? lipOn : lipBack
+      var away = out > ag.x ? 1 : -1
+      if (ag.dir !== away) { ag.dir = away; ag.turns++ }
+      var outX = ag.x + ag.dir * WALK_SPEED
+      return advanceWalk(w, ag, outX, Math.floor(outX), footY)
+    }
+
     // A timed hazard may consume several blockers as each sacrifice is
     // eventually killed. Keep the final one for a true bottomless edge, where
     // a single permanent blocker protects everyone who follows. Level 92's
     // bear trap used to empty the toolbar just before its last-floor void.
+    //
+    // And never inside the reach itself. A blocker cannot move, so one posted
+    // in the zone is a body on a timer: it turns the queue back for a few
+    // seconds, gets shot, and the level pays another blocker for the same few
+    // seconds. Standing one step outside does the same job and survives it.
     if ((w.skills.blocker || 0) > 1
         && countComing(w, ag) >= 2 - htrait.blockBias
+        && !hazardZoneAt(w, Math.floor(ag.x), footY, perceptive)
         && take(w, "blocker")) { ag.state = "block"; return }
     turnAround(w, ag)
     return
@@ -3113,6 +3539,13 @@ function stepFall(w, ag) {
   var speed = ag.floater && ag.fall > 2 ? FLOAT_SPEED : FALL_SPEED
   var cx = Math.floor(ag.x)
   var ny = ag.y + speed
+
+  // Into the water, the coolant or the slag. This changes nothing about who
+  // survives — the shaft under the surface is cut through the bedrock, and an
+  // umbrella was never any use over it — it changes where they stop, which is
+  // the entire point of putting a surface down there.
+  var pool = liquidAt(w, cx)
+  if (pool && ny >= pool.surfaceY) { sink(w, ag, pool); return }
 
   // Out through the bottom of the world. Has to be caught before the landing
   // scan below, which would otherwise find the out-of-bounds STEEL that at()
@@ -3267,7 +3700,8 @@ function stepBuild(w, ag) {
   // four courses and the cap allows two builds. That is not a way out of a pit.
   var ny = ag.y
   var rise = exitAbove(w, ag) ? 2 : 3
-  if ((ag.bricks % rise) === 0 && headroom(w, Math.floor(nx), Math.floor(ag.y) - 1)) ny = ag.y - 1
+  if (!ag.buildFlat && (ag.bricks % rise) === 0
+      && headroom(w, Math.floor(nx), Math.floor(ag.y) - 1)) ny = ag.y - 1
 
   if (!headroom(w, Math.floor(nx), Math.floor(ny))) {
     // Even level is blocked. Check this BEFORE laying anything: the old order
@@ -3506,6 +3940,8 @@ function stepBomb(w, ag) {
   if (unsupported(w, ag)) {
     ag.fall += FALL_SPEED
     var ny = ag.y + FALL_SPEED
+    var pool = liquidAt(w, Math.floor(ag.x))
+    if (pool && ny >= pool.surfaceY) { sink(w, ag, pool); return }
     if (Math.floor(ny) >= ROWS - 1) { ag.gone = true; w.lost++; return }
     ag.y = ny
   } else {
@@ -5100,6 +5536,8 @@ function countPass(w, ag) {
   // same bucket repeatedly while doing useful work; condemning it here turns
   // the rescue itself into a bomb and leaves everyone behind in its crater.
   if (ag.state !== "walk") return
+  // Nor is holding at the lip of a danger for its reload. That is the plan.
+  if (ag.waitFor > 0) return
   var key = Math.floor(ag.x / LOOP_BUCKET) + "@" + Math.floor((ag.y + 1) / (w.corrGap || CORR_GAP))
   if (key === ag.bucket) return
   ag.bucket = key
@@ -5126,6 +5564,7 @@ function condemn(w, ag) {
   // budget is empty the agent goes on pacing, and PATIENCE handles it with a
   // shovel instead.
   if (ag.state === "bomb" || ag.state === "block" || ag.state === "camp" || ag.state === "saved") return
+  if (ag.waitFor > 0) return
 
   // A special gets the shovel before it gets written off. Pacing trips the
   // bucket count in about two hundred ticks, where the forced escape does not
@@ -5209,6 +5648,7 @@ function step(w) {
     if (ag.blockFor > 0) ag.blockFor--
     if (ag.coveredFor > 0) ag.coveredFor--
     if (ag.mineCool > 0) ag.mineCool--
+    if (ag.waitFor > 0) ag.waitFor--
     if (ag.shieldFor > 0) {
       ag.shieldHeld++
       if (--ag.shieldFor === 0) {

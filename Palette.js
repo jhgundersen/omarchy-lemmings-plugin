@@ -78,6 +78,32 @@ var JUNGLE = { r: 0.24, g: 0.52, b: 0.20 }
 var GLACIER = { r: 0.55, g: 0.78, b: 0.92 }
 var HULL = { r: 0.46, g: 0.52, b: 0.60 }
 
+// What is at the bottom of the pit, and the one part of the board that is
+// allowed to be a colour rather than a tint. Everything else here is mixed from
+// the theme so the board never fights whatever it is sitting on — but a pool
+// has to read as a substance from across a room at four pixels a cell, and a
+// theme-tinted one reads as a hole with a slightly different hole in it. These
+// are still mixed with the background, so gruvbox water and tokyo-night water
+// are different waters; they are just both unmistakably water.
+var WATER = { r: 0.13, g: 0.42, b: 0.52 }
+var LAVA = { r: 0.88, g: 0.26, b: 0.06 }
+var COOLANT = { r: 0.20, g: 0.80, b: 0.76 }
+var VOID = { r: 0, g: 0, b: 0 }
+
+// Which one this level's biome floods with. Sim.js decides the same thing from
+// the biome name and the two must agree — they are derived from the same level
+// number by the same rule, which is how every other per-biome difference in
+// this game stays in step across two files that cannot call each other.
+function poolTint(level) {
+  switch ((level - 1) % 7) {
+    case 1: return WATER      // Ruins: a flooded cistern
+    case 3: return LAVA       // Foundry: what the place is for
+    case 4: return WATER      // Jungle: the swamp, and what lives in it
+    case 6: return COOLANT    // Spaceship: something leaking
+    default: return WATER     // dry biomes; unused, but never undefined
+  }
+}
+
 // Which tone each biome pulls toward. Seven of them cycling with the level
 // number is what stops a long watch looking like one level over and over.
 function biomeTint(theme, level) {
@@ -97,6 +123,7 @@ function build(theme, level) {
   var bg = theme.background
   var fg = theme.foreground
   var tint = biomeTint(theme, level)
+  var pool = poolTint(level)
 
   return {
     // The carved-out space has to read as clearly empty and the earth as
@@ -163,6 +190,20 @@ function build(theme, level) {
     // The card in the sky: barely above the sky itself, so it reads as a
     // panel rather than as a hole cut in the board.
     cardBack: css(mix(bg, fg, 0.10)),
+
+    // The inside of a hole with nothing at the bottom of it. The corridors are
+    // already the darkest thing on the board, so "deeper than a corridor" cannot
+    // come from the earth palette at all — it fades toward black instead, and
+    // the top of the fade is transparent so the lip is not a drawn line.
+    pitLip: css(VOID, 0.0),
+    pitDeep: css(VOID, 0.62),
+
+    // And when the hole is flooded. Lit at the surface, black at the bottom,
+    // with the waterline bright enough to be the thing you look at.
+    poolBody: css(mix(bg, pool, 0.62)),
+    poolDeep: css(mix(bg, mix(pool, VOID, 0.7), 0.75)),
+    poolLip: css(mix(bg, lighter(pool, 1.45), 0.92)),
+    poolGlint: css(mix(lighter(pool, 1.7), fg, 0.35)),
 
     dust: css(mix(bg, fg, 0.7)),
     label: css(mix(bg, fg, 0.85)),

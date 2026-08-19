@@ -243,6 +243,42 @@ a recolour on its own still reads as the same cave:
 | **Ice Cave** | One mass rather than layers, because strata read as sedimentary rock and a glacier is the opposite of that. Cracks run through it, the bottom is compressed harder, and the ceilings are thick with icicles |
 | **Spaceship** | Not geology at all: a grid of hull panels with seams, structural ribs running floor to ceiling, and a few plates missing. Fitted rather than furnished — strip lights along the ceilings, grating underfoot, and viewports looking out at a starfield. Its floors stay machined flat, which is the point of it |
 
+### The bottom of the world
+
+Every level finishes over a hole, and it is the only drop on the board with
+nothing at the bottom of it — cut clean through the bedrock, because "nothing
+down there" is what the decision at the lip turns on. It can go nowhere but the
+last corridor: from any higher one the shaft punches through the floor of every
+corridor beneath it, and those floors are what make the chasms up there
+survivable.
+
+What the level rolls for it is the difference between one bottom corridor and
+another:
+
+| | |
+| --- | --- |
+| **nothing** | some levels simply end on solid ground |
+| **a shaft** | narrow, hard against the side wall, on the dead ground behind where the colony lands. Nobody has to go near it, which is exactly why the blocker is worth posting there |
+| **a crossing** | on the route between the landing and the exit, anywhere from a slot the bold step over to a lake nobody gets past without bricks. There is no way round it and no second answer — no climb tops it and no bash goes through it |
+
+A crossing level may get a shaft behind them as well, so the colony has both the
+hole it has to get over and the hole it has to be stopped from walking into.
+
+Four of the seven biomes flood theirs: **water** in the Ruins and the Jungle,
+**lava** in the Foundry, **coolant** on the ship. The other three stay a black
+hole in the rock, which is the right answer for a crevasse. Nothing about the
+fall changes — the shaft under the surface goes through the bedrock either way
+and an agent that goes in is gone either way. The liquid gives it a surface to
+be gone at, which is the difference between an event and a sprite sliding
+quietly off the bottom of the board.
+
+And something lives in the Jungle swamp. It surfaces about every twenty-five
+seconds, crosses the pool with its eyes and back ridges out, opens up once in
+the middle, and goes under. It is scenery: the water kills on contact whether or
+not anything is showing. But a pool that is only ever a flat green rectangle is
+a texture, and the difference between a texture and a place is that something in
+it keeps its own schedule.
+
 The uneven floors never move by more than a stride between one column and the
 next, so they are walked over without anyone noticing and no route is affected.
 They cost about a point of levels cleared, which is the price of a jungle floor
@@ -336,12 +372,18 @@ A builder also checks the space its next course will occupy. Somebody caught at
 foot height rides the new brick upward; a deeper overlap makes the builder wait,
 then abandon the bridge after three seconds rather than masonry an agent into it
 or deadlock with another builder. Once somebody starts at a ledge, the rest give
-that site eight seconds before trying their own version of the same bridge.
+that site eight seconds before trying their own version of the same bridge —
+except at a drop with nothing at the bottom, where a half-built bridge is worse
+than none and the only rule is that one of them finishes, or visibly gives up,
+before the next one starts.
 
 Hazards may claim blockers, but never the final one in the toolbar. That last
 blocker is reserved for a genuinely bottomless edge, where one permanent guard
 can turn the rest of the colony around instead of feeding a timed trap more
-sacrifices.
+sacrifices — and only for the kind of bottomless edge with nothing on the far
+side of it. A hole with ground on the other side is a gap, and a gap gets
+bricks: a blocker there is permanent, stands in the only doorway on the level,
+and ends the run with the whole colony queued politely behind one of its own.
 
 And an agent that re-treads the same few cells five times over with no progress
 between them is condemned and handed a bomb. A bomb rather than simply deleting
