@@ -1,16 +1,3 @@
-// Theme colors in, canvas colors out. Pure, and the third file the bar plugin
-// and the web version share: given the same five inputs both render the same
-// board, which is the only way the web version is worth developing against.
-//
-// It lived inside Panel.qml as QML bindings over `Color.*` until the web
-// version needed the same mixing rules. Nothing here knows about QML or the
-// DOM — inputs are {r, g, b} in 0..1 and outputs are CSS color strings, which
-// is what a canvas 2D context wants in both places.
-//
-// Earth, sky and portal are all mixed from the theme so the board never fights
-// whatever it sits on. The agents are the exception: green hair, blue robe,
-// fixed. Theme-tinting them would make them read as animated debris rather
-// than as the thing everybody recognizes.
 
 function mix(a, b, t) {
   return { r: a.r + (b.r - a.r) * t, g: a.g + (b.g - a.g) * t, b: a.b + (b.b - a.b) * t }
@@ -67,24 +54,12 @@ function hex(s) {
   return { r: ((n >> 16) & 255) / 255, g: ((n >> 8) & 255) / 255, b: (n & 255) / 255 }
 }
 
-// Pull a colour part of the way toward a fixed hue. The four original biomes
-// are made purely of theme colours, which is right for them, but a jungle has
-// to be green and an ice cave has to be blue whatever the theme happens to be.
-// Mixing rather than replacing keeps the theme in the room: a green jungle
-// under gruvbox and a green jungle under tokyo-night are still different greens.
 function toward(c, hue, t) { return mix(c, hue, t) }
 
 var JUNGLE = { r: 0.24, g: 0.52, b: 0.20 }
 var GLACIER = { r: 0.55, g: 0.78, b: 0.92 }
 var HULL = { r: 0.46, g: 0.52, b: 0.60 }
 
-// What is at the bottom of the pit, and the one part of the board that is
-// allowed to be a colour rather than a tint. Everything else here is mixed from
-// the theme so the board never fights whatever it is sitting on — but a pool
-// has to read as a substance from across a room at four pixels a cell, and a
-// theme-tinted one reads as a hole with a slightly different hole in it. These
-// are still mixed with the background, so gruvbox water and tokyo-night water
-// are different waters; they are just both unmistakably water.
 var WATER = { r: 0.13, g: 0.42, b: 0.52 }
 var LAVA = { r: 0.88, g: 0.26, b: 0.06 }
 var COOLANT = { r: 0.20, g: 0.80, b: 0.76 }
@@ -104,8 +79,6 @@ function poolTint(level) {
   }
 }
 
-// Which tone each biome pulls toward. Seven of them cycling with the level
-// number is what stops a long watch looking like one level over and over.
 function biomeTint(theme, level) {
   switch ((level - 1) % 7) {
     case 0: return theme.accent                              // Cavern
@@ -126,18 +99,9 @@ function build(theme, level) {
   var pool = poolTint(level)
 
   return {
-    // The carved-out space has to read as clearly empty and the earth as
-    // clearly solid, or the whole board turns into one dark slab with a few
-    // agents on it — which is what a gentler set of these looked like.
-    // Corridors are the darkest thing on the board; every material sits well
-    // above them, and the lit top edge well above that again.
     skyTop: css(mix(bg, tint, 0.02)),
     skyLow: css(mix(bg, tint, 0.10)),
 
-    // Dirt carries the biome's tint; rock is deliberately pulled off it toward
-    // neutral. Shading both with the same hue made the whole board one flat
-    // wash of colour in which the two materials were indistinguishable — and
-    // the material tiers are the only thing telling you how deep you're looking.
     dirt: css(mix(bg, tint, 0.46)),
     dirtEdge: css(mix(bg, tint, 0.86)),
     dirtShade: css(mix(bg, tint, 0.30)),
@@ -174,21 +138,13 @@ function build(theme, level) {
     decorLit: css(mix(mix(bg, tint, 0.80), fg, 0.34)),
     decorDim: css(mix(bg, tint, 0.34)),
 
-    // Machinery. Deliberately colder and harder than the earth it is bolted
-    // to — a trap has to read as something someone put there.
     rig: css(mix(bg, fg, 0.52)),
     rigDark: css(mix(bg, fg, 0.30)),
-    // Winding up, and going off. Both are the theme's urgent colour, because
-    // that is the one colour in an Omarchy theme that already means "look".
     warn: css(mix(bg, theme.urgent, 0.55)),
     fire: css(theme.urgent),
     fireHot: css(lighter(theme.urgent, 1.45)),
-    // Un-themed, like the green hair and the orange umbrella. At four pixels
-    // it has to read as what it is without help.
     blood: "#b3121b",
 
-    // The card in the sky: barely above the sky itself, so it reads as a
-    // panel rather than as a hole cut in the board.
     cardBack: css(mix(bg, fg, 0.10)),
 
     // The inside of a hole with nothing at the bottom of it. The corridors are
@@ -198,8 +154,6 @@ function build(theme, level) {
     pitLip: css(VOID, 0.0),
     pitDeep: css(VOID, 0.62),
 
-    // And when the hole is flooded. Lit at the surface, black at the bottom,
-    // with the waterline bright enough to be the thing you look at.
     poolBody: css(mix(bg, pool, 0.62)),
     poolDeep: css(mix(bg, mix(pool, VOID, 0.7), 0.75)),
     poolLip: css(mix(bg, lighter(pool, 1.45), 0.92)),
