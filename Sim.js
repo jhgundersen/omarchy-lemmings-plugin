@@ -79,7 +79,8 @@ var SPRAY_BURST = 12
 var SPRAY_SHOT_TICKS = 2
 var SPRAY_SLOPES = [-0.16, 0.10, -0.06, 0.14, 0, -0.12, 0.06, -0.18, 0.12, -0.03, 0.17, -0.09]
 var ENEMY_WALK_SPEED = 0.24
-var GUN_AIM = 24
+var GUN_AIM = 8           // regular shooter: a short visible tell, about a quarter-second
+var SNIPER_AIM = 36       // the planted sniper keeps its deliberate long sight picture
 var GUN_RELOAD = 80
 var ENEMY_JET_SPEED = 0.30
 var ENEMY_JET_SINK = 0.10
@@ -412,6 +413,7 @@ function generate(level, attempt, colonySeed) {
     hazards: [],
     hazardKnown: false,
     hazardKills: 0,
+    liquidVersion: -1,
     terrain: new Uint8Array(COLS * ROWS),
     terrainVersion: 1,
     carved: 0,
@@ -2753,12 +2755,50 @@ function cutCrossing(w, rng, c, landing, sealFrom) {
 // The surface of whatever is in the pit under this column, or null. Only the
 // surface matters: the shaft below it is cut through the bedrock, so nothing
 // that reaches the liquid was ever going to reach anything else.
-function liquidAt(w, x) {
+function liquidAt(w, x, y) {
   for (var i = 0; i < w.pits.length; i++) {
     var p = w.pits[i]
-    if (p.liquid && x >= p.x0 && x <= p.x1) return p
+    if (!p.liquid) continue
+    if (y !== undefined && p.wet) {
+      var wx = Math.floor(x), wy = Math.floor(y)
+      if (wx >= 0 && wx < COLS && wy >= 0 && wy < ROWS && p.wet[wy * COLS + wx]) return p
+    } else if (x >= p.x0 && x <= p.x1) return p
   }
   return null
+}
+
+// Flood empty cells at and below each pool's surface. The original liquid was
+// only a painted rectangle inside the generated pit, so bashing or exploding
+// its side wall opened a perfectly dry room. Keeping the connected wet cells
+// on the world lets simulation and rendering agree about where the spill went.
+function updateLiquidFlow(w) {
+  if (w.liquidVersion === w.terrainVersion) return
+  w.liquidVersion = w.terrainVersion
+  for (var pi = 0; pi < w.pits.length; pi++) {
+    var p = w.pits[pi]
+    if (!p.liquid) continue
+    var wet = new Uint8Array(COLS * ROWS)
+    var queue = []
+    for (var x = p.x0; x <= p.x1; x++) {
+      var seed = p.surfaceY * COLS + x
+      if (!solid(w, x, p.surfaceY)) { wet[seed] = 1; queue.push(seed) }
+    }
+    for (var qi = 0; qi < queue.length; qi++) {
+      var atIndex = queue[qi]
+      var cx = atIndex % COLS
+      var cy = Math.floor(atIndex / COLS)
+      var near = [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]
+      for (var ni = 0; ni < near.length; ni++) {
+        var nx = near[ni][0], ny = near[ni][1]
+        if (nx < 0 || nx >= COLS || ny < p.surfaceY || ny >= ROWS) continue
+        var next = ny * COLS + nx
+        if (wet[next] || solid(w, nx, ny)) continue
+        wet[next] = 1
+        queue.push(next)
+      }
+    }
+    p.wet = wet
+  }
 }
 
 // The shaft occupying this column, whether flooded or dry. Terrain inside a
@@ -3234,7 +3274,7 @@ function considerEscape(w, ag) {
   var footY = Math.floor(ag.y)
   ag.turns = 0
 
-  if (exitBelow(w, ag)) {
+  if (exitBelow(w, ag) && corridorBelow(w, ag)) {
     if (!solid(w, Math.floor(ag.x), footY + 1)) return false
     // Some agents plant a charge instead of sinking a shaft. They turn away
     // immediately, leaving three seconds to get clear of the new opening.
@@ -3303,15 +3343,21 @@ function startLadderDown(ag, ladder) {
   ag.timer = 0
 }
 
-function startBuild(w, ag, flat) {
-  // Below a raised exit, a build is a staircase home rather than a bridge over
-  // whatever happens to be in front. Every caller means the same thing here,
-  // so settle the direction once instead of letting wall, pacing and director
-  // paths disagree about it.
-  if (exitAbove(w, ag)) {
+function buildDirection(w, ag) {
+  if (!exitBelow(w, ag)) {
     var exitMid = w.exit.x + w.exit.w / 2
-    if (Math.abs(exitMid - ag.x) > 1) ag.dir = exitMid > ag.x ? 1 : -1
+    if (Math.abs(exitMid - ag.x) > 1) return exitMid > ag.x ? 1 : -1
   }
+  return ag.dir
+}
+
+function startBuild(w, ag, flat) {
+  // On or below the exit's corridor, a build is a staircase home rather than
+  // a bridge over whatever happens to be in front. A wall can hide the doorway
+  // from ordinary eyesight (level 257), but once the chosen answer is "over",
+  // laying the stairs away from home is still nonsense. Settle the direction
+  // once instead of letting wall, pacing and director paths disagree about it.
+  ag.dir = buildDirection(w, ag)
   ag.state = "build"
   ag.bricks = 12
   ag.buildWait = 0
@@ -3364,6 +3410,17 @@ function willBuild(ag, wantUp) {
 // pick up wherever it stopped.
 function canStartBuild(w, ag, urgent) {
   if (!willBuild(ag, exitAbove(w, ag))) return false
+  var footY = Math.floor(ag.y)
+  var fx = Math.floor(ag.x)
+  var dir = buildDirection(w, ag)
+  // A builder needs open body space for its first stride. Bricks answer empty
+  // ground, not solid terrain: spending one against a wall made the agent walk
+  // into the wall, abort, turn, and often buy another builder for the same
+  // impossible move. Walls belong to climbers and bashers for every trait.
+  for (var stride = 1; stride <= 2; stride++) {
+    var bx = fx + dir * stride
+    if (solid(w, bx, footY) || !headroom(w, bx, footY)) return false
+  }
   if (urgent) return !someoneBuildingNear(w, ag)
   for (var i = w.buildSites.length - 1; i >= 0; i--) {
     var site = w.buildSites[i]
@@ -3673,7 +3730,7 @@ function stepFall(w, ag) {
   // survives — the shaft under the surface is cut through the bedrock, and an
   // umbrella was never any use over it — it changes where they stop, which is
   // the entire point of putting a surface down there.
-  var pool = liquidAt(w, cx)
+  var pool = liquidAt(w, cx, ny)
   if (pool && ny >= pool.surfaceY) { sink(w, ag, pool); return }
 
   var shaft = pitAt(w, cx)
@@ -3838,7 +3895,8 @@ function stepBuild(w, ag) {
   if (!ag.buildFlat && (ag.bricks % rise) === 0
       && headroom(w, Math.floor(nx), Math.floor(ag.y) - 1)) ny = ag.y - 1
 
-  if (!headroom(w, Math.floor(nx), Math.floor(ny))) {
+  if (solid(w, Math.floor(nx), Math.floor(ny))
+      || !headroom(w, Math.floor(nx), Math.floor(ny))) {
     // Even level is blocked. Check this BEFORE laying anything: the old order
     // left a three-cell stub from a step the builder could never occupy, and a
     // queue of agents repeated it into the little brick heaps seen on level 19.
@@ -4075,7 +4133,7 @@ function stepBomb(w, ag) {
   if (unsupported(w, ag)) {
     ag.fall += FALL_SPEED
     var ny = ag.y + FALL_SPEED
-    var pool = liquidAt(w, Math.floor(ag.x))
+    var pool = liquidAt(w, Math.floor(ag.x), ny)
     if (pool && ny >= pool.surfaceY) { sink(w, ag, pool); return }
     if (Math.floor(ny) >= ROWS - 1) { ag.gone = true; w.lost++; return }
     ag.y = ny
@@ -4829,7 +4887,7 @@ function specialEscape(w, ag) {
   var floor = Math.floor((fy + 1) / (w.corrGap || CORR_GAP))
   if (specOf(ag).act === "ceiling" && startWebEscape(w, ag)) return
   if (exitAbove(w, ag) && startSpecialAscent(w, ag)) return
-  if (exitBelow(w, ag) && solid(w, fx, fy + 1)
+  if (exitBelow(w, ag) && corridorBelow(w, ag) && solid(w, fx, fy + 1)
       && at(w, fx, fy + 1) !== STEEL && !ag.escapeFloors[floor]) {
     ag.escapeFloors[floor] = true
     ag.state = "dig"
@@ -5350,10 +5408,13 @@ function threatAhead(w, ag, reach) {
   return false
 }
 
-function woundFriendly(w, ag, fromX) {
+function woundFriendly(w, ag, fromX, lethal) {
   if (!ag || ag.gone || ag.state === "saved") return
   if (shieldStops(w, ag, fromX)) return
-  ag.wounds = (ag.wounds || 0) + 1
+  // The ordinary Trigger Warning has a short range and a visible aim line; if
+  // that completes, the shot is the consequence rather than another warning.
+  // Keep the wound path for any future lighter guns and for explicit callers.
+  ag.wounds = lethal ? 2 : (ag.wounds || 0) + 1
   addBlood(w, ag.x, ag.y - 1.5, ag.wounds >= 2 ? 16 : 7)
   if (ag.wounds >= 2) {
     ag.gone = true
@@ -5380,9 +5441,31 @@ function killEnemy(w, en) {
 
 function stepEnemyFall(w, en) {
   var ny = en.y + FALL_SPEED
-  if (ny >= ROWS) { en.gone = true; return }
+  if (ny >= ROWS) {
+    en.gone = true
+    en.state = "dead"
+    w.enemiesKilled++
+    w.lastEvent = "red team fell"
+    return
+  }
   var cx = Math.floor(en.x)
+  var pool = liquidAt(w, cx, ny)
+  if (pool && ny >= pool.surfaceY) {
+    en.y = pool.surfaceY
+    en.gone = true
+    en.state = "dead"
+    w.enemiesKilled++
+    pool.ripple = w.ticks
+    addDust(w, en.x, pool.surfaceY, 12)
+    w.lastEvent = pool.liquid === "lava" ? "red team slag" : "red team splash"
+    return
+  }
+  var shaft = pitAt(w, cx)
   for (var yy = Math.floor(en.y) + 1; yy <= Math.floor(ny) + 1; yy++) {
+    // A pit stays bottomless for hostiles too. They previously landed on the
+    // solid out-of-bounds row and patrolled the same impossible floor agents
+    // were correctly falling through.
+    if (shaft && yy >= shaft.floorY) continue
     if (!solid(w, cx, yy)) continue
     en.y = yy - 1
     en.state = en.kind === "operator" ? "operate" : (en.kind === "sniper" ? "camp" : "walk")
@@ -5476,7 +5559,7 @@ function fireEnemyGun(w, en) {
       if (ag.gone || ag.state === "saved") continue
       if (Math.abs(ag.x - (x + 0.5)) < 0.8 && Math.abs((ag.y - 2) - fy) < 2.5) {
         en.lineTo = ag.x; en.lineY = ag.y - 2; en.shotFor = 8
-        woundFriendly(w, ag, en.x)
+        woundFriendly(w, ag, en.x, en.kind === "gun")
         return
       }
     }
@@ -5575,12 +5658,24 @@ function stepEnemy(w, en) {
         || (aimed.x - en.x) * en.dir <= 0
         || !lineClear(w, Math.floor(en.x), Math.floor(en.y) - 2,
                       Math.floor(aimed.x), Math.floor(aimed.y) - 2)) {
-      // Do not reacquire the same impossible shot on the next tick and pivot
-      // forever. Move on after half a reload instead.
-      en.state = "reload"; en.timer = Math.round(GUN_RELOAD / 2); return
+      // A moving queue can invalidate a shot during its tell. On level 282 the
+      // regular gunner then paid half a reload, reacquired, aimed, lost that
+      // target too, and spent the level displaying red dots without firing.
+      // Keep the elapsed aim and transfer it to another clear target. The
+      // planted sniper remains deliberate and pays the old reset penalty.
+      var replacement = en.kind === "sniper" ? null : enemyTarget(w, en, 28)
+      if (replacement) {
+        aimed = replacement
+        en.targetId = aimed.id
+        en.dir = aimed.x >= en.x ? 1 : -1
+      } else {
+        en.state = "reload"
+        en.timer = en.kind === "sniper" ? Math.round(GUN_RELOAD / 2) : GUN_RELOAD - 8
+        return
+      }
     }
     en.lineTo = aimed.x; en.lineY = aimed.y - 2
-    if (en.timer >= (en.kind === "sniper" ? GUN_AIM + 12 : GUN_AIM)) {
+    if (en.timer >= (en.kind === "sniper" ? SNIPER_AIM : GUN_AIM)) {
       fireEnemyGun(w, en)
       en.state = "reload"; en.timer = 0
     }
@@ -5794,7 +5889,8 @@ function forceEscape(w, ag) {
   // way back up costing a climber nobody has left. Ungated, this was every
   // stranded agent in the run: the colony tunnelling out through the floor
   // of the room it was standing in.
-  if (exitBelow(w, ag) && solid(w, Math.floor(ag.x), footY + 1)
+  if (exitBelow(w, ag) && corridorBelow(w, ag)
+      && solid(w, Math.floor(ag.x), footY + 1)
       && at(w, Math.floor(ag.x), footY + 1) !== STEEL) {
     var charge = (traitOf(ag).mineFirst === true || ag.id % 2 === 0) && canPlantMine(w, ag)
     if (grant(w, charge ? "miner" : "digger")) {
@@ -5871,7 +5967,8 @@ function runDirector(w) {
   } else if (!wantUp && solid(w, ahead, footY) && at(w, ahead, footY) !== STEEL && grant(w, "basher")) {
     best.state = "bash"
     best.timer = 0
-  } else if (exitBelow(w, best) && solid(w, Math.floor(best.x), footY + 1)
+  } else if (exitBelow(w, best) && corridorBelow(w, best)
+             && solid(w, Math.floor(best.x), footY + 1)
              && at(w, Math.floor(best.x), footY + 1) !== STEEL
              && grant(w, wantsMine ? "miner" : "digger")) {
     if (wantsMine) plantMine(w, best)
@@ -6225,6 +6322,10 @@ function step(w) {
     w.doneTicks = 0
   }
   if (w.done) w.doneTicks++
+
+  // Terrain may have opened beside a pool during this tick. Update before the
+  // host paints the frame so the spill appears with the bash or explosion.
+  updateLiquidFlow(w)
 
   // A level nobody can finish still has to end, and it should end while it's
   // still worth looking at. Two cutoffs: a hard ceiling, and a much earlier

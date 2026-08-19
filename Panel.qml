@@ -69,16 +69,14 @@ Panel {
   // Calm on purpose. Snake's game-over lines needle you; there is nothing to
   // lose here, so these just note what happened and get out of the way.
   readonly property var completionLines: [
-    "Everyone home. The earth will keep.",
-    "All accounted for. Nobody had to be told twice.",
-    "They worked it out. They usually do.",
-    "Home, every one. The tunnels stay behind.",
-    "A tidy job. Not a brick wasted.",
-    "That one took some digging.",
-    "The long way round, but they got there.",
-    "Umbrellas up, and down they went.",
-    "Somebody had to stand still so the rest could pass.",
-    "No plan, no map, no fuss."
+    "Everyone home. The acceptance tests are suspiciously green.",
+    "All agents accounted for. Even the edge cases.",
+    "The colony has achieved warp factor: eventually.",
+    "Perfect run. Please ignore the technical debt underground.",
+    "They boldly went where several agents had just gone before.",
+    "Distributed consensus achieved without a network.",
+    "The exit returned HTTP 200 for everyone.",
+    "All home. The simulation insists this was emergent behavior."
   ]
   // Shown when the level is about to be attempted again rather than left.
   // Shown when the level ran out of time and was nuked.
@@ -87,22 +85,61 @@ Panel {
     "The clock won that one.",
     "Out of time, and out of options.",
     "Some levels don't get solved.",
-    "That's what the last skill is for."
-  ]
-  readonly property var retryLines: [
-    "Not this time. Sending a fresh lot in.",
-    "That didn't work. Again, with different agents.",
-    "Some levels take two goes.",
-    "Round two. Same ground, new colony.",
-    "They'll have another crack at it."
+    "That's what the last skill is for.",
+    "The SLA expired. So did everybody else.",
+    "TimeoutError: colony did not converge.",
+    "The final countdown was less Europe, more incident response.",
+    "Game over. The next level already has your coin."
   ]
   readonly property var partialLines: [
-    "Most of them made it. That's how it goes.",
-    "A few stayed behind in the rock.",
-    "Not everyone finds the way out.",
-    "Some tunnels only go one direction.",
-    "The ones who made it made it."
+    "Some made it home. The rest became legacy infrastructure.",
+    "Partial success is still success in cloud billing.",
+    "The survivors merged to main. The others had conflicts.",
+    "Some tunnels only go one direction. Like migrations.",
+    "Enough got home to ship it on a Friday.",
+    "The away team returned with fewer redshirts than it started.",
+    "The colony calls this eventual consistency."
   ]
+
+  readonly property var eventLines: ({
+    ai: ["The AI produced a confident route without evidence.",
+         "Hallucination detected: the floor was not there.",
+         "Artificial intelligence met natural consequences.",
+         "The model reasoned deeply and selected walking left.",
+         "The benchmark says superhuman. The pit disagrees.",
+         "The chain of thought led directly into a wall.",
+         "The AI safety team recommends adding a railing.",
+         "A larger model would have found a larger pit.",
+         "Human feedback was unavailable. Laughter was not.",
+         "The neural network had layers. The level had more.",
+         "Autonomy achieved. Accountability remains in beta.",
+         "Tokens were spent. Lessons were allegedly learned."],
+    hazard: ["The hazard documentation arrived one agent too late.",
+             "They tested the trap in production.",
+             "One does not simply walk into a hazard. Several did."],
+    builder: ["The bridge passed review. Gravity left comments.",
+              "Brick by brick: infrastructure as actual code.",
+              "They built a stairway to the next deployment."],
+    digger: ["They dug through the stack to the root cause.",
+             "The shovel performed a successful deep-dive.",
+             "The lower corridor supports downward compatibility."],
+    miner: ["The miner deployed a breaking change. It broke the ground.",
+            "That blast had excellent cache invalidation."],
+    floater: ["Cloud computing was taken unusually literally.",
+              "They floated the proposal. Gravity approved."],
+    blocker: ["A blocker finally lived up to the ticket status.",
+              "Traffic control was one agent in a robe saying no."],
+    bomber: ["The rollback plan expanded in every direction.",
+             "A bomb fixed the bug and neighboring features."],
+    rescue: ["The director autoscaled the skill budget.",
+             "Help arrived from the management plane."],
+    pit: ["The floor returned 404. Several followed the link.",
+          "That pit had more depth than the plot."],
+    drone: ["The drone delivered same-day disruption.",
+            "The operator chose remote work. The drone chose violence."],
+    sniper: ["Long Context found a very short argument.",
+             "Phasers were set to extremely inconvenient."]
+  })
 
   // ---------------------------------------------------------------------
   // Palette
@@ -135,11 +172,6 @@ Panel {
   // Level lifecycle
   // ---------------------------------------------------------------------
 
-  // Up to three goes at a level before moving on. A retry keeps the same
-  // ground and sends a different colony at it — see Sim.generate(level,
-  // attempt) for why replaying it unchanged would be pointless.
-  readonly property int maxAttempts: 3
-
   function newLevel(n, tryNumber) {
     level = Math.max(1, n)
     attempt = tryNumber || 0
@@ -155,8 +187,23 @@ Panel {
     saveState()
   }
 
-  function retryLevel() {
-    newLevel(level, attempt + 1)
+  function resultLine(w) {
+    var target = w.target || w.toRelease
+    var lines = w.saved >= target ? completionLines : (w.nuking ? nukedLines : partialLines)
+    var facts = []
+    function used(name) { return Object.prototype.hasOwnProperty.call(w.lastUsed, name) }
+    function add(name, yes) { if (yes) facts = facts.concat(eventLines[name]) }
+    add("ai", true)
+    add("hazard", w.hazardKills > 0)
+    add("builder", used("builder")); add("digger", used("digger"))
+    add("miner", used("miner")); add("floater", used("floater"))
+    add("blocker", used("blocker")); add("bomber", used("bomber") || w.bombsUsed > 0)
+    add("rescue", w.rescues > 0)
+    add("pit", w.pits && w.pits.length > 0 && w.lost > 0)
+    add("drone", w.enemyRoster && w.enemyRoster.indexOf("operator") >= 0)
+    add("sniper", w.enemyRoster && w.enemyRoster.indexOf("sniper") >= 0)
+    var pool = facts.length && Math.random() < 0.78 ? facts : lines
+    return pool[Math.floor(Math.random() * pool.length)]
   }
 
   function publish() {
@@ -194,24 +241,15 @@ Panel {
     publish()
 
     if (world.done && completionLine === "") {
-      var everyone = world.saved >= (world.target || world.toRelease)
-      var willRetry = !everyone && attempt + 1 < maxAttempts
-      var pool = everyone ? completionLines
-                          : (world.nuking ? nukedLines
-                             : (willRetry ? retryLines : partialLines))
-      completionLine = pool[Math.floor(Math.random() * pool.length)]
+      completionLine = resultLine(world)
       lifetimeSaved += world.saved
       if (world.saved > 0) levelsCleared += 1
       saveState()
     }
 
-    // A pause on the finished level long enough to read the result, then either
-    // another go at it or the next one. The loop is the point: this is meant to
-    // be left open in the corner of a screen.
-    if (world.done && world.doneTicks > 110) {
-      if (world.saved >= (world.target || world.toRelease) || attempt + 1 >= maxAttempts) advance(1)
-      else retryLevel()
-    }
+    // One colony, one story, then onward. A failed level no longer repeats with
+    // a replacement cast before the loop is allowed to continue.
+    if (world.done && world.doneTicks > 110) advance(1)
   }
 
   function togglePause() { running = !running }

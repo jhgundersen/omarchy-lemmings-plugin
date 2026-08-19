@@ -567,7 +567,23 @@ function drawPool(ctx, w, pal, p, px, pw, bot) {
   body.addColorStop(0, pal.poolBody)
   body.addColorStop(1, pal.poolDeep)
   ctx.fillStyle = body
-  ctx.fillRect(px, sy, pw, bot - sy)
+  if (p.wet) {
+    // Paint the connected empty cells rather than the pit's original bounds.
+    // Sim.js updates this mask whenever a bash or blast opens a side chamber.
+    for (var wy = p.surfaceY; wy < w.k.ROWS; wy++) {
+      var run = -1
+      for (var wx = 0; wx <= w.k.COLS; wx++) {
+        var wet = wx < w.k.COLS && p.wet[wy * w.k.COLS + wx]
+        if (wet && run < 0) run = wx
+        if (!wet && run >= 0) {
+          ctx.fillRect(run * C, wy * C, (wx - run) * C, C)
+          run = -1
+        }
+      }
+    }
+  } else {
+    ctx.fillRect(px, sy, pw, bot - sy)
+  }
 
   // The order from here is what makes a half-submerged animal work without a
   // single clip or a second sprite. The whole creature is drawn first, then the
@@ -590,6 +606,16 @@ function drawPool(ctx, w, pal, p, px, pw, bot) {
     var wob = Math.sin(c * 0.11 + t * 0.045 + p.seed)
             + Math.sin(c * 0.047 - t * 0.028)
     ctx.fillRect(px + c, sy + Math.round(wob), 2, 2)
+  }
+  if (p.wet) {
+    // New exposed surfaces in side chambers get their own waterline. The
+    // original pit line above remains wavy; these smaller spills stay crisp.
+    for (var fx = 0; fx < w.k.COLS; fx++)
+      for (var fy = p.surfaceY; fy < w.k.ROWS; fy++) {
+        var fi = fy * w.k.COLS + fx
+        if (!p.wet[fi] || (fy > p.surfaceY && p.wet[fi - w.k.COLS])) continue
+        ctx.fillRect(fx * C, fy * C, C, 2)
+      }
   }
 
   // What the surface does when nobody is in it. Lava spits, coolant strobes
