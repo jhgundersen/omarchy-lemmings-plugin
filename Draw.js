@@ -1017,17 +1017,17 @@ var SPECIAL_FACTS = {
     "is exploring. It has been exploring for a while.",
     "has never once been where the exit is."
   ],
-  pyro: [
-    "converges on the answer at 900 degrees.",
-    "cools slowly. The level does not.",
-    "calls this an optimisation.",
-    "escapes local minima the honest way.",
-    "runs hot and calls it exploration.",
-    "has a temperature setting of exactly one: yes.",
-    "found a smoother solution surface.",
-    "does not iterate. It anneals.",
-    "was told to reduce the search space.",
-    "melts through the problem rather than around it."
+  forcepush: [
+    "resolved the conflict by removing the branch.",
+    "does not pull. It has never pulled.",
+    "considered a smaller change and rejected it.",
+    "rewrote history from forty feet away.",
+    "was asked to review the wall and deleted it instead.",
+    "believes the remote should match its local copy.",
+    "has no merge strategy and does not need one.",
+    "solves problems it cannot personally reach.",
+    "left no conflict markers, or wall.",
+    "reports the change as non-breaking."
   ],
   sapper: [
     "ignores everything above and does what the wall says.",
@@ -1168,13 +1168,20 @@ var SPECIAL_FACTS = {
 function drawBust(ctx, x, y, sp, pal) {
   var P = 2
   function px(bx, by, bw, bh, fill) { ctx.fillStyle = fill; ctx.fillRect(x + bx * P, y + by * P, bw * P, bh * P) }
+  // Dressed like the colony it came out of. This was still wearing the old
+  // face — one eye pixel, no collar — while every agent on the board below it
+  // had shades and a shirt, and a portrait that does not match the sprite it
+  // is captioning is worse than no portrait.
   px(1, 0, 6, 3, sp.hair)          // hair
-  px(0, 1, 1, 2, sp.hair)
+  px(0, 1, 1, 2, sp.hair)          // and the back of the head
   px(2, 3, 4, 3, pal.skin)         // face
-  px(3, 4, 1, 1, pal.eye)          // eye
+  px(6, 4, 1, 1, pal.skin)         // nose, on the side it is facing
+  px(2, 4, 5, 1, pal.eye)          // shades, out over it
+  px(5, 4, 1, 1, pal.lens)         // the lit lens
   px(1, 6, 6, 5, sp.robe)          // shoulders
   px(0, 7, 1, 4, sp.robe)
   px(7, 7, 1, 4, sp.robe)
+  px(3, 6, 2, 2, pal.shirt)        // collar and shirt front
   px(1, 8, 2, 2, sp.hair)          // the shoulder pip, same as on the board
 }
 
@@ -2291,13 +2298,47 @@ function drawAgentTrick(ctx, w, pal, ag, ox, oy, dir, robe, hair) {
         ctx.fillRect(tx + dir * 4 - 1, oy - Math.round(26 * reach), 3, Math.round(30 * reach))
         ctx.fillRect(tx + dir * 4, oy + 14, Math.round(24 * reach), 2)
         break
-      case "melt":                              // a growing disc
-        var rr = Math.round(9 * reach)
-        for (var my = -rr; my <= rr; my++) {
-          var mw = Math.round(Math.sqrt(Math.max(0, rr * rr - my * my)))
-          ctx.fillRect(tx + dir * 14 - mw, mid + my, mw * 2, 1)
+      case "rocket": {                          // launched, not swung
+        // The tube on the shoulder, and the round already on its way. reach
+        // runs 0..1 over the move, so the rocket crosses the gap in the time
+        // the agent spends braced against the recoil.
+        ctx.fillStyle = pal.rigDark
+        ctx.fillRect(dir > 0 ? tx - 4 : tx - 8, mid - 4, 12, 5)
+        ctx.fillStyle = pal.rig
+        ctx.fillRect(dir > 0 ? tx + 6 : tx - 8, mid - 3, 3, 3)
+
+        // How far it actually goes. The first version flew a fixed forty
+        // pixels while the simulation reached twenty-six cells, so the round
+        // stopped in mid-air and the hole opened somewhere behind it. Scan the
+        // same way the shot does and fly the whole distance.
+        var C2 = w.k.CELL
+        var rkCell = Math.floor(ag.x)
+        var rkFoot = Math.floor(ag.y)
+        var rkTo = rkCell
+        for (var rr2 = 2; rr2 <= w.k.ROCKET_RANGE; rr2++) {
+          var rcx = rkCell + dir * rr2
+          if (rcx < 0 || rcx >= w.k.COLS) break
+          rkTo = rcx
+          if (w.terrain[(rkFoot - 2) * w.k.COLS + rcx] !== w.k.EMPTY
+              || w.terrain[(rkFoot - 1) * w.k.COLS + rcx] !== w.k.EMPTY) break
         }
+        var flight = Math.min(1, reach)
+        var rkFrom = ox + SPRITE_W / 2 + dir * 6
+        var rkX = Math.round(rkFrom + (rkTo * C2 - rkFrom) * flight)
+        var rkY = mid - 2
+        ctx.fillStyle = "#d8dde5"
+        ctx.fillRect(rkX, rkY, 5, 3)                       // the round
+        ctx.fillStyle = "#ffb648"
+        hzTri(ctx, rkX - dir * 3, rkY + 1, 3, 5, dir > 0 ? -1 : 1)
+        // Exhaust, thinning behind it.
+        for (var ex2 = 1; ex2 <= 5; ex2++) {
+          ctx.globalAlpha = 0.5 / ex2
+          ctx.fillStyle = ex2 < 3 ? "#ffe68a" : "#8a8f9c"
+          ctx.fillRect(rkX - dir * (4 + ex2 * 4), rkY, 4, 3 - (ex2 > 3 ? 1 : 0))
+        }
+        ctx.globalAlpha = 1
         break
+      }
       case "sap":                               // instructions injected into rock
         for (var pr = 0; pr < 4; pr++) {
           var promptX = tx + dir * (5 + pr * 5)
@@ -2661,12 +2702,37 @@ function drawAgent(ctx, w, pal, ag, opts) {
 
   // --- umbrella, drawn behind nothing and above everything --------------
   if (ag.floater && st === "fall" && ag.fall > 2) {
-    ctx.fillStyle = pal.umbrella
-    blit(ctx, ox, oy, 1, -3, -9, 14, 2)
-    blit(ctx, ox, oy, 1, -4, -7, 3, 2)
-    blit(ctx, ox, oy, 1, 9, -7, 3, 2)
+    // It breathes. A canopy that holds one shape all the way down reads as a
+    // prop being carried; one that flexes against the air reads as the thing
+    // actually holding somebody up. The centre lifts as the tips drop and back
+    // again, which is what a canopy taking a load does, and the phase is off
+    // the agent's own id so a sky full of them is not one animation repeated.
+    var puff = Math.sin(w.ticks * 0.13 + ag.id * 1.7)
+    var flex = puff > 0.3 ? 1 : (puff < -0.3 ? -1 : 0)
+
+    // Whose umbrella it is. Keyed off the agent's id so it never changes hand
+    // to hand mid-descent, and offset by the colony seed so the same id is not
+    // handed the same umbrella every playthrough — the same trick the colony
+    // itself uses, and it costs no draw from the trait stream to do it here.
+    var brolly = pal.umbrellas
+      ? pal.umbrellas[(ag.id + (w.colonySeed || 0)) % pal.umbrellas.length]
+      : pal.umbrella
+
     ctx.fillStyle = pal.umbrellaStem
-    blit(ctx, ox, oy, 1, 3, -7, 2, 8)
+    blit(ctx, ox, oy, 1, 4, -6, 1, 7)                    // one-pixel shaft
+    blit(ctx, ox, oy, 1, 3, -7 - flex, 3, 1)             // the spreader under it
+
+    // Only the centre flexes. Moving the tips the other way as well pulled
+    // them clean off the canopy and left three separate marks in the air.
+    ctx.fillStyle = brolly
+    blit(ctx, ox, oy, 1, -1, -9 - flex, 11, 2)           // canopy
+    blit(ctx, ox, oy, 1, -2, -7, 2, 2)                   // tips, staying put
+    blit(ctx, ox, oy, 1, 9, -7, 2, 2)
+
+    ctx.fillStyle = pal.umbrellaRim
+    blit(ctx, ox, oy, 1, -1, -10 - flex, 11, 1)          // the lit edge
+    blit(ctx, ox, oy, 1, -2, -8, 2, 1)
+    blit(ctx, ox, oy, 1, 9, -8, 2, 1)
   }
 
   // Ada Blocker's plate. Drawn in front of the body on the side it is facing,
@@ -2746,8 +2812,15 @@ function drawAgent(ctx, w, pal, ag, opts) {
     ctx.save()
     if (ag.heightMode === "cushion") {
       var salto = ag.heightTicks ? Math.max(0, (ag.heightTick / ag.heightTicks - 0.18) / 0.82) : 0
+      salto = Math.min(1, salto)
+      // Eased, not linear. Turning at a constant rate the whole way down is
+      // what made this read as a plank being rotated rather than somebody
+      // throwing a salto: a flip is slow off the lip, quick through the
+      // middle and slow again into the landing, and it is the two slow ends
+      // that sell the push-off and the spotting of the ground.
+      var spin = salto * salto * salto * (salto * (salto * 6 - 15) + 10)
       ctx.translate(ox + SPRITE_W / 2, oy + SPRITE_PX / 2)
-      ctx.rotate(Math.min(1, salto) * Math.PI * 2)
+      ctx.rotate(spin * Math.PI * 2)
       ctx.translate(-ox - SPRITE_W / 2, -oy - SPRITE_PX / 2)
     } else {
       // The cabin drawn above replaces the ordinary body completely.
@@ -2762,22 +2835,62 @@ function drawAgent(ctx, w, pal, ag, opts) {
   var bodyDrop = st === "slide" ? 4 : ((st === "dig" || st === "camp") ? 2 : 0)
 
   // --- hair + head -------------------------------------------------------
+  // Which way it is looking has to survive the shades. The old sprite said it
+  // with one eye pixel sitting on the leading side; a band across the whole
+  // face is symmetrical and says nothing at all. So the head gets a front and
+  // a back instead: hair bulging behind, and brow, lens and nose stepping out
+  // in front. Three pixels, but they are the three that make a colony walking
+  // left look different from a colony walking right.
   ctx.fillStyle = hair
   blit(ctx, ox, oy, dir, 2, 0 + bodyDrop, 4, 3)
-  if (st === "walk" || st === "climb") blit(ctx, ox, oy, dir, 1, 1 + bodyDrop, 1, 2)
+  blit(ctx, ox, oy, dir, 0, 1 + bodyDrop, 2, 3)        // the back of the head
 
   ctx.fillStyle = skin
   blit(ctx, ox, oy, dir, 2, 3 + bodyDrop, 4, 4)
+  blit(ctx, ox, oy, dir, 6, 5 + bodyDrop, 1, 1)        // the nose
+
+  // Shades, not an eye. A band reads as somebody wearing something, which is
+  // the difference between a little person and an agent. It runs one pixel out
+  // over the nose, so the glasses lead the face the way glasses do.
   ctx.fillStyle = pal.eye
-  blit(ctx, ox, oy, dir, 5, 4 + bodyDrop, 1, 1)
+  blit(ctx, ox, oy, dir, 2, 4 + bodyDrop, 5, 1)
+  ctx.fillStyle = pal.lens
+  blit(ctx, ox, oy, dir, 5, 4 + bodyDrop, 1, 1)        // the lit lens, in front
+
+  // --- collar ------------------------------------------------------------
+  // Drawn before the body so each pose's own torso closes over it, leaving a
+  // white notch at the throat. One mark, and it works in every pose, which a
+  // shirt front painted per-pose would not: there are a dozen torsos below.
+  if (st !== "saved") {
+    ctx.fillStyle = pal.shirt
+    blit(ctx, ox, oy, dir, 3, 6 + bodyDrop, 2, 4)
+  }
+
+  // Shoulder line. A dark suit has to sit on a dark board: too light and it is
+  // not a suit, too dark and the agent is a face floating in a corridor. What
+  // makes it read either way is one lighter pixel row along the top of the
+  // torso — the sprite carries its own edge instead of borrowing contrast from
+  // whatever happens to be behind it.
+  var lapel = ag.special ? hair : pal.lapel
 
   // --- body + limbs ------------------------------------------------------
   ctx.fillStyle = robe
+  // (the shoulder line is laid over the torso once it is drawn, below)
 
   if (st === "climb") {
     blit(ctx, ox, oy, dir, 2, 7, 4, 6)
     blit(ctx, ox, oy, dir, 5, 3 + (ag.anim >> 3) % 2, 2, 4)   // hand over hand
     blit(ctx, ox, oy, dir, 3, 13, 3, 3)
+
+  } else if (st === "height" && ag.heightMode === "cushion") {
+    // Tucked. The spread-eagle fall pose was being rotated a full turn, and a
+    // spread figure spinning is a diagram of a rotation; a tucked one is a
+    // salto. Arms in, knees up, nothing sticking out to catch the eye on the
+    // way round.
+    blit(ctx, ox, oy, dir, 1, 7, 6, 5)              // torso, folded
+    blit(ctx, ox, oy, dir, 0, 8, 2, 3)              // arms wrapped in
+    blit(ctx, ox, oy, dir, 6, 8, 2, 3)
+    blit(ctx, ox, oy, dir, 2, 11, 5, 4)             // knees drawn up
 
   } else if (st === "fall" || st === "height") {
     blit(ctx, ox, oy, dir, 1, 7, 6, 6)
@@ -2853,6 +2966,17 @@ function drawAgent(ctx, w, pal, ag, opts) {
     ctx.font = "bold 9px monospace"
     ctx.textAlign = "center"
     ctx.fillText(String(Math.ceil(ag.fuse / 30)), ox + SPRITE_W / 2, oy - 3)
+  }
+
+  // The shoulder tips, laid over whichever torso the pose drew. A full lighter
+  // row across the chest was the first attempt and it read as a bib: with the
+  // white shirt directly under it the whole front of the agent went pale. Two
+  // pixels at the corners give the same edge and leave the middle to the shirt.
+  // Upright poses only — on a slide or a sprawl the shoulders are not up there.
+  if (st !== "saved" && st !== "slide" && st !== "stunned" && st !== "webup") {
+    ctx.fillStyle = lapel
+    blit(ctx, ox, oy, dir, 1, 7 + bodyDrop, 1, 1)
+    blit(ctx, ox, oy, dir, 6, 7 + bodyDrop, 1, 1)
   }
 
   // A pip on the shoulder in the special's second colour. The robe alone is a

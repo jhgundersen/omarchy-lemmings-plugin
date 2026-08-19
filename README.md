@@ -3,7 +3,7 @@
 ![Oh No! More Agents](preview.png)
 
 Not a game. A level carves itself out of solid earth, a hatch opens, and a
-dozen-odd small creatures with green hair have to work out for themselves how
+dozen-odd small agents in dark suits have to work out for themselves how
 to get from there to the exit — bashing through what's in the way, bridging
 what isn't there, climbing what's too tall, and putting an umbrella up when
 the drop is too far.
@@ -55,13 +55,14 @@ seconds and the next level carves itself. Left open, it keeps going.
   something, and who it is the rest of the time
 - **Esc** — close the panel
 
-Each level asks for a number rather than for everyone — two thirds to four
-fifths of the colony, shown in the header. That's how the original did it, and
-it's what leaves room for an agent to sacrifice itself.
+Every agent counts. The header reads how many of the colony are home out of all
+of them, and there is no smaller number to reach — the run goes on to the next
+level either way, so a goal of two thirds only ever told you which of the
+fifteen you were allowed to stop caring about.
 
-A level that misses its target is attempted again, up to three times, with the
-same ground, a different colony and a little more in the toolbar. The header
-shows which try you're watching.
+A level that goes badly is attempted again, up to three times, with the same
+ground, a different colony and a little more in the toolbar. The header shows
+which try you're watching.
 
 Nothing in here assigns a skill. There's no cursor and no way to help. The
 toolbar under the board is a read-out, not a control: it shows what the level
@@ -151,7 +152,7 @@ Give it the move *and* the toolbar and it solves the level on its own.
 | **Vector Van Damme** | Does not destroy the wall. Picks it up and puts it down further along |
 | **Web Crawler** | Up the wall and across the ceiling upside down — but only where the roof leads past the thing in the way |
 | **Random Forrest** | Fells the wall: everything above knee height comes down, and what's left is a step |
-| **Sim Anneal** | Melts a disc, the roundest hole on the board |
+| **Force Push** | Fires a rocket across the room and takes out what it lands on, hazard included |
 | **Prompt Injection** | Plants a charge in the rock, and the rock does as it's told |
 | **Gradient Descent** | Straight down, and only when down is where home is |
 | **Context Window** | Needed one cell of room and opens two hundred |
@@ -160,7 +161,7 @@ Give it the move *and* the toolbar and it solves the level on its own.
 | **Grid Search** | Fires at everything. A burst the full height of the corridor, and the rounds that get through keep going |
 | **Beam Search** | Picks a firing position and stays there for the rest of the level, working at range |
 
-You know it by its colour — every other agent is the same green and blue on
+You know it by its colour — every other agent is in the same dark suit on
 purpose — with a pip on its shoulder, its name over its head with labels on, and
 a card up in the sky saying who is down there and one line about them.
 
@@ -224,8 +225,8 @@ crumbled scatter along every boundary so no two layers meet on a clean line.
 All of it is free, because those three materials are one material to everything
 that makes a decision.
 
-Seven biomes cycle with the level number — **Cavern**, **Ruins**, **Frost**,
-**Foundry**, **Jungle**, **Ice Cave** and **Spaceship** — each pulling the
+Eight biomes cycle with the level number — **Cavern**, **Ruins**, **Frost**,
+**Foundry**, **Jungle**, **Ice Cave**, **Spaceship** and **Factory** — each pulling the
 earth, sky and portal toward a different tone of the active Omarchy theme, and
 each furnishing its corridors with its own scenery: stalagmites and grass,
 fallen columns, ice needles, pipes and sparks, trees with canopies. The first
@@ -264,9 +265,9 @@ another:
 A crossing level may get a shaft behind them as well, so the colony has both the
 hole it has to get over and the hole it has to be stopped from walking into.
 
-Four of the seven biomes flood theirs: **water** in the Ruins and the Jungle,
-**lava** in the Foundry, **coolant** on the ship. The other three stay a black
-hole in the rock, which is the right answer for a crevasse. Nothing about the
+Five of the eight biomes flood theirs: **water** in the Ruins and the Jungle,
+**lava** in the Foundry, **coolant** on the ship, **oil** in the Factory. The
+other three stay a black hole in the rock, which is the right answer for a crevasse. Nothing about the
 fall changes — the shaft under the surface goes through the bedrock either way
 and an agent that goes in is gone either way. The liquid gives it a surface to
 be gone at, which is the difference between an event and a sprite sliding
@@ -283,7 +284,8 @@ The uneven floors never move by more than a stride between one column and the
 next, so they are walked over without anyone noticing and no route is affected.
 They cost about a point of levels cleared, which is the price of a jungle floor
 not being a ruler. The agents are the one
-deliberately un-themed thing on it: green hair, blue robe, orange umbrella.
+deliberately un-themed thing on it: dark suit, white shirt, shades — and an
+umbrella each, in a colour of their own.
 
 ### Dangers
 
@@ -340,9 +342,10 @@ it, that agent may move outward until they separate. Only movement toward a
 blocker is refused; otherwise the new blocker would catch its neighbour inside
 the exclusion radius and make it turn left and right in the same pixel forever.
 
-That is also why a level has a *target* rather than asking for everyone: a
-blocker doesn't come home, so on any level that posts one, "everyone home" isn't
-a target, it's a contradiction.
+It is also why a blocker eventually stands down. One that has stopped nobody
+for a while walks again, and one that has stood a long time walks whatever
+happens — a blocker never comes home, so a blocker nothing arrives at is an
+agent that has removed itself from the level for no reason.
 
 ### Gravity applies to everybody
 
@@ -395,8 +398,8 @@ None of it is a script. They don't know the route either — they just refuse to
 let you sit watching something that has stopped happening.
 
 Measured over 200 levels played the way the panel plays them, retries and all:
-**96% reach their target**, 88% of every agent released gets home, over an
-average attempt of under a minute.
+**92% of levels clear**, 78% of every agent released gets home, over an average
+attempt of about three quarters of a minute.
 
 ## Persistence
 

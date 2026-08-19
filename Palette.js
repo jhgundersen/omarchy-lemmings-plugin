@@ -180,11 +180,47 @@ function build(theme, level) {
     urgent: css(theme.urgent),
 
     // The one deliberately un-themed corner of the board.
-    hair: "#00b04a",
-    robe: "#3a5cd8",
+    //
+    // They started as Lemmings, which is where the green hair and blue robe
+    // came from, and the joke has moved on: they are agents now. So they are
+    // dressed as agents — dark suit, white shirt, shades.
+    //
+    // The suit is charcoal rather than black on purpose. Every biome on this
+    // board is dark, and a genuinely black suit is an agent you cannot see;
+    // what carries the silhouette instead is the pale face above the collar
+    // and the white shirt under it, with the suit as the mass between them.
+    hair: "#2b2d38",
+    robe: "#3d4356",
+    lapel: "#6b7488",
     skin: "#f0c8a0",
-    eye: "#101014",
-    umbrella: "#e8582c",
-    umbrellaStem: "#f0c8a0"
+    eye: "#0a0a0e",
+    shirt: "#e9edf7",
+    lens: "#6f7688",
+    // Black, now they are dressed for it. Same lesson as the suit: dark on a
+    // dark board has to bring its own edge, so what you actually read is the
+    // lit rim and the canopy is the mass hanging under it.
+    umbrella: "#333947",
+
+    // Everybody's suit is the same; the umbrella is the one thing that is
+    // theirs. Deep colours rather than bright ones, so a sky full of floaters
+    // still reads as a company of agents and not a bag of sweets — and plain
+    // charcoal appears twice, the same way steady is common in the trait pool,
+    // so the varied ones stay worth noticing.
+    umbrellas: [
+      "#333947",   // charcoal
+      "#6e2230",   // ox blood
+      "#26503a",   // forest
+      "#333947",   // charcoal
+      "#2f3c72",   // navy
+      "#5a2a5e",   // plum
+      "#1f5158",   // teal
+      "#6b4a1c"    // tobacco
+    ],
+    // The rim is brighter than the canopy needs to be pretty, because who has
+    // an umbrella out is information: it says that one is not going to die of
+    // this fall. The old orange announced it from across the board; a black
+    // umbrella has to say the same thing with an edge.
+    umbrellaRim: "#a8b2c8",
+    umbrellaStem: "#9aa2b4"
   }
 }
