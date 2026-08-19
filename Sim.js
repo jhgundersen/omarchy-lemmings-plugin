@@ -1587,6 +1587,80 @@ function sprayBullet(w, ag, shot, dry) {
   return false
 }
 
+function specialTraverse(w, ag, act, dry) {
+  var reach = act === "speculate" ? 14 : (act === "chain" ? 12 : 11)
+  var land = specialLanding(w, ag, reach)
+  if (!land) return false
+  if (dry) return true
+
+  var d = ag.dir
+  var fromX = Math.floor(ag.x), fromY = Math.floor(ag.y)
+  ag.specialX = land.x
+  ag.specialY = land.y
+  if (act === "chain") {
+    var linked = []
+    for (var i = 0; i < w.agents.length && linked.length < 4; i++) {
+      var link = w.agents[i]
+      if (link === ag || link.gone || link.state === "saved" || link.state === "bomb"
+          || link.state === "block" || link.state === "camp") continue
+      if (Math.abs(link.x - ag.x) <= 9 && Math.abs(link.y - ag.y) <= 3) linked.push(link)
+    }
+    for (i = 0; i < linked.length; i++) {
+      linked[i].x = land.x - d * (i + 1) * 0.8
+      linked[i].y = land.y
+      linked[i].dir = d
+      linked[i].state = "walk"
+      linked[i].fall = 0
+    }
+  } else if (act === "collapse") collapseCopy(w, ag)
+  else if (act === "limit") freezeNearby(w, ag, 5)
+
+  ag.x = land.x
+  ag.y = land.y
+  // Preserve the old action signal even though these moves do not carve. The
+  // director has always treated a completed special traversal as world
+  // progress, so terrainVersion doubles as an intentional activity version.
+  w.terrainVersion++
+  addDust(w, fromX + d * 2, fromY - 2, 8)
+  return true
+}
+
+function specialShapeCut(w, ag, act, dry) {
+  var fx = Math.floor(ag.x), fy = Math.floor(ag.y), d = ag.dir
+  var moved = false
+  var i, j, x, y
+  if (act === "melt") {
+    for (i = -5; i <= 5; i++) for (j = -5; j <= 5; j++) {
+      if (i * i + j * j > 26) continue
+      x = fx + d * 4 + i; y = fy - 2 + j
+      if (y > fy) continue
+      if (dry ? workable(w, x, y) : clearCell(w, x, y)) { if (dry) return true; moved = true }
+    }
+  } else if (act === "stomp") {
+    for (i = -1; i <= 1; i++) for (j = 1; j <= 6; j++)
+      if (dry ? workable(w, fx + i, fy + j) : clearCell(w, fx + i, fy + j)) {
+        if (dry) return true; moved = true
+      }
+  } else if (act === "quarry") {
+    for (i = 1; i <= 7; i++) for (j = -7; j <= 0; j++)
+      if (dry ? workable(w, fx + d * i, fy + j) : clearCell(w, fx + d * i, fy + j)) {
+        if (dry) return true; moved = true
+      }
+  } else if (act === "slab") {
+    for (i = 1; i <= 6; i++) for (j = 1; j <= 3; j++) {
+      x = fx + d * i; y = fy + j
+      if (at(w, x, y) !== EMPTY || agentOccupiesCell(w, x, y, ag)) continue
+      if (dry) return true
+      setCell(w, x, y, ROCK); moved = true
+    }
+  }
+  if (moved) {
+    w.terrainVersion++
+    addDust(w, fx + d * 2, fy - 2, 8)
+  }
+  return moved
+}
+
 function specialCut(w, ag, act, dry) {
   var fx = Math.floor(ag.x)
   var fy = Math.floor(ag.y)
@@ -1628,61 +1702,8 @@ function specialCut(w, ag, act, dry) {
       ag.shotFor = 12
     }
 
-  } else if (act === "chain") {
-    var chainLand = specialLanding(w, ag, 12)
-    if (!chainLand) return false
-    if (dry) return true
-    ag.specialX = chainLand.x
-    ag.specialY = chainLand.y
-    var linked = []
-    for (i = 0; i < w.agents.length && linked.length < 4; i++) {
-      var link = w.agents[i]
-      if (link === ag || link.gone || link.state === "saved" || link.state === "bomb"
-          || link.state === "block" || link.state === "camp") continue
-      if (Math.abs(link.x - ag.x) <= 9 && Math.abs(link.y - ag.y) <= 3) linked.push(link)
-    }
-    ag.x = chainLand.x
-    ag.y = chainLand.y
-    for (i = 0; i < linked.length; i++) {
-      linked[i].x = chainLand.x - d * (i + 1) * 0.8
-      linked[i].y = chainLand.y
-      linked[i].dir = d
-      linked[i].state = "walk"
-      linked[i].fall = 0
-    }
-    moved = true
-
-  } else if (act === "speculate") {
-    var specLand = specialLanding(w, ag, 14)
-    if (!specLand) return false
-    if (dry) return true
-    ag.specialX = specLand.x
-    ag.specialY = specLand.y
-    ag.x = specLand.x
-    ag.y = specLand.y
-    moved = true
-
-  } else if (act === "collapse") {
-    var collapseLand = specialLanding(w, ag, 11)
-    if (!collapseLand) return false
-    if (dry) return true
-    ag.specialX = collapseLand.x
-    ag.specialY = collapseLand.y
-    collapseCopy(w, ag)
-    ag.x = collapseLand.x
-    ag.y = collapseLand.y
-    moved = true
-
-  } else if (act === "limit") {
-    var limitLand = specialLanding(w, ag, 11)
-    if (!limitLand) return false
-    if (dry) return true
-    freezeNearby(w, ag, 5)
-    ag.specialX = limitLand.x
-    ag.specialY = limitLand.y
-    ag.x = limitLand.x
-    ag.y = limitLand.y
-    moved = true
+  } else if (act === "chain" || act === "speculate" || act === "collapse" || act === "limit") {
+    return specialTraverse(w, ag, act, dry)
 
   } else if (act === "kick") {
     // The wall is not destroyed. It is moved.
@@ -1769,20 +1790,8 @@ function specialCut(w, ag, act, dry) {
     setCell(w, fx, fy, ROCK)
     setCell(w, fx + d * (1 + thick), fy, ROCK)
 
-  } else if (act === "melt") {
-    for (i = -5; i <= 5; i++)
-      for (j = -5; j <= 5; j++) {
-        if (i * i + j * j > 26) continue
-        var meltY = fy - 2 + j
-        // A sideways move may open the wall down to foot height, but not the
-        // floor under it. Cutting lower leaves a crater rather than a tunnel;
-        // level 1's whole colony used to collect on its one-cell shelves.
-        if (meltY > fy) continue
-        if (dry ? workable(w, fx + d * 4 + i, meltY) : clearCell(w, fx + d * 4 + i, meltY)) {
-          if (dry) return true
-          moved = true
-        }
-      }
+  } else if (act === "melt" || act === "stomp" || act === "quarry" || act === "slab") {
+    return specialShapeCut(w, ag, act, dry)
 
   } else if (act === "sap") {
     for (i = -BOMB_RADIUS; i <= BOMB_RADIUS; i++)
@@ -1806,33 +1815,6 @@ function specialCut(w, ag, act, dry) {
           prompted.dir = d
       }
     }
-
-  } else if (act === "stomp") {
-    for (i = -1; i <= 1; i++)
-      for (j = 1; j <= 6; j++)
-        if (dry ? workable(w, fx + i, fy + j) : clearCell(w, fx + i, fy + j)) {
-          if (dry) return true
-          moved = true
-        }
-
-  } else if (act === "quarry") {
-    for (i = 1; i <= 7; i++)
-      // Context Window is enormous sideways, not downward. The floor is the
-      // one row its opening must leave alone.
-      for (j = -7; j <= 0; j++)
-        if (dry ? workable(w, fx + d * i, fy + j) : clearCell(w, fx + d * i, fy + j)) {
-          if (dry) return true
-          moved = true
-        }
-
-  } else if (act === "slab") {
-    for (i = 1; i <= 6; i++)
-      for (j = 1; j <= 3; j++)
-        if (at(w, fx + d * i, fy + j) === EMPTY
-            && !agentOccupiesCell(w, fx + d * i, fy + j, ag)) {
-          if (dry) return true
-          setCell(w, fx + d * i, fy + j, ROCK); moved = true
-        }
 
   } else if (act === "stack") {
     // Adds nothing to the level and takes nothing out of it. The wall is left
@@ -2971,6 +2953,43 @@ function corridorBelow(w, ag) {
   return null
 }
 
+function canDescendHere(w, ag, requireWorkable) {
+  var x = Math.floor(ag.x)
+  var footY = Math.floor(ag.y)
+  return exitBelow(w, ag) && corridorBelow(w, ag)
+      && solid(w, x, footY + 1)
+      && (!requireWorkable || at(w, x, footY + 1) !== STEEL)
+}
+
+// Every ordinary downward rescue uses this gate. Keeping the corridor, steel,
+// preference and fallback rules together prevents one caller from rediscovering
+// the level-255 bug where an agent dug repeatedly outside the corridor.
+function startDescent(w, ag, spend, allowMine, traitPreference, fallback, requireWorkable) {
+  if (!canDescendHere(w, ag, requireWorkable)) return false
+  var preferMine = allowMine && ((traitPreference && traitOf(ag).mineFirst === true) || ag.id % 2 === 0)
+  if (!fallback) {
+    var mine = preferMine && canPlantMine(w, ag)
+    if (!spend(w, mine ? "miner" : "digger")) return false
+    if (mine) plantMine(w, ag)
+    else { ag.state = "dig"; ag.timer = 0 }
+    return true
+  }
+  if (preferMine && canPlantMine(w, ag) && spend(w, "miner")) {
+    plantMine(w, ag)
+    return true
+  }
+  if (spend(w, "digger")) {
+    ag.state = "dig"
+    ag.timer = 0
+    return true
+  }
+  if (allowMine && canPlantMine(w, ag) && spend(w, "miner")) {
+    plantMine(w, ag)
+    return true
+  }
+  return false
+}
+
 // How far this agent still is from home, with height weighted because a
 // corridor down is worth more than a corridor along. This is the ONLY thing
 // that counts as progress: both the frustration counter and the patience timer
@@ -3271,11 +3290,9 @@ function considerEscape(w, ag) {
   var below = exitBelow(w, ag) && corridorBelow(w, ag)
   var turnLimit = below ? Math.max(1, traitOf(ag).turnLimit - 1) : traitOf(ag).turnLimit
   if (ag.turns < turnLimit) return false
-  var footY = Math.floor(ag.y)
   ag.turns = 0
 
-  if (exitBelow(w, ag) && corridorBelow(w, ag)) {
-    if (!solid(w, Math.floor(ag.x), footY + 1)) return false
+  if (below) {
     // Some agents plant a charge instead of sinking a shaft. They turn away
     // immediately, leaving three seconds to get clear of the new opening.
     // Keyed off the agent's own id so it's a settled trait rather than a
@@ -3284,11 +3301,7 @@ function considerEscape(w, ag) {
     // moved, because the digger budget almost never ran out.
     // Tinkerers prefer the planted charge; the id split keeps both downward
     // tools in circulation for everyone else.
-    var charge = traitOf(ag).mineFirst === true || ag.id % 2 === 0
-    if (charge && canPlantMine(w, ag) && take(w, "miner")) { plantMine(w, ag); return true }
-    if (take(w, "digger")) { ag.state = "dig"; ag.timer = 0; return true }
-    if (canPlantMine(w, ag) && take(w, "miner")) { plantMine(w, ag); return true }
-    return false
+    return startDescent(w, ag, take, true, true, true, false)
   }
 
   // Up the wall if there is one worth taking, and build a way up if there is
@@ -3571,12 +3584,7 @@ function stepWalk(w, ag) {
     // agent's mistake; some arrived as hops or umbrella falls, which made the
     // shared knowledge look especially fake. A shaft is both safer and the
     // shortest honest route onward through a descending level.
-    if (exitBelow(w, ag) && corridorBelow(w, ag)
-        && solid(w, Math.floor(ag.x), footY + 1)
-        && at(w, Math.floor(ag.x), footY + 1) !== STEEL
-        && take(w, "digger")) {
-      ag.state = "dig"
-      ag.timer = 0
+    if (startDescent(w, ag, take, false, false, false, true)) {
       ag.idle = 0
       ag.still = 0
       return
@@ -4887,8 +4895,7 @@ function specialEscape(w, ag) {
   var floor = Math.floor((fy + 1) / (w.corrGap || CORR_GAP))
   if (specOf(ag).act === "ceiling" && startWebEscape(w, ag)) return
   if (exitAbove(w, ag) && startSpecialAscent(w, ag)) return
-  if (exitBelow(w, ag) && corridorBelow(w, ag) && solid(w, fx, fy + 1)
-      && at(w, fx, fy + 1) !== STEEL && !ag.escapeFloors[floor]) {
+  if (canDescendHere(w, ag, true) && !ag.escapeFloors[floor]) {
     ag.escapeFloors[floor] = true
     ag.state = "dig"
     ag.timer = 0
@@ -5848,8 +5855,6 @@ function forceEscape(w, ag) {
       // level 257 the rescue fired while agents faced left, so they spent their
       // builders climbing away from the exit on the right. Once the decision
       // is explicitly "up to home", its horizontal half must point home too.
-      var exitMid = w.exit.x + w.exit.w / 2
-      if (Math.abs(exitMid - ag.x) > 1) ag.dir = exitMid > ag.x ? 1 : -1
       ag.idle = 0
       startBuild(w, ag)
     }
@@ -5889,16 +5894,9 @@ function forceEscape(w, ag) {
   // way back up costing a climber nobody has left. Ungated, this was every
   // stranded agent in the run: the colony tunnelling out through the floor
   // of the room it was standing in.
-  if (exitBelow(w, ag) && corridorBelow(w, ag)
-      && solid(w, Math.floor(ag.x), footY + 1)
-      && at(w, Math.floor(ag.x), footY + 1) !== STEEL) {
-    var charge = (traitOf(ag).mineFirst === true || ag.id % 2 === 0) && canPlantMine(w, ag)
-    if (grant(w, charge ? "miner" : "digger")) {
-      ag.idle = 0
-      if (charge) plantMine(w, ag)
-      else { ag.state = "dig"; ag.timer = 0 }
-      return
-    }
+  if (startDescent(w, ag, grant, true, true, false, true)) {
+    ag.idle = 0
+    return
   }
   // The cap applies to director help too. Without it, the one mechanism meant
   // to rescue a stuck agent happily hands the keenest builder its eighteenth
@@ -5950,7 +5948,6 @@ function runDirector(w) {
 
   // Below the exit and pacing: nothing horizontal helps, and digging only
   // makes it worse. Hand them a climb.
-  var wantsMine = best.id % 2 === 0 && canPlantMine(w, best)
   if (wantUp && climbOut(w, best, grant)) {
     // climbOut has already turned it to face whichever wall it is taking.
   } else if (wantUp && best.state === "walk" && canStartBuild(w, best) && grant(w, "builder")) {
@@ -5960,19 +5957,12 @@ function runDirector(w) {
     // gallery along the bottom of the world while home sat directly overhead.
     // With the climb gone that bash was the only branch that ever matched, so
     // an agent under the exit tunnelled sideways until the clock ran out.
-    var exitMid = w.exit.x + w.exit.w / 2
-    if (Math.abs(exitMid - best.x) > 1) best.dir = exitMid > best.x ? 1 : -1
     best.idle = 0
     startBuild(w, best)
   } else if (!wantUp && solid(w, ahead, footY) && at(w, ahead, footY) !== STEEL && grant(w, "basher")) {
     best.state = "bash"
     best.timer = 0
-  } else if (exitBelow(w, best) && corridorBelow(w, best)
-             && solid(w, Math.floor(best.x), footY + 1)
-             && at(w, Math.floor(best.x), footY + 1) !== STEEL
-             && grant(w, wantsMine ? "miner" : "digger")) {
-    if (wantsMine) plantMine(w, best)
-    else { best.state = "dig"; best.timer = 0 }
+  } else if (startDescent(w, best, grant, true, false, false, true)) {
   } else if (best.state === "walk" && canStartBuild(w, best) && grant(w, "builder")) {
     startBuild(w, best)
   } else if (w.bombsUsed < 1 && w.rescues > 6 && boxedIn(w, best) && grant(w, "bomber")) {
@@ -6050,50 +6040,7 @@ function condemn(w, ag) {
   ag.condemned = true
 }
 
-function step(w) {
-  w.ticks++
-  w.lastEvent = ""
-
-  if (w.released < w.toRelease) {
-    w.releaseTimer++
-    if (w.releaseTimer >= w.releaseInterval) {
-      w.releaseTimer = 0
-      w.released++
-      w.agents.push(spawn(w))
-    }
-  }
-
-  // Four or five friendlies are already on the board when the guard-house
-  // door opens, but the leading group has not yet left the top corridor.
-  if (w.enemyHatch && w.ticks >= 75 && w.enemyReleased < w.enemyRoster.length) {
-    w.enemyReleaseTimer++
-    if (w.enemyReleaseTimer >= 55) {
-      w.enemyReleaseTimer = 0
-      w.enemies.push(spawnEnemy(w, w.enemyRoster[w.enemyReleased]))
-      w.enemyReleased++
-    }
-  }
-
-  // Out of time. Everybody left gets a fuse, a few ticks apart so they go up
-  // in a ripple rather than all at once — the original's nuke, and the only
-  // ending that reads as deliberate rather than as the simulation giving up.
-  if (!w.done && !w.nuking && w.ticks > w.timeLimit) w.nuking = true
-  if (w.nuking) {
-    w.nukeTimer++
-    if (w.nukeTimer >= NUKE_STAGGER) {
-      w.nukeTimer = 0
-      for (var n = 0; n < w.agents.length; n++) {
-        var N = w.agents[n]
-        if (N.gone || N.state === "saved" || N.state === "bomb") continue
-        N.state = "bomb"
-        N.fuse = BOMB_FUSE
-        break
-      }
-    }
-    // Nothing left in the hatch once the nuke is on.
-    w.released = w.toRelease
-  }
-
+function stepAgents(w) {
   var active = 0
   var blockers = 0
   var moving = 0
@@ -6290,8 +6237,9 @@ function step(w) {
     if (ag.state === "block" || ag.state === "camp") blockers++
     if (ag.state !== "walk" || ag.idle < 300) moving++
   }
-
-
+  return { active: active, blockers: blockers, moving: moving }
+}
+function finishWorldStep(w, active, blockers, moving) {
   for (var red = 0; red < w.enemies.length; red++) stepEnemy(w, w.enemies[red])
 
   // Everyone who was going to get home has, and the only ones left standing are
@@ -6357,6 +6305,58 @@ function step(w) {
       w.doneTicks = 0
     }
   }
+}
+function step(w) {
+  w.ticks++
+  w.lastEvent = ""
+
+  if (w.released < w.toRelease) {
+    w.releaseTimer++
+    if (w.releaseTimer >= w.releaseInterval) {
+      w.releaseTimer = 0
+      w.released++
+      w.agents.push(spawn(w))
+    }
+  }
+
+  // Four or five friendlies are already on the board when the guard-house
+  // door opens, but the leading group has not yet left the top corridor.
+  if (w.enemyHatch && w.ticks >= 75 && w.enemyReleased < w.enemyRoster.length) {
+    w.enemyReleaseTimer++
+    if (w.enemyReleaseTimer >= 55) {
+      w.enemyReleaseTimer = 0
+      w.enemies.push(spawnEnemy(w, w.enemyRoster[w.enemyReleased]))
+      w.enemyReleased++
+    }
+  }
+
+  // Out of time. Everybody left gets a fuse, a few ticks apart so they go up
+  // in a ripple rather than all at once — the original's nuke, and the only
+  // ending that reads as deliberate rather than as the simulation giving up.
+  if (!w.done && !w.nuking && w.ticks > w.timeLimit) w.nuking = true
+  if (w.nuking) {
+    w.nukeTimer++
+    if (w.nukeTimer >= NUKE_STAGGER) {
+      w.nukeTimer = 0
+      for (var n = 0; n < w.agents.length; n++) {
+        var N = w.agents[n]
+        if (N.gone || N.state === "saved" || N.state === "bomb") continue
+        N.state = "bomb"
+        N.fuse = BOMB_FUSE
+        break
+      }
+    }
+    // Nothing left in the hatch once the nuke is on.
+    w.released = w.toRelease
+  }
+
+  var counts = stepAgents(w)
+  var active = counts.active
+  var blockers = counts.blockers
+  var moving = counts.moving
+
+
+  finishWorldStep(w, active, blockers, moving)
 
   return w
 }

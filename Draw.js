@@ -1198,41 +1198,16 @@ function hzBolt(ctx, x0, y0, x1, y1, seed, amp) {
   }
 }
 
-function drawHazard(ctx, w, pal, h, opts) {
-  h = h || w.hazard
-  if (!h) return
+function drawHazardKind(ctx, w, pal, h) {
   var C = w.k.CELL
-  var x0 = h.zx0 * C
-  var x1 = (h.zx1 + 1) * C
-  var y0 = h.zy0 * C
-  var y1 = (h.zy1 + 1) * C
+  var x0 = h.zx0 * C, x1 = (h.zx1 + 1) * C
+  var y0 = h.zy0 * C, y1 = (h.zy1 + 1) * C
   var cx = Math.round((x0 + x1) / 2)
-  var wide = x1 - x0
-  var tall = y1 - y0
-  var live = h.phase === "fire"
-  var winding = h.phase === "charge"
-  var t = w.ticks
-  var seed = h.zx0
-
-  // Winding up blinks, firing is solid. A steady glow for both would make the
-  // moment it becomes lethal impossible to see coming.
+  var wide = x1 - x0, tall = y1 - y0
+  var live = h.phase === "fire", winding = h.phase === "charge"
+  var t = w.ticks, seed = h.zx0
   var show = live || (winding && Math.floor(t / 4) % 2 === 0)
   var hot = live ? pal.fireHot : pal.warn
-
-  // Shot to pieces. It stays on the board, because the colony has to be able to
-  // see that the thing which was killing them is now scrap, but it does nothing
-  // and it is drawn as nothing: a slumped, unlit heap in the material of the
-  // earth rather than the machinery colour.
-  if (h.wrecked) {
-    ctx.fillStyle = pal.rigDark
-    var wy = h.mount === "ceiling" ? y0 : y1 - 5
-    ctx.fillRect(x0 + 1, wy, wide - 2, 5)
-    ctx.fillStyle = pal.dirtShade
-    for (var wk = 0; wk < wide; wk += 3)
-      ctx.fillRect(x0 + wk, wy + 3 + ((wk >> 1) % 2), 2, 2)
-    return
-  }
-
   switch (h.kind) {
 
   // --- watch: mounted, dormant, wakes when somebody walks into reach -------
@@ -1772,6 +1747,43 @@ function drawHazard(ctx, w, pal, h, opts) {
     if (show) { ctx.fillStyle = hot; ctx.fillRect(x0, y0, wide, tall) }
   }
 
+}
+function drawHazard(ctx, w, pal, h, opts) {
+  h = h || w.hazard
+  if (!h) return
+  var C = w.k.CELL
+  var x0 = h.zx0 * C
+  var x1 = (h.zx1 + 1) * C
+  var y0 = h.zy0 * C
+  var y1 = (h.zy1 + 1) * C
+  var cx = Math.round((x0 + x1) / 2)
+  var wide = x1 - x0
+  var tall = y1 - y0
+  var live = h.phase === "fire"
+  var winding = h.phase === "charge"
+  var t = w.ticks
+  var seed = h.zx0
+
+  // Winding up blinks, firing is solid. A steady glow for both would make the
+  // moment it becomes lethal impossible to see coming.
+  var show = live || (winding && Math.floor(t / 4) % 2 === 0)
+  var hot = live ? pal.fireHot : pal.warn
+
+  // Shot to pieces. It stays on the board, because the colony has to be able to
+  // see that the thing which was killing them is now scrap, but it does nothing
+  // and it is drawn as nothing: a slumped, unlit heap in the material of the
+  // earth rather than the machinery colour.
+  if (h.wrecked) {
+    ctx.fillStyle = pal.rigDark
+    var wy = h.mount === "ceiling" ? y0 : y1 - 5
+    ctx.fillRect(x0 + 1, wy, wide - 2, 5)
+    ctx.fillStyle = pal.dirtShade
+    for (var wk = 0; wk < wide; wk += 3)
+      ctx.fillRect(x0 + wk, wy + 3 + ((wk >> 1) % 2), 2, 2)
+    return
+  }
+
+  drawHazardKind(ctx, w, pal, h)
   if (opts && opts.labels) {
     ctx.fillStyle = h.wrecked ? pal.labelFaint : pal.warn
     ctx.font = "bold 6px monospace"
@@ -1991,6 +2003,258 @@ function drawEnemy(ctx, w, pal, en, opts) {
   ctx.globalAlpha = 1
 }
 
+function drawAgentTrick(ctx, w, pal, ag, ox, oy, dir, robe, hair) {
+  var C = w.k.CELL
+  if (ag.state === "trick" && ag.special) {
+    var tsp = w.specialSpec
+    var reach = ag.timer / 14
+    var tx = ox + (dir > 0 ? SPRITE_W : 0)
+    var mid = oy + 8
+    ctx.fillStyle = tsp ? tsp.robe : pal.urgent
+    ctx.globalAlpha = 0.45 + 0.55 * reach
+    switch (tsp && tsp.act) {
+      case "blast":                             // a widening cone of shot
+        for (var bi = 1; bi <= 6; bi++) {
+          var bs = Math.round(bi * 1.6 * reach)
+          ctx.fillRect(tx + dir * bi * 3 - (dir < 0 ? 2 : 0), mid - bs, 2, bs * 2 + 1)
+        }
+        // The answer ended several tokens ago. Max Tokens is still answering.
+        for (var ov = 0; ov < 4; ov++)
+          ctx.fillRect(tx + dir * (22 + ov * 5) - (dir < 0 ? 3 : 0), mid - 8 + ov * 5, 3, 2)
+        break
+      case "kick":                              // one heavy bar driven forward
+        ctx.fillRect(dir > 0 ? tx : tx - Math.round(18 * reach), mid - 6, Math.round(18 * reach), 12)
+        break
+      case "topple":                           // a tall thin slice
+        ctx.fillRect(tx + dir * 4 - 1, oy - Math.round(26 * reach), 3, Math.round(30 * reach))
+        ctx.fillRect(tx + dir * 4, oy + 14, Math.round(24 * reach), 2)
+        break
+      case "melt":                              // a growing disc
+        var rr = Math.round(9 * reach)
+        for (var my = -rr; my <= rr; my++) {
+          var mw = Math.round(Math.sqrt(Math.max(0, rr * rr - my * my)))
+          ctx.fillRect(tx + dir * 14 - mw, mid + my, mw * 2, 1)
+        }
+        break
+      case "sap":                               // instructions injected into rock
+        for (var pr = 0; pr < 4; pr++) {
+          var promptX = tx + dir * (5 + pr * 5)
+          ctx.fillRect(promptX - (dir < 0 ? 4 : 0), mid - 7 + pr * 4, 4, 1)
+          ctx.fillRect(promptX + dir * 3, mid - 8 + pr * 4, 1, 3)
+        }
+        break
+      case "stomp":                             // straight down, under its feet
+        ctx.fillRect(ox + 1, oy + SPRITE_PX, 6, Math.round(18 * reach))
+        break
+      case "quarry":                            // a whole room's worth
+        var qwide = Math.round(28 * reach)
+        ctx.globalAlpha = 0.28
+        for (var qgx = 0; qgx <= qwide; qgx += 4)
+          ctx.fillRect((dir > 0 ? tx : tx - qwide) + qgx, oy - 12, 1, 28)
+        for (var qgy = 0; qgy <= 28; qgy += 4)
+          ctx.fillRect(dir > 0 ? tx : tx - qwide, oy - 12 + qgy, qwide, 1)
+        ctx.globalAlpha = 1
+        ctx.fillRect(dir > 0 ? tx + qwide - 2 : tx - qwide, oy - 12, 2, 28)
+        break
+      case "spray":                             // a wall of tracer, full height
+        // A twelve-round burst, one angled tracer at a time. The simulation
+        // uses the same slope sequence, so the visible impact is the cell that
+        // actually absorbs this particular round.
+        var gunX = dir > 0 ? tx : tx - 9
+        ctx.fillStyle = pal.rigDark
+        ctx.fillRect(gunX, mid - 1, 9, 3)          // receiver and long barrel
+        ctx.fillRect(dir > 0 ? gunX - 3 : gunX + 8, mid + 2, 4, 4)
+        var spraySlopes = [-0.16, 0.10, -0.06, 0.14, 0, -0.12, 0.06, -0.18, 0.12, -0.03, 0.17, -0.09]
+        var shotIndex = Math.min(11, Math.floor(Math.max(0, ag.timer - 1) / 2))
+        var muzzleCellY = Math.floor(ag.y) - 2
+        var shotSlope = spraySlopes[shotIndex]
+        var hitCellX = ag.shotFor > 0 ? ag.shotTo : Math.floor(ag.x) + dir * 30
+        var hitCellY = ag.shotFor > 0 ? ag.shotY : Math.round(muzzleCellY + shotSlope * 30)
+        var shotPhase = ((ag.timer - 1) % 2) === 0 ? 0.55 : 1
+        var bulletCellX = ag.x + (hitCellX - ag.x) * shotPhase
+        var bulletCellY = muzzleCellY + (hitCellY - muzzleCellY) * shotPhase
+        ctx.fillStyle = pal.fireHot
+        ctx.fillRect(Math.round(bulletCellX * C), Math.round((bulletCellY + 0.5) * C), 4, 2)
+        ctx.globalAlpha = 0.45
+        ctx.fillRect(Math.round((bulletCellX - dir * 1.5) * C), Math.round((bulletCellY + 0.5) * C), 4, 1)
+        ctx.globalAlpha = 1
+        hzTri(ctx, tx + dir * 5, mid, 3, 5, dir > 0 ? 1 : -1)
+        // One hot casing per shot, falling behind the receiver.
+        ctx.fillStyle = tsp ? tsp.hair : pal.warn
+        ctx.fillRect(gunX + (dir > 0 ? 1 : 7), mid + 4 + (shotIndex % 3), 2, 1)
+        break
+      case "slab":                              // laid out rather than taken out
+        ctx.fillRect(dir > 0 ? tx : tx - Math.round(24 * reach), oy + SPRITE_PX - 2, Math.round(24 * reach), 5)
+        break
+      case "phase":                             // the confident route that is not there
+        for (var ph = 1; ph <= 4; ph++) {
+          ctx.globalAlpha = (5 - ph) * 0.12
+          ctx.fillRect(ox + dir * ph * 7, oy + 2, SPRITE_W, SPRITE_PX - 3)
+        }
+        break
+      case "complete":                          // cursor and unsolicited continuation
+        for (var au = 1; au <= 7; au++)
+          ctx.fillRect(tx + dir * au * 4 - (dir < 0 ? 2 : 0), oy + 14 - (au % 3), 3, 1)
+        ctx.fillRect(tx + dir * Math.round(30 * reach), oy + 3, 2, 13)
+        break
+      case "chain":                             // linked bubbles, one conclusion
+        for (var ch = 0; ch < 5; ch++) {
+          var chx = ox + SPRITE_W / 2 + dir * ch * 7
+          ctx.fillRect(chx, oy - 2 - (ch % 2) * 2, 4, 3)
+          if (ch > 0) ctx.fillRect(chx - dir * 4, oy - 1 - (ch % 2), 4, 1)
+        }
+        break
+      case "speculate":                         // three futures, one commitment
+        for (var sd = -1; sd <= 1; sd++) {
+          ctx.globalAlpha = sd === 0 ? 0.65 : 0.25
+          ctx.fillRect(ox + dir * Math.round(22 * reach), oy + sd * 6, SPRITE_W, SPRITE_PX)
+        }
+        break
+      case "collapse":                          // copies losing resolution outward
+        for (var mc = 1; mc <= 3; mc++) {
+          ctx.globalAlpha = 0.55 / mc
+          var msize = SPRITE_PX - mc * 3
+          ctx.fillRect(ox - dir * mc * 8, oy + SPRITE_PX - msize, Math.max(2, SPRITE_W - mc), msize)
+        }
+        break
+      case "stack":                             // rungs going up, one call at a time
+        var rungs = Math.min(7, 1 + Math.floor(reach * 7))
+        for (var sr = 0; sr < rungs; sr++) {
+          var sry = oy + SPRITE_PX - 4 - sr * 5
+          ctx.fillRect(tx + dir * 2 - (dir < 0 ? 5 : 0), sry, 6, 2)
+        }
+        // The two stiles it is nailing them to, and the frame that has not
+        // returned yet at the top of the stack.
+        ctx.fillRect(tx + dir * 1 - (dir < 0 ? 1 : 0), oy + SPRITE_PX - 4 - rungs * 5, 1, rungs * 5)
+        ctx.fillRect(tx + dir * 6 - (dir < 0 ? 1 : 0), oy + SPRITE_PX - 4 - rungs * 5, 1, rungs * 5)
+        ctx.globalAlpha = 0.35
+        ctx.fillRect(tx + dir * 2 - (dir < 0 ? 5 : 0), oy + SPRITE_PX - 9 - rungs * 5, 6, 2)
+        break
+
+      case "limit":                             // a gate closes on the queue
+        var gate = Math.round(12 * reach)
+        ctx.fillRect(ox - gate, oy + 2, 2, 14)
+        ctx.fillRect(ox + SPRITE_W + gate, oy + 2, 2, 14)
+        ctx.fillRect(ox - gate, oy + 2, SPRITE_W + gate * 2, 2)
+        break
+    }
+    ctx.globalAlpha = 1
+  }
+
+  // The camped sniper's shot: a thin line from the muzzle to whatever it hit,
+  // fading over about a third of a second. It is the only way to tell that
+  // something happening at the far end of the corridor was done by the agent
+  // sitting perfectly still at this one.
+}
+function drawAgentHeightGear(ctx, w, pal, ag, ox, oy, dir, robe, hair) {
+  var C = w.k.CELL
+  if (ag.state === "height") {
+    var hm = ag.heightMode
+    var hp = ag.heightTicks ? ag.heightTick / ag.heightTicks : 0
+    var hc = w.specialSpec ? w.specialSpec.hair : pal.label
+    ctx.fillStyle = hc
+    switch (hm) {
+      case "jetpack":
+        ctx.fillStyle = "#303039"; ctx.fillRect(ox - dir * 2, oy + 7, 3, 8)
+        ctx.fillStyle = (ag.anim >> 1) % 2 ? "#ffe68a" : "#ff8a35"
+        ctx.fillRect(ox - dir * 2, oy + 15, 2, 4 + ((ag.anim >> 1) % 2)); break
+      case "helicopter":
+        // Context Window does not merely wear a rotor: it becomes the whole
+        // tiny aircraft, tail, cockpit and skids included.
+        ctx.fillStyle = robe
+        ctx.fillRect(ox - 3, oy + 4, 15, 8)                 // cabin
+        ctx.fillRect(ox - 11, oy + 6, 9, 3)                // tail boom
+        ctx.fillRect(ox - 13, oy + 2, 2, 9)                // tail rotor
+        ctx.fillStyle = "#91d7e8"
+        ctx.fillRect(ox + 5, oy + 5, 6, 4)                 // cockpit
+        ctx.fillStyle = hc
+        ctx.fillRect(ox + 3, oy - 2, 2, 7)                 // mast
+        ctx.fillRect(ox - 10 - ((ag.anim >> 1) % 2) * 3, oy - 3,
+                     28 + ((ag.anim >> 1) % 2) * 6, 2)     // main rotor
+        ctx.fillRect(ox - 1, oy + 13, 14, 1)               // skids
+        ctx.fillRect(ox + 1, oy + 11, 1, 3)
+        ctx.fillRect(ox + 10, oy + 11, 1, 3)
+        break
+      case "cushion": {
+        var py = Math.round((ag.heightToY + 1) * C) - 3
+        var px = Math.round(ag.heightToX * C)
+        // Three progressively cheaper, visibly squashed little agents make the
+        // stuntman's landing pad. Bodies alone looked like an unexplained pink
+        // mattress; the separate heads are what sell the awful solution.
+        var copyAlpha = [0.75, 0.55, 0.35]
+        var copyX = [px - 10, px - 3, px + 4]
+        var copyH = [3, 5, 3]
+        for (var cp = 0; cp < 3; cp++) {
+          ctx.globalAlpha = copyAlpha[cp]
+          ctx.fillStyle = robe
+          ctx.fillRect(copyX[cp], py - copyH[cp], 7, copyH[cp])
+          ctx.fillStyle = hair
+          ctx.fillRect(copyX[cp] + 2, py - copyH[cp] - 2, 3, 2)
+        }
+        ctx.globalAlpha = 1
+        break
+      }
+      case "web":
+      case "chain": {
+        var anchorX = Math.round((ag.heightUp ? ag.heightToX : ag.heightFromX) * C)
+        var anchorY = Math.round(((ag.heightUp ? ag.heightToY : ag.heightFromY) - 2) * C)
+        ctx.fillStyle = hm === "web" ? "#e8e8f4" : hc
+        var lineSteps = Math.max(1, Math.round(Math.abs(anchorY - (oy + 7)) / 3))
+        for (var ls = 0; ls <= lineSteps; ls++)
+          ctx.fillRect(Math.round(anchorX + (ox + 4 - anchorX) * ls / lineSteps),
+                       Math.round(anchorY + (oy + 7 - anchorY) * ls / lineSteps), 1, 2)
+        break
+      }
+      case "balloon":
+        ctx.fillRect(ox - 2, oy - 11, 12, 8)
+        ctx.fillStyle = robe; ctx.fillRect(ox, oy - 4, 1, 6); ctx.fillRect(ox + 7, oy - 4, 1, 6); break
+      case "promptchute":
+        ctx.fillRect(ox - 6, oy - 10, 20, 6)
+        ctx.fillStyle = pal.eye; ctx.font = "bold 6px monospace"; ctx.textAlign = "center"
+        ctx.fillText("LAND", ox + 4, oy - 5); break
+      case "elevator":
+        ctx.fillRect(ox - 4, oy + 16, 16, 2)
+        ctx.fillRect(ox - 4, oy - 4, 2, 22); ctx.fillRect(ox + 10, oy - 4, 2, 22)
+        for (var eb = -2; eb < 16; eb += 4) ctx.fillRect(ox - 5, oy + eb, 18, 1); break
+      case "extender":
+        ctx.fillRect(ox - 3, oy - 3, 2, 22); ctx.fillRect(ox + 9, oy - 3, 2, 22)
+        for (var er = 0; er < 22; er += 5) ctx.fillRect(ox - 3, oy + er, 14, 1); break
+      case "shieldglider":
+        ctx.fillRect(ox - 8, oy - 7, 24, 3)
+        ctx.fillRect(ox - 5, oy - 4, 18, 2); break
+      case "glasswing":
+        ctx.globalAlpha = 0.55
+        ctx.fillRect(ox - 10, oy + 2, 10, 8); ctx.fillRect(ox + 8, oy + 2, 10, 8)
+        ctx.globalAlpha = 1; break
+      case "tractor":
+        ctx.globalAlpha = 0.5
+        ctx.fillRect(ox - 7, oy - 9, 22, 2)
+        ctx.fillRect(ox - 4, oy - 7, 16, 22); ctx.globalAlpha = 1; break
+      case "steps":
+        for (var hs = 0; hs < 4; hs++) ctx.fillRect(ox - dir * hs * 5, oy + 18 - hs * 4, 7, 2)
+        break
+      case "logchute":
+        ctx.fillStyle = "#8a4b22"; ctx.fillRect(ox - 7, oy + 15, 22, 4)
+        ctx.fillStyle = "#c8843f"; ctx.fillRect(ox - 6, oy + 16, 20, 1); break
+      case "recoil":
+      case "gunwing":
+        ctx.fillRect(ox - dir * 8, oy + 8, 9, 3)
+        ctx.fillStyle = "#ffe68a"; ctx.fillRect(ox - dir * 11, oy + 8, 4, 3); break
+      case "cyclone":
+        ctx.globalAlpha = 0.35
+        ctx.fillRect(ox - 8, oy + 5, 24, 2); ctx.fillRect(ox - 4, oy + 12, 16, 2)
+        ctx.globalAlpha = 1; break
+      case "ghost":
+        ctx.globalAlpha = 0.28 + Math.sin(hp * Math.PI) * 0.35; break
+      case "piledrive":
+        ctx.fillRect(ox - 3, oy + 14, 14, 3); break
+    }
+  }
+
+  // Model Collapse commits to the stunt: one full salto between the ledge and
+  // its pile of cheaper selves. Keep the pad and the label upright; rotate the
+  // original agent alone around the middle of its sprite.
+}
 function drawAgent(ctx, w, pal, ag, opts) {
   var k = w.k
   var C = k.CELL
@@ -2150,146 +2414,7 @@ function drawAgent(ctx, w, pal, ag, opts) {
   // The trick: a flash of whatever it is doing, thrown out in front. Each act
   // gets its own shape for the same reason each danger does — a special you
   // cannot tell from the last one is the same special.
-  if (st === "trick" && ag.special) {
-    var tsp = w.specialSpec
-    var reach = ag.timer / 14
-    var tx = ox + (dir > 0 ? SPRITE_W : 0)
-    var mid = oy + 8
-    ctx.fillStyle = tsp ? tsp.robe : pal.urgent
-    ctx.globalAlpha = 0.45 + 0.55 * reach
-    switch (tsp && tsp.act) {
-      case "blast":                             // a widening cone of shot
-        for (var bi = 1; bi <= 6; bi++) {
-          var bs = Math.round(bi * 1.6 * reach)
-          ctx.fillRect(tx + dir * bi * 3 - (dir < 0 ? 2 : 0), mid - bs, 2, bs * 2 + 1)
-        }
-        // The answer ended several tokens ago. Max Tokens is still answering.
-        for (var ov = 0; ov < 4; ov++)
-          ctx.fillRect(tx + dir * (22 + ov * 5) - (dir < 0 ? 3 : 0), mid - 8 + ov * 5, 3, 2)
-        break
-      case "kick":                              // one heavy bar driven forward
-        ctx.fillRect(dir > 0 ? tx : tx - Math.round(18 * reach), mid - 6, Math.round(18 * reach), 12)
-        break
-      case "topple":                           // a tall thin slice
-        ctx.fillRect(tx + dir * 4 - 1, oy - Math.round(26 * reach), 3, Math.round(30 * reach))
-        ctx.fillRect(tx + dir * 4, oy + 14, Math.round(24 * reach), 2)
-        break
-      case "melt":                              // a growing disc
-        var rr = Math.round(9 * reach)
-        for (var my = -rr; my <= rr; my++) {
-          var mw = Math.round(Math.sqrt(Math.max(0, rr * rr - my * my)))
-          ctx.fillRect(tx + dir * 14 - mw, mid + my, mw * 2, 1)
-        }
-        break
-      case "sap":                               // instructions injected into rock
-        for (var pr = 0; pr < 4; pr++) {
-          var promptX = tx + dir * (5 + pr * 5)
-          ctx.fillRect(promptX - (dir < 0 ? 4 : 0), mid - 7 + pr * 4, 4, 1)
-          ctx.fillRect(promptX + dir * 3, mid - 8 + pr * 4, 1, 3)
-        }
-        break
-      case "stomp":                             // straight down, under its feet
-        ctx.fillRect(ox + 1, oy + SPRITE_PX, 6, Math.round(18 * reach))
-        break
-      case "quarry":                            // a whole room's worth
-        var qwide = Math.round(28 * reach)
-        ctx.globalAlpha = 0.28
-        for (var qgx = 0; qgx <= qwide; qgx += 4)
-          ctx.fillRect((dir > 0 ? tx : tx - qwide) + qgx, oy - 12, 1, 28)
-        for (var qgy = 0; qgy <= 28; qgy += 4)
-          ctx.fillRect(dir > 0 ? tx : tx - qwide, oy - 12 + qgy, qwide, 1)
-        ctx.globalAlpha = 1
-        ctx.fillRect(dir > 0 ? tx + qwide - 2 : tx - qwide, oy - 12, 2, 28)
-        break
-      case "spray":                             // a wall of tracer, full height
-        // A twelve-round burst, one angled tracer at a time. The simulation
-        // uses the same slope sequence, so the visible impact is the cell that
-        // actually absorbs this particular round.
-        var gunX = dir > 0 ? tx : tx - 9
-        ctx.fillStyle = pal.rigDark
-        ctx.fillRect(gunX, mid - 1, 9, 3)          // receiver and long barrel
-        ctx.fillRect(dir > 0 ? gunX - 3 : gunX + 8, mid + 2, 4, 4)
-        var spraySlopes = [-0.16, 0.10, -0.06, 0.14, 0, -0.12, 0.06, -0.18, 0.12, -0.03, 0.17, -0.09]
-        var shotIndex = Math.min(11, Math.floor(Math.max(0, ag.timer - 1) / 2))
-        var muzzleCellY = Math.floor(ag.y) - 2
-        var shotSlope = spraySlopes[shotIndex]
-        var hitCellX = ag.shotFor > 0 ? ag.shotTo : Math.floor(ag.x) + dir * 30
-        var hitCellY = ag.shotFor > 0 ? ag.shotY : Math.round(muzzleCellY + shotSlope * 30)
-        var shotPhase = ((ag.timer - 1) % 2) === 0 ? 0.55 : 1
-        var bulletCellX = ag.x + (hitCellX - ag.x) * shotPhase
-        var bulletCellY = muzzleCellY + (hitCellY - muzzleCellY) * shotPhase
-        ctx.fillStyle = pal.fireHot
-        ctx.fillRect(Math.round(bulletCellX * C), Math.round((bulletCellY + 0.5) * C), 4, 2)
-        ctx.globalAlpha = 0.45
-        ctx.fillRect(Math.round((bulletCellX - dir * 1.5) * C), Math.round((bulletCellY + 0.5) * C), 4, 1)
-        ctx.globalAlpha = 1
-        hzTri(ctx, tx + dir * 5, mid, 3, 5, dir > 0 ? 1 : -1)
-        // One hot casing per shot, falling behind the receiver.
-        ctx.fillStyle = tsp ? tsp.hair : pal.warn
-        ctx.fillRect(gunX + (dir > 0 ? 1 : 7), mid + 4 + (shotIndex % 3), 2, 1)
-        break
-      case "slab":                              // laid out rather than taken out
-        ctx.fillRect(dir > 0 ? tx : tx - Math.round(24 * reach), oy + SPRITE_PX - 2, Math.round(24 * reach), 5)
-        break
-      case "phase":                             // the confident route that is not there
-        for (var ph = 1; ph <= 4; ph++) {
-          ctx.globalAlpha = (5 - ph) * 0.12
-          ctx.fillRect(ox + dir * ph * 7, oy + 2, SPRITE_W, SPRITE_PX - 3)
-        }
-        break
-      case "complete":                          // cursor and unsolicited continuation
-        for (var au = 1; au <= 7; au++)
-          ctx.fillRect(tx + dir * au * 4 - (dir < 0 ? 2 : 0), oy + 14 - (au % 3), 3, 1)
-        ctx.fillRect(tx + dir * Math.round(30 * reach), oy + 3, 2, 13)
-        break
-      case "chain":                             // linked bubbles, one conclusion
-        for (var ch = 0; ch < 5; ch++) {
-          var chx = ox + SPRITE_W / 2 + dir * ch * 7
-          ctx.fillRect(chx, oy - 2 - (ch % 2) * 2, 4, 3)
-          if (ch > 0) ctx.fillRect(chx - dir * 4, oy - 1 - (ch % 2), 4, 1)
-        }
-        break
-      case "speculate":                         // three futures, one commitment
-        for (var sd = -1; sd <= 1; sd++) {
-          ctx.globalAlpha = sd === 0 ? 0.65 : 0.25
-          ctx.fillRect(ox + dir * Math.round(22 * reach), oy + sd * 6, SPRITE_W, SPRITE_PX)
-        }
-        break
-      case "collapse":                          // copies losing resolution outward
-        for (var mc = 1; mc <= 3; mc++) {
-          ctx.globalAlpha = 0.55 / mc
-          var msize = SPRITE_PX - mc * 3
-          ctx.fillRect(ox - dir * mc * 8, oy + SPRITE_PX - msize, Math.max(2, SPRITE_W - mc), msize)
-        }
-        break
-      case "stack":                             // rungs going up, one call at a time
-        var rungs = Math.min(7, 1 + Math.floor(reach * 7))
-        for (var sr = 0; sr < rungs; sr++) {
-          var sry = oy + SPRITE_PX - 4 - sr * 5
-          ctx.fillRect(tx + dir * 2 - (dir < 0 ? 5 : 0), sry, 6, 2)
-        }
-        // The two stiles it is nailing them to, and the frame that has not
-        // returned yet at the top of the stack.
-        ctx.fillRect(tx + dir * 1 - (dir < 0 ? 1 : 0), oy + SPRITE_PX - 4 - rungs * 5, 1, rungs * 5)
-        ctx.fillRect(tx + dir * 6 - (dir < 0 ? 1 : 0), oy + SPRITE_PX - 4 - rungs * 5, 1, rungs * 5)
-        ctx.globalAlpha = 0.35
-        ctx.fillRect(tx + dir * 2 - (dir < 0 ? 5 : 0), oy + SPRITE_PX - 9 - rungs * 5, 6, 2)
-        break
-
-      case "limit":                             // a gate closes on the queue
-        var gate = Math.round(12 * reach)
-        ctx.fillRect(ox - gate, oy + 2, 2, 14)
-        ctx.fillRect(ox + SPRITE_W + gate, oy + 2, 2, 14)
-        ctx.fillRect(ox - gate, oy + 2, SPRITE_W + gate * 2, 2)
-        break
-    }
-    ctx.globalAlpha = 1
-  }
-
-  // The camped sniper's shot: a thin line from the muzzle to whatever it hit,
-  // fading over about a third of a second. It is the only way to tell that
-  // something happening at the far end of the corridor was done by the agent
-  // sitting perfectly still at this one.
+  drawAgentTrick(ctx, w, pal, ag, ox, oy, dir, robe, hair)
   if (st === "camp" && ag.shotFor > 0 && ag.special) {
     var csp = w.specialSpec
     ctx.globalAlpha = Math.min(1, ag.shotFor / 6)
@@ -2308,112 +2433,7 @@ function drawAgent(ctx, w, pal, ag, opts) {
   // No special borrows the colony's umbrella. At a lethal height each carries
   // a device with its own silhouette; the movement is deliberately readable
   // at panel scale before the label has to explain it.
-  if (st === "height") {
-    var hm = ag.heightMode
-    var hp = ag.heightTicks ? ag.heightTick / ag.heightTicks : 0
-    var hc = w.specialSpec ? w.specialSpec.hair : pal.label
-    ctx.fillStyle = hc
-    switch (hm) {
-      case "jetpack":
-        ctx.fillStyle = "#303039"; ctx.fillRect(ox - dir * 2, oy + 7, 3, 8)
-        ctx.fillStyle = (ag.anim >> 1) % 2 ? "#ffe68a" : "#ff8a35"
-        ctx.fillRect(ox - dir * 2, oy + 15, 2, 4 + ((ag.anim >> 1) % 2)); break
-      case "helicopter":
-        // Context Window does not merely wear a rotor: it becomes the whole
-        // tiny aircraft, tail, cockpit and skids included.
-        ctx.fillStyle = robe
-        ctx.fillRect(ox - 3, oy + 4, 15, 8)                 // cabin
-        ctx.fillRect(ox - 11, oy + 6, 9, 3)                // tail boom
-        ctx.fillRect(ox - 13, oy + 2, 2, 9)                // tail rotor
-        ctx.fillStyle = "#91d7e8"
-        ctx.fillRect(ox + 5, oy + 5, 6, 4)                 // cockpit
-        ctx.fillStyle = hc
-        ctx.fillRect(ox + 3, oy - 2, 2, 7)                 // mast
-        ctx.fillRect(ox - 10 - ((ag.anim >> 1) % 2) * 3, oy - 3,
-                     28 + ((ag.anim >> 1) % 2) * 6, 2)     // main rotor
-        ctx.fillRect(ox - 1, oy + 13, 14, 1)               // skids
-        ctx.fillRect(ox + 1, oy + 11, 1, 3)
-        ctx.fillRect(ox + 10, oy + 11, 1, 3)
-        break
-      case "cushion": {
-        var py = Math.round((ag.heightToY + 1) * C) - 3
-        var px = Math.round(ag.heightToX * C)
-        // Three progressively cheaper, visibly squashed little agents make the
-        // stuntman's landing pad. Bodies alone looked like an unexplained pink
-        // mattress; the separate heads are what sell the awful solution.
-        var copyAlpha = [0.75, 0.55, 0.35]
-        var copyX = [px - 10, px - 3, px + 4]
-        var copyH = [3, 5, 3]
-        for (var cp = 0; cp < 3; cp++) {
-          ctx.globalAlpha = copyAlpha[cp]
-          ctx.fillStyle = robe
-          ctx.fillRect(copyX[cp], py - copyH[cp], 7, copyH[cp])
-          ctx.fillStyle = hair
-          ctx.fillRect(copyX[cp] + 2, py - copyH[cp] - 2, 3, 2)
-        }
-        ctx.globalAlpha = 1
-        break
-      }
-      case "web":
-      case "chain": {
-        var anchorX = Math.round((ag.heightUp ? ag.heightToX : ag.heightFromX) * C)
-        var anchorY = Math.round(((ag.heightUp ? ag.heightToY : ag.heightFromY) - 2) * C)
-        ctx.fillStyle = hm === "web" ? "#e8e8f4" : hc
-        var lineSteps = Math.max(1, Math.round(Math.abs(anchorY - (oy + 7)) / 3))
-        for (var ls = 0; ls <= lineSteps; ls++)
-          ctx.fillRect(Math.round(anchorX + (ox + 4 - anchorX) * ls / lineSteps),
-                       Math.round(anchorY + (oy + 7 - anchorY) * ls / lineSteps), 1, 2)
-        break
-      }
-      case "balloon":
-        ctx.fillRect(ox - 2, oy - 11, 12, 8)
-        ctx.fillStyle = robe; ctx.fillRect(ox, oy - 4, 1, 6); ctx.fillRect(ox + 7, oy - 4, 1, 6); break
-      case "promptchute":
-        ctx.fillRect(ox - 6, oy - 10, 20, 6)
-        ctx.fillStyle = pal.eye; ctx.font = "bold 6px monospace"; ctx.textAlign = "center"
-        ctx.fillText("LAND", ox + 4, oy - 5); break
-      case "elevator":
-        ctx.fillRect(ox - 4, oy + 16, 16, 2)
-        ctx.fillRect(ox - 4, oy - 4, 2, 22); ctx.fillRect(ox + 10, oy - 4, 2, 22)
-        for (var eb = -2; eb < 16; eb += 4) ctx.fillRect(ox - 5, oy + eb, 18, 1); break
-      case "extender":
-        ctx.fillRect(ox - 3, oy - 3, 2, 22); ctx.fillRect(ox + 9, oy - 3, 2, 22)
-        for (var er = 0; er < 22; er += 5) ctx.fillRect(ox - 3, oy + er, 14, 1); break
-      case "shieldglider":
-        ctx.fillRect(ox - 8, oy - 7, 24, 3)
-        ctx.fillRect(ox - 5, oy - 4, 18, 2); break
-      case "glasswing":
-        ctx.globalAlpha = 0.55
-        ctx.fillRect(ox - 10, oy + 2, 10, 8); ctx.fillRect(ox + 8, oy + 2, 10, 8)
-        ctx.globalAlpha = 1; break
-      case "tractor":
-        ctx.globalAlpha = 0.5
-        ctx.fillRect(ox - 7, oy - 9, 22, 2)
-        ctx.fillRect(ox - 4, oy - 7, 16, 22); ctx.globalAlpha = 1; break
-      case "steps":
-        for (var hs = 0; hs < 4; hs++) ctx.fillRect(ox - dir * hs * 5, oy + 18 - hs * 4, 7, 2)
-        break
-      case "logchute":
-        ctx.fillStyle = "#8a4b22"; ctx.fillRect(ox - 7, oy + 15, 22, 4)
-        ctx.fillStyle = "#c8843f"; ctx.fillRect(ox - 6, oy + 16, 20, 1); break
-      case "recoil":
-      case "gunwing":
-        ctx.fillRect(ox - dir * 8, oy + 8, 9, 3)
-        ctx.fillStyle = "#ffe68a"; ctx.fillRect(ox - dir * 11, oy + 8, 4, 3); break
-      case "cyclone":
-        ctx.globalAlpha = 0.35
-        ctx.fillRect(ox - 8, oy + 5, 24, 2); ctx.fillRect(ox - 4, oy + 12, 16, 2)
-        ctx.globalAlpha = 1; break
-      case "ghost":
-        ctx.globalAlpha = 0.28 + Math.sin(hp * Math.PI) * 0.35; break
-      case "piledrive":
-        ctx.fillRect(ox - 3, oy + 14, 14, 3); break
-    }
-  }
-
-  // Model Collapse commits to the stunt: one full salto between the ledge and
-  // its pile of cheaper selves. Keep the pad and the label upright; rotate the
-  // original agent alone around the middle of its sprite.
+  drawAgentHeightGear(ctx, w, pal, ag, ox, oy, dir, robe, hair)
   var heightBodySaved = st === "height" && (ag.heightMode === "cushion" || ag.heightMode === "helicopter")
   if (heightBodySaved) {
     ctx.save()
