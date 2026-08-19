@@ -832,18 +832,6 @@ var SPECIAL_FACTS = {
     "is exploring. It has been exploring for a while.",
     "has never once been where the exit is."
   ],
-  lumberjack: [
-    "turns every wall into a floor, eventually.",
-    "is an ensemble of one, and overfits badly.",
-    "asked no permission and felled it anyway.",
-    "solves every problem by making it shorter.",
-    "prunes aggressively. Everything is a branch.",
-    "reduced the variance and most of the wall.",
-    "does not split the difference. It splits the wall.",
-    "was trained on trees and applies it broadly.",
-    "has one feature and it is decisive.",
-    "considers the ceiling optional."
-  ],
   pyro: [
     "converges on the answer at 900 degrees.",
     "cools slowly. The level does not.",
@@ -1800,29 +1788,136 @@ function drawEnemy(ctx, w, pal, en, opts) {
   var redLit = "#ff5268"
   var pale = "#d9d7cf"
 
+  if (en.kind === "drone") {
+    // A compact quadcopter: asymmetric lamp and tail make its direction clear
+    // while the alternating rotors keep it alive at this scale.
+    var rotor = (en.anim >> 1) % 2
+    ctx.fillStyle = "#20232b"
+    ctx.fillRect(ox + 2, oy + 7, 8, 3)
+    ctx.fillRect(ox, oy + 5 + rotor, 4, 1)
+    ctx.fillRect(ox + 8, oy + 6 - rotor, 4, 1)
+    ctx.fillStyle = pale
+    ctx.fillRect(ox + 4, oy + 6, 4, 4)
+    ctx.fillStyle = redLit
+    ctx.fillRect(dir > 0 ? ox + 8 : ox + 3, oy + 7, 2, 2)
+    ctx.fillStyle = "#ff9a35"
+    ctx.fillRect(ox + 5, oy + 10, 2, 2 + rotor)
+    if (opts && opts.labels) {
+      ctx.fillStyle = redLit
+      ctx.font = "7px monospace"
+      ctx.textAlign = "center"
+      ctx.fillText("Remote Execution", ox + 5, oy + 1)
+    }
+    ctx.globalAlpha = 1
+    return
+  }
+
+  if (en.kind === "operator") {
+    // Four broad shapes survive this scale better than a miniature console:
+    // dark helmet, cyan visor, amber coat and square radio pack. The controller
+    // is one bright block held out front, not a collection of tiny controls.
+    var amber = "#c47a24"
+    var amberLit = "#f0b34f"
+    ctx.fillStyle = "#34313a"
+    ctx.fillRect(ox, oy + 1, 9, 5)                 // broad helmet
+    ctx.fillRect(ox - 1, oy + 7, 3, 7)             // square radio pack
+    ctx.fillStyle = "#86d8e8"
+    ctx.fillRect(ox + (dir > 0 ? 4 : 1), oy + 3, 5, 2) // single visor
+    ctx.fillStyle = amber
+    ctx.fillRect(ox + 2, oy + 6, 7, 8)              // one-piece coat
+    ctx.fillStyle = amberLit
+    ctx.fillRect(dir > 0 ? ox + 8 : ox, oy + 9, 4, 3) // controller
+    ctx.fillStyle = "#34313a"
+    var opStride = en.state === "deploy" ? (en.anim >> 2) % 2 : 0
+    ctx.fillRect(ox + 2 + opStride, oy + 14, 2, 3)
+    ctx.fillRect(ox + 7 - opStride, oy + 14, 2, 3)
+    ctx.fillStyle = redLit
+    ctx.fillRect(ox, oy + 9, 1, 2)                  // small red-team lamp
+    if (opts && opts.labels) {
+      ctx.fillStyle = amberLit
+      ctx.font = "7px monospace"
+      ctx.textAlign = "center"
+      ctx.fillText("Drone Operator", ox + 4, oy - 4)
+    }
+    ctx.globalAlpha = 1
+    return
+  }
+
   // Trigger Warning announces the shot before it happens. The thin blinking
   // sight is an instruction to flee; the bright tracer is the consequence.
-  if (en.kind === "gun" && en.state === "aim") {
+  if ((en.kind === "gun" || en.kind === "sniper") && en.state === "aim") {
     ctx.globalAlpha = 0.35 + ((en.timer >> 2) % 2) * 0.35
     ctx.fillStyle = redLit
     var aimX = Math.round(en.lineTo * C)
     var aimY = Math.round((en.lineY + 0.5) * C)
-    var aimSteps = Math.max(1, Math.round(Math.abs(aimX - (ox + 4)) / 3))
+    var aimFromX = en.kind === "sniper" ? (dir > 0 ? ox + 22 : ox - 12) : ox + 4
+    var aimFromY = en.kind === "sniper" ? oy + 12 : oy + 7
+    var aimSteps = Math.max(1, Math.round(Math.abs(aimX - aimFromX) / 3))
     for (var ai = 0; ai <= aimSteps; ai++)
-      ctx.fillRect(Math.round(ox + 4 + (aimX - ox - 4) * ai / aimSteps),
-                   Math.round(oy + 7 + (aimY - oy - 7) * ai / aimSteps), 1, 1)
+      ctx.fillRect(Math.round(aimFromX + (aimX - aimFromX) * ai / aimSteps),
+                   Math.round(aimFromY + (aimY - aimFromY) * ai / aimSteps), 1, 1)
     ctx.globalAlpha = 1
   }
-  if (en.kind === "gun" && en.shotFor > 0) {
+  if ((en.kind === "gun" || en.kind === "sniper") && en.shotFor > 0) {
     ctx.globalAlpha = Math.min(1, en.shotFor / 4)
     ctx.fillStyle = "#ffe68a"
     var shotX = Math.round(en.lineTo * C)
     var shotY = Math.round((en.lineY + 0.5) * C)
-    var shotSteps = Math.max(1, Math.round(Math.abs(shotX - (ox + 4)) / 3))
+    var shotFromX = en.kind === "sniper" ? (dir > 0 ? ox + 22 : ox - 12) : ox + 4
+    var shotFromY = en.kind === "sniper" ? oy + 12 : oy + 8
+    var shotSteps = Math.max(1, Math.round(Math.abs(shotX - shotFromX) / 3))
     for (var si = 0; si <= shotSteps; si++)
-      ctx.fillRect(Math.round(ox + 4 + (shotX - ox - 4) * si / shotSteps),
-                   Math.round(oy + 8 + (shotY - oy - 8) * si / shotSteps), 2, 1)
+      ctx.fillRect(Math.round(shotFromX + (shotX - shotFromX) * si / shotSteps),
+                   Math.round(shotFromY + (shotY - shotFromY) * si / shotSteps), 2, 1)
     ctx.globalAlpha = 1
+  }
+
+  if (en.kind === "sniper") {
+    // Slim while moving, almost horizontal once established. The rifle and
+    // body share one low line in camp so this reads as somebody lying down,
+    // not another square agent carrying an oversized gun.
+    var violet = "#55406f"
+    var posted = en.state === "camp" || en.state === "aim" || en.state === "reload"
+    var rifleX
+    if (posted) {
+      ctx.fillStyle = violet
+      ctx.fillRect(ox + 1, oy + 11, 9, 3)           // prone coat and legs
+      ctx.fillStyle = "#25252b"
+      ctx.fillRect(dir > 0 ? ox + 8 : ox, oy + 9, 4, 4) // hood at the muzzle end
+      ctx.fillStyle = "#b9a59a"
+      ctx.fillRect(dir > 0 ? ox + 9 : ox + 1, oy + 10, 2, 1)
+      rifleX = dir > 0 ? ox + 10 : ox - 12
+      ctx.fillStyle = "#171920"
+      ctx.fillRect(rifleX, oy + 11, 12, 2)
+      ctx.fillRect(dir > 0 ? rifleX + 1 : rifleX + 10, oy + 9, 3, 2)
+    } else {
+      ctx.fillStyle = "#25252b"
+      ctx.fillRect(ox + 2, oy + 2, 5, 4)            // narrow hood
+      ctx.fillStyle = violet
+      ctx.fillRect(ox + 2, oy + 6, 5, 8)            // narrow coat
+      ctx.fillStyle = "#171920"
+      rifleX = dir > 0 ? ox + 6 : ox - 7
+      ctx.fillRect(rifleX, oy + 8, 10, 2)
+      ctx.fillStyle = "#ff8a35"
+      if (en.state === "jet") ctx.fillRect(ox + 2, oy + 14, 2, 3 + ((en.anim >> 1) % 2))
+      ctx.fillStyle = "#25252b"
+      ctx.fillRect(ox + 2, oy + 14, 2, 3)
+      ctx.fillRect(ox + 5, oy + 14, 2, 3)
+    }
+    ctx.fillStyle = redLit
+    ctx.fillRect(dir > 0 ? rifleX + 2 : rifleX + 11, oy + (posted ? 9 : 7), 1, 1)
+    if (en.shotFor > 5) {
+      ctx.fillStyle = "#ffe68a"
+      hzTri(ctx, dir > 0 ? rifleX + 13 : rifleX - 4, oy + (posted ? 10 : 7), 3, 5, dir)
+    }
+    if (opts && opts.labels) {
+      ctx.fillStyle = "#a98bd0"
+      ctx.font = "7px monospace"
+      ctx.textAlign = "center"
+      ctx.fillText(posted ? "Long Context" : "Scope Creep", ox + 4, oy - 4)
+    }
+    ctx.globalAlpha = 1
+    return
   }
 
   spriteFlip = false

@@ -554,10 +554,17 @@ function generate(level, attempt, colonySeed) {
     var desiredEnemyX = Math.round(guardCorridor.startX
       + (guardCorridor.handoffX - guardCorridor.startX) * guardFraction)
     guardPlan = { corridor: guardCorridor, index: guardIndex, desiredX: desiredEnemyX }
-    // One or two Trigger Warnings are more legible and more dangerous than a
-    // pile of mixed melee/ranged enemies. Every red agent gets the jetpack.
-    var enemyCount = irand(enemyRng, 1, 2)
-    for (var er = 0; er < enemyCount; er++) w.enemyRoster.push("gun")
+    // One threat model per post: a single Drone Operator sending replacements,
+    // one sniper establishing a permanent position, or one to two Trigger
+    // Warnings patrolling in person. Mixing them stacks ranged pressure in a
+    // way the colony cannot read or answer cleanly.
+    var enemyKindRoll = enemyRng()
+    if (enemyKindRoll < 0.32) w.enemyRoster.push("operator")
+    else if (enemyKindRoll < 0.57) w.enemyRoster.push("sniper")
+    else {
+      var enemyCount = irand(enemyRng, 1, 2)
+      for (var er = 0; er < enemyCount; er++) w.enemyRoster.push("gun")
+    }
   }
 
   // A roaming armed squad is already the level's threat. Mixing it with up to
@@ -722,7 +729,16 @@ function generate(level, attempt, colonySeed) {
   // grate, hanging prop or hazard drawn straight through its roof.
   if (guardPlan) {
     var gc = guardPlan.corridor
-    var enemyX = guardPlan.desiredX, enemyBest = Infinity
+    // A sniper house needs a clear run to the shaft above; unlike patrols it
+    // has a deliberate deployment route. Put its booth near that shaft rather
+    // than behind a full-height obstacle it cannot fly through.
+    var enemyDesired = guardPlan.desiredX
+    if (w.enemyRoster.length === 1 && w.enemyRoster[0] === "sniper"
+        && guardPlan.index > 0) {
+      var sniperShaft = corridors[guardPlan.index - 1].handoffX
+      enemyDesired = sniperShaft + (gc.dir > 0 ? 6 : -6)
+    }
+    var enemyX = enemyDesired, enemyBest = Infinity
     for (var egx = gc.x0 + 4; egx <= gc.x1 - 4; egx++) {
       var guardClear = true
       // Seven cells wide and eight high covers even the Ice Cave roof spikes
@@ -744,11 +760,11 @@ function generate(level, attempt, colonySeed) {
       }
       if (gc === last && egx + 5 >= w.exit.x - 2 && egx - 5 <= w.exit.x + w.exit.w + 2)
         guardClear = false
-      var enemyDistance = Math.abs(egx - guardPlan.desiredX)
+      var enemyDistance = Math.abs(egx - enemyDesired)
       if (guardClear && enemyDistance < enemyBest) { enemyX = egx; enemyBest = enemyDistance }
     }
     if (enemyBest === Infinity) {
-      enemyX = Math.max(gc.x0 + 4, Math.min(gc.x1 - 4, guardPlan.desiredX))
+      enemyX = Math.max(gc.x0 + 4, Math.min(gc.x1 - 4, enemyDesired))
       // Absolute fallback: cut a booth-sized alcove. A rare tiny terrain edit
       // is preferable to ever drawing a building inside solid earth.
       for (var ecx = enemyX - 3; ecx <= enemyX + 3; ecx++)
@@ -1114,7 +1130,13 @@ function roughFloor(w, c, rng, biome) {
     }
     // Only where there is still floor to build on. Everything the obstacles
     // took away stays taken away.
-    if (!solid(w, x, c.floorY)) { h = 0; continue }
+    // Keep the current height while crossing a missing stretch. Resetting it
+    // here made the two lips of a gap drift to different levels, even though
+    // the same rough-floor run visually continues on both sides. A builder
+    // approaching from the high lip then laid a flat bridge that the colony
+    // could not step onto from the low lip (level 13's Ice Cave crossing).
+    // The run counter still advances above, preserving the generation RNG.
+    if (!solid(w, x, c.floorY)) continue
     for (var d = 0; d < h; d++) setCell(w, x, c.floorY - 1 - d, DIRT)
   }
 }
@@ -1367,10 +1389,6 @@ var SPECIALS = [
   // Goes up the wall, onto the ceiling, and keeps walking upside down until the
   // roof runs out from under it.
   { id: "spider",    name: "Web Crawler",     act: "ceiling",height: "web", cool: 90,  robe: "#8f2bbf", hair: "#e04a8a" },
-
-  // Topples the column rather than deleting it: what was a wall lies down and
-  // becomes a floor to walk out on.
-  { id: "lumberjack",name: "Random Forrest", act: "topple", height: "logchute", cool: 170, robe: "#2f6b3a", hair: "#8a4b22" },
 
   { id: "pyro",      name: "Sim Anneal",       act: "melt",   height: "balloon", cool: 160, robe: "#c4341c", hair: "#f0a03c" },
   { id: "sapper",    name: "Prompt Injection",     act: "sap",    height: "promptchute", cool: 200, robe: "#6b6b28", hair: "#c8c8b0" },
@@ -2735,6 +2753,19 @@ function liquidAt(w, x) {
   return null
 }
 
+// The shaft occupying this column, whether flooded or dry. Terrain inside a
+// recorded pit is not a landing: builders can reach the board's solid lower
+// boundary and pile bricks on it, but that must not turn a bottomless hole
+// into a room. Bridges remain valid because their walking surface is above the
+// original floorY lip.
+function pitAt(w, x) {
+  for (var i = 0; i < w.pits.length; i++) {
+    var p = w.pits[i]
+    if (x >= p.x0 && x <= p.x1) return p
+  }
+  return null
+}
+
 function sink(w, ag, pool) {
   ag.y = pool.surfaceY
   ag.gone = true
@@ -3016,7 +3047,19 @@ function edgeAhead(w, ag, nx) {
   // to walk round it at floor level came down into it from the corridor above
   // instead, one after another, all afternoon.
   if (depth !== Infinity
-      && hazardZoneAt(w, ax, footY + depth, hazardPerceptive(ag))) { turnAround(w, ag); return }
+      && hazardZoneAt(w, ax, footY + depth, hazardPerceptive(ag))) {
+    // The landing is lethal, but the landing is not necessarily the route. If
+    // there is still ground at this height on the far side, stay above the
+    // danger and bridge to it. Level 15 is the worked example: every engineer
+    // saw both the sentry below and a ledge sixteen cells ahead, but this early
+    // return happened before any builder rule could consider the ledge.
+    if (far > 2 && canStartBuild(w, ag) && take(w, "builder")) {
+      startBuild(w, ag, true)
+      return
+    }
+    turnAround(w, ag)
+    return
+  }
 
 
   if (depth === Infinity) {
@@ -3547,6 +3590,8 @@ function stepFall(w, ag) {
   var pool = liquidAt(w, cx)
   if (pool && ny >= pool.surfaceY) { sink(w, ag, pool); return }
 
+  var shaft = pitAt(w, cx)
+
   // Out through the bottom of the world. Has to be caught before the landing
   // scan below, which would otherwise find the out-of-bounds STEEL that at()
   // reports and land them on nothing.
@@ -3574,6 +3619,10 @@ function stepFall(w, ag) {
   }
 
   for (var yy = Math.floor(ag.y) + 1; yy <= Math.floor(ny) + 1; yy++) {
+    // Bricks or moved terrain below a pit's lip are debris in a bottomless
+    // shaft, not a floor. Without this, level 13's agents built off the board
+    // boundary, landed on row 61, and paced around inside the pit.
+    if (shaft && yy >= shaft.floorY) continue
     if (solid(w, cx, yy)) {
       ag.y = yy - 1
       if (ag.fall > SAFE_FALL && !ag.floater) { splat(w, ag); return }
@@ -4108,7 +4157,7 @@ function stepCamp(w, ag) {
   var redTarget = null, redDist = Infinity
   for (var rei = 0; rei < w.enemies.length; rei++) {
     var red = w.enemies[rei]
-    if (red.gone || Math.abs(red.y - ag.y) > 3) continue
+    if (red.gone || Math.abs(red.y - ag.y) > (red.kind === "drone" ? 14 : 3)) continue
     var rd = Math.abs(red.x - ag.x)
     if (rd >= redDist || !lineClear(w, fx, fy - 2, Math.floor(red.x), Math.floor(red.y) - 2)) continue
     redTarget = red; redDist = rd
@@ -4855,10 +4904,107 @@ function spawnEnemy(w, kind) {
     id: w.nextEnemyId++, kind: kind,
     x: w.enemyHatch.x + 0.5 + offset, y: w.enemyHatch.y,
     dir: w.enemyHatch.dir || (w.startDir > 0 ? -1 : 1),
-    state: "walk", timer: 0, fall: 0, anim: 0, shoves: 0,
+    state: kind === "operator" ? "deploy" : (kind === "sniper" ? "seekpost" : "walk"),
+    deployLeft: kind === "operator" ? 6 : (kind === "sniper" ? 9 : 0),
+    timer: 0, fall: 0, anim: 0, shoves: 0,
     targetId: 0, lineTo: 0, lineY: 0, shotFor: 0,
     gone: false
   }
+}
+
+function settleEnemyPost(en) {
+  en.state = en.kind === "operator" ? "operate" : "camp"
+  en.timer = 0
+}
+
+function stepEnemyDeploy(w, en) {
+  var speed = ENEMY_WALK_SPEED * 0.7
+  var nx = en.x + en.dir * speed
+  var cx = Math.floor(nx), fy = Math.floor(en.y)
+  var targetY = fy
+  if (solid(w, cx, fy)) {
+    var rise = 1
+    while (rise <= MAX_STEP && solid(w, cx, fy - rise)) rise++
+    if (rise > MAX_STEP || !headroom(w, cx, fy - rise)) { settleEnemyPost(en); return }
+    targetY = fy - rise
+  } else if (!solid(w, cx, fy + 1)) {
+    if (solid(w, cx, fy + 2)) targetY = fy + 1
+    else { settleEnemyPost(en); return }
+  }
+  if (!headroom(w, cx, targetY)) { settleEnemyPost(en); return }
+  en.x = nx
+  en.y = targetY
+  en.deployLeft -= speed
+  en.anim++
+  if (en.deployLeft <= 0) settleEnemyPost(en)
+}
+
+function droneTarget(w, drone) {
+  var best = null, score = Infinity
+  for (var i = 0; i < w.agents.length; i++) {
+    var ag = w.agents[i]
+    if (ag.gone || ag.state === "saved" || ag.state === "bomb") continue
+    var dx = ag.x - drone.x, dy = (ag.y - 2) - drone.y
+    var d = dx * dx + dy * dy
+    if (d < score) { best = ag; score = d }
+  }
+  return best
+}
+
+function operatorHasDrone(w, en) {
+  for (var i = 0; i < w.enemies.length; i++) {
+    var drone = w.enemies[i]
+    if (!drone.gone && drone.kind === "drone" && drone.ownerId === en.id) return true
+  }
+  return false
+}
+
+function launchDrone(w, en) {
+  w.enemies.push({
+    id: w.nextEnemyId++, kind: "drone", ownerId: en.id,
+    x: en.x, y: en.y - 3, dir: en.dir,
+    state: "fly", timer: 0, fall: 0, anim: 0, shoves: 0,
+    targetId: 0, lineTo: 0, lineY: 0, shotFor: 0, gone: false
+  })
+  en.timer = 0
+  w.lastEvent = "drone launched"
+}
+
+function explodeDrone(w, drone, ag) {
+  drone.gone = true
+  drone.state = "dead"
+  addDust(w, drone.x, drone.y, 18)
+  w.lastEvent = "drone strike"
+  if (!ag || ag.gone || ag.state === "saved") return
+  ag.gone = true
+  ag.state = "dead"
+  w.lost++
+}
+
+function stepDrone(w, drone) {
+  var target = droneTarget(w, drone)
+  if (!target) { drone.anim++; return }
+  drone.targetId = target.id
+  var tx = target.x, ty = target.y - 2
+  var dx = tx - drone.x, dy = ty - drone.y
+  var dist = Math.sqrt(dx * dx + dy * dy)
+  if (dist < 1.35) { explodeDrone(w, drone, target); return }
+
+  var speed = 0.16
+  var nx = drone.x + dx / Math.max(1, dist) * speed
+  var ny = drone.y + dy / Math.max(1, dist) * speed
+  var openBoth = !solid(w, Math.floor(nx), Math.floor(ny))
+    && !solid(w, Math.floor(nx), Math.floor(ny) - 1)
+  // Slide along walls rather than flying through them. Vertical movement first
+  // lets a drone follow the colony down a handoff shaft; horizontal movement
+  // keeps it hunting along the corridor once it gets there.
+  if (openBoth) { drone.x = nx; drone.y = ny }
+  else if (!solid(w, Math.floor(drone.x), Math.floor(ny))
+           && !solid(w, Math.floor(drone.x), Math.floor(ny) - 1)) drone.y = ny
+  else if (!solid(w, Math.floor(nx), Math.floor(drone.y))
+           && !solid(w, Math.floor(nx), Math.floor(drone.y) - 1)) drone.x = nx
+  drone.dir = dx >= 0 ? 1 : -1
+  drone.anim++
 }
 
 function enemyTarget(w, en, reach) {
@@ -4939,10 +5085,54 @@ function seekEnemyJetUp(w, en) {
   return true
 }
 
+// A sniper takes the guaranteed handoff shaft one corridor upward before
+// choosing its permanent firing position. One ascent is enough to put it above
+// its house without racing the colony all the way back to the hatch.
+function seekSniperPost(w, en) {
+  var ci = enemyCorridorIndex(w, en)
+  if (ci <= 0) { en.state = "deploy"; en.deployLeft = 5; return }
+  var upper = w.corridors[ci - 1]
+  var shaftX = upper.handoffX
+  en.dir = shaftX >= en.x ? 1 : -1
+  // The carved handoff is several cells wide. Launch from its safe lip rather
+  // than insisting on the centre column, which is already beyond the floor on
+  // short-ended corridors (level 64).
+  if (Math.abs(en.x - shaftX) > 4) {
+    // Reuse the safe ground walker, but do not let its distance budget settle
+    // the sniper before it reaches the launch shaft.
+    en.deployLeft = 999
+    stepEnemyDeploy(w, en)
+    if (en.state === "camp") {
+      // A full corridor obstacle can cut the launch shaft off from the enemy
+      // house (level 67). That is still useful elevation: boost onto its top
+      // and establish there instead of giving up at its foot.
+      var fy = Math.floor(en.y)
+      var wallX = Math.floor(en.x) + en.dir
+      var h = wallHeight(w, wallX, fy)
+      if (h > 1 && h <= RESCUE_CLIMB) {
+        en.state = "jet"
+        en.jetMode = "rise"
+        en.jetTargetY = fy - h
+        en.jetLandDir = en.dir
+        en.jetShaftX = en.x
+        en.timer = 0
+      }
+    }
+    return
+  }
+  en.x = shaftX
+  en.state = "jet"
+  en.jetMode = "rise"
+  en.jetTargetY = upper.floorY - 2
+  en.jetLandDir = -upper.dir
+  en.jetShaftX = shaftX
+  en.timer = 0
+}
+
 function visibleEnemyAhead(w, ag, reach) {
   for (var i = 0; i < w.enemies.length; i++) {
     var en = w.enemies[i]
-    if (en.gone || Math.abs(en.y - ag.y) > 3) continue
+    if (en.gone || Math.abs(en.y - ag.y) > (en.kind === "drone" ? 12 : 3)) continue
     var ahead = (en.x - ag.x) * ag.dir
     if (ahead > 0 && ahead <= reach
         && lineClear(w, Math.floor(ag.x), Math.floor(ag.y) - 2,
@@ -5069,7 +5259,7 @@ function stepEnemyFall(w, en) {
   for (var yy = Math.floor(en.y) + 1; yy <= Math.floor(ny) + 1; yy++) {
     if (!solid(w, cx, yy)) continue
     en.y = yy - 1
-    en.state = "walk"
+    en.state = en.kind === "operator" ? "operate" : (en.kind === "sniper" ? "camp" : "walk")
     en.fall = 0
     return
   }
@@ -5152,7 +5342,8 @@ function stepEnemyWalk(w, en) {
 
 function fireEnemyGun(w, en) {
   var fy = Math.floor(en.y) - 2
-  for (var step = 1; step <= 28; step++) {
+  var gunReach = en.kind === "sniper" ? 55 : 28
+  for (var step = 1; step <= gunReach; step++) {
     var x = Math.floor(en.x) + en.dir * step
     for (var ai = 0; ai < w.agents.length; ai++) {
       var ag = w.agents[ai]
@@ -5175,7 +5366,7 @@ function fireEnemyGun(w, en) {
     }
     if (solid(w, x, fy)) { en.lineTo = x; en.lineY = fy; en.shotFor = 8; return }
   }
-  en.lineTo = en.x + en.dir * 28
+  en.lineTo = en.x + en.dir * gunReach
   en.lineY = fy
   en.shotFor = 8
 }
@@ -5183,8 +5374,37 @@ function fireEnemyGun(w, en) {
 function stepEnemy(w, en) {
   if (en.gone) return
   if (en.shotFor > 0) en.shotFor--
+  if (en.kind === "drone") { stepDrone(w, en); return }
+  if (en.kind === "sniper" && en.state === "seekpost") { seekSniperPost(w, en); return }
+  if ((en.kind === "operator" || en.kind === "sniper") && en.state === "deploy") {
+    stepEnemyDeploy(w, en)
+    return
+  }
+  if (en.kind === "operator" && en.state === "operate") {
+    if (unsupported(w, en)) { en.state = "fall"; en.fall = 0; return }
+    en.anim++
+    // The cooldown begins when the previous drone is gone, not while it is in
+    // flight. Otherwise a successful strike was followed by a replacement on
+    // the very next tick because the timer had already filled in the air.
+    if (operatorHasDrone(w, en)) en.timer = 0
+    else if (++en.timer >= 180) launchDrone(w, en)
+    return
+  }
   if (en.state === "fall") { stepEnemyFall(w, en); return }
   if (en.state === "walk") { stepEnemyWalk(w, en); return }
+
+  if (en.kind === "sniper" && en.state === "camp") {
+    if (unsupported(w, en)) { en.state = "fall"; en.fall = 0; return }
+    var sniperTarget = enemyTarget(w, en, 55)
+    if (!sniperTarget) { en.targetId = 0; return }
+    en.targetId = sniperTarget.id
+    en.dir = sniperTarget.x >= en.x ? 1 : -1
+    en.lineTo = sniperTarget.x
+    en.lineY = sniperTarget.y - 2
+    en.state = "aim"
+    en.timer = 0
+    return
+  }
 
   if (en.state === "jet") {
     en.timer++
@@ -5210,7 +5430,10 @@ function stepEnemy(w, en) {
     var newFeet = Math.floor(jetY)
     for (var jy = oldFeet + 1; jy <= newFeet + 1; jy++) {
       if (!solid(w, Math.floor(en.x), jy)) continue
-      en.y = jy - 1; en.state = "walk"; en.timer = 0; en.jetVy = 0; en.jetMode = ""; return
+      en.y = jy - 1
+      en.state = en.kind === "sniper" ? "deploy" : "walk"
+      if (en.kind === "sniper") en.deployLeft = 5
+      en.timer = 0; en.jetVy = 0; en.jetMode = ""; return
     }
     en.y = jetY
     en.anim++
@@ -5231,7 +5454,7 @@ function stepEnemy(w, en) {
       en.state = "reload"; en.timer = Math.round(GUN_RELOAD / 2); return
     }
     en.lineTo = aimed.x; en.lineY = aimed.y - 2
-    if (en.timer >= GUN_AIM) {
+    if (en.timer >= (en.kind === "sniper" ? GUN_AIM + 12 : GUN_AIM)) {
       fireEnemyGun(w, en)
       en.state = "reload"; en.timer = 0
     }
@@ -5239,7 +5462,7 @@ function stepEnemy(w, en) {
   }
 
   if (en.state === "reload" && en.timer >= GUN_RELOAD) {
-    en.state = "walk"; en.timer = 0
+    en.state = en.kind === "sniper" ? "camp" : "walk"; en.timer = 0
   }
   if (en.state === "recover") {
     var retreatX = en.x + en.dir * ENEMY_WALK_SPEED * 0.55
@@ -5250,7 +5473,15 @@ function stepEnemy(w, en) {
       var retreatPeer = w.enemies[ri]
       if (retreatPeer !== en && !retreatPeer.gone
           && Math.abs(retreatPeer.y - en.y) < 1.5
-          && Math.abs(retreatPeer.x - retreatX) < 1) { peerBlocked = true; break }
+          && Math.abs(retreatPeer.x - retreatX) < 1
+          // Two overlapping guards are deliberately sent in opposite
+          // directions above. Let that separating step happen even while
+          // their sprites still overlap; treating the peer as a wall until
+          // they were already apart left both waiting forever.
+          && Math.abs(retreatPeer.x - retreatX) <= Math.abs(retreatPeer.x - en.x)) {
+        peerBlocked = true
+        break
+      }
     }
     if (!peerBlocked && !solid(w, retreatCell, retreatY)
         && solid(w, retreatCell, retreatY + 1) && headroom(w, retreatCell, retreatY)) en.x = retreatX
@@ -5639,6 +5870,15 @@ function step(w) {
       ag.fade++
       if (ag.fade > 14) ag.gone = true
       continue
+    }
+
+    // A skill may have built a false floor inside a pit before another agent
+    // arrived. Anyone already standing below the recorded lip resumes falling
+    // instead of treating that debris as ordinary corridor ground.
+    var insidePit = pitAt(w, Math.floor(ag.x))
+    if (insidePit && ag.y >= insidePit.floorY && ag.state !== "fall") {
+      ag.floater = false
+      startFall(w, ag)
     }
 
     // Closer to home than this agent has ever been? Then whatever it's
