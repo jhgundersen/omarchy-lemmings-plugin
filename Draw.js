@@ -1,29 +1,8 @@
-// Everything the simulation looks like. Sim.js owns state and never knows a
-// color; this file owns pixels and never changes one.
-//
-// It has no imports of any kind, which is deliberate: it draws onto a canvas
-// 2D context, and that API is the same in QML and in a browser, so the same
-// file serves the bar plugin and the web version with nothing swapped out. The
-// geometry and material constants it needs arrive on the world as `w.k` rather
-// than through an import — see the note on K in Sim.js.
-//
-// Two canvases share this: the terrain layer repaints only when the earth
-// actually moves (Sim bumps terrainVersion), the actor layer every tick. That
-// split is what keeps a boardful of diggers cheap — the expensive redraw only
-// happens when someone removes a cell.
-//
-// The palette arrives from the caller — Panel.qml from the Omarchy theme, the
-// web page from a theme it picks — so the earth, sky and portal shift with it.
-// The agents themselves keep the green hair and blue robe: that silhouette IS
-// the joke, and at sixteen pixels tall it's the only thing making them read as
-// a doomed colony rather than as pixels.
+// Shared renderer: it reads world state but never mutates it or imports Sim.js.
+// Terrain repaints on terrainVersion; actors repaint every tick.
 
 var SPRITE_W = 8
 var SPRITE_PX = 16
-
-// ---------------------------------------------------------------------------
-// Terrain layer
-// ---------------------------------------------------------------------------
 
 function materialFill(k, pal, m) {
   if (m === k.DIRT) return pal.dirt
@@ -46,18 +25,7 @@ function materialShade(k, pal, m) {
   return pal.steelShade
 }
 
-// Wipe a layer back to nothing.
-//
-// This used to be ctx.reset(), which is the tidy way to say it and the way that
-// is least reliably implemented. It is recent (Safari only got it in 16.4), it
-// throws outright where it is missing — the reason web.js carried a polyfill —
-// and on iOS it has been seen to return without the displayed surface actually
-// being cleared, which shows up as a few pixels of an agent left behind on the
-// ground it walked over, sometimes, on one device and not the next.
-//
-// clearRect is as old as canvas itself and is the path every engine keeps
-// working. The state reset/ that reset() gave for free is done by hand: the two
-// draw passes both leave globalAlpha at 1 already, and this makes sure of it.
+// Avoid ctx.reset(): it is missing on older Safari and has left stale pixels on iOS.
 function clearLayer(ctx, w) {
   if (typeof ctx.setTransform === "function") ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.globalAlpha = 1
@@ -72,17 +40,13 @@ function drawTerrain(ctx, w, pal) {
 
   clearLayer(ctx, w)
 
-  // Sky: a shallow gradient so the open air above the earth has some depth
-  // rather than reading as a flat panel background.
   var sky = ctx.createLinearGradient(0, 0, 0, k.SKY * C + C * 4)
   sky.addColorStop(0, pal.skyTop)
   sky.addColorStop(1, pal.skyLow)
   ctx.fillStyle = sky
   ctx.fillRect(0, 0, cols * C, rows * C)
 
-  // On a ship the open band at the top is not sky, it is outside. Stars are
-  // laid out from the level number so they are the same every time you come
-  // back to it, like everything else here.
+  // Seed stars from the level to preserve deterministic rendering.
   if (w.biome === "Spaceship") {
     var seed3 = w.level * 2654435761 % 100000
     for (var st4 = 0; st4 < 70; st4++) {
@@ -96,9 +60,7 @@ function drawTerrain(ctx, w, pal) {
     ctx.globalAlpha = 1
   }
 
-  // Body of the earth, drawn as horizontal runs of like material. A level is
-  // a few hundred runs where it would be several thousand cells, which is the
-  // difference between this repainting comfortably mid-dig and not.
+  // Batch horizontal material runs instead of drawing thousands of cells.
   for (var y = 0; y < rows; y++) {
     var x = 0
     var base = y * cols
@@ -112,8 +74,6 @@ function drawTerrain(ctx, w, pal) {
     }
   }
 
-  // Undersides first: a cell with open air BELOW it gets a darker lip, so
-  // ceilings and overhangs read as receding rather than as more floor.
   for (var sy2 = 0; sy2 < rows; sy2++) {
     var sx2 = 0
     var sbase = sy2 * cols
@@ -128,9 +88,6 @@ function drawTerrain(ctx, w, pal) {
     }
   }
 
-  // Lit top surfaces. Every cell with open air above it gets a bright lip,
-  // which is what turns a mass of flat color into something with a shape —
-  // and makes a freshly bashed tunnel legible the moment it opens.
   for (var ey = 0; ey < rows; ey++) {
     var ex = 0
     var ebase = ey * cols
@@ -145,8 +102,6 @@ function drawTerrain(ctx, w, pal) {
     }
   }
 
-  // Depth wash: the deeper the earth, the darker. One pass, cheap, and it
-  // stops the lower half of the board looking like the upper half.
   var wash = ctx.createLinearGradient(0, k.SKY * C, 0, rows * C)
   wash.addColorStop(0, pal.washTop)
   wash.addColorStop(1, pal.washLow)
@@ -157,14 +112,7 @@ function drawTerrain(ctx, w, pal) {
   drawExitBack(ctx, w, pal)
 }
 
-// Scenery: things standing on the floor and hanging from the ceiling. Drawn on
-// the terrain layer, because it changes exactly when the terrain does and
-// there is no reason to pay for it every tick.
-//
-// Each piece checks the cell it stands on is still there. Sim.js keeps decor
-// out of the terrain grid entirely so it can never be an obstacle, which means
-// nothing removes a stalagmite when the floor under it is dug away — so the
-// renderer simply stops drawing one that is standing on nothing.
+// Decor is non-solid and disappears visually when its supporting cell is gone.
 function drawDecor(ctx, w, pal) {
   var k = w.k
   var C = k.CELL

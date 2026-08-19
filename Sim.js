@@ -1,24 +1,6 @@
-// The simulation: terrain, level generation, and the agent brain. All mutable
-// state lives on the `world` object returned by generate() — nothing
-// module-level changes after load.
-//
-// Plain JavaScript with no directives, deliberately, so the same file runs in
-// two places: QML imports it as `import "Sim.js" as Sim`, and a browser loads
-// it with a plain <script> tag. It carried `.pragma library` until the web
-// version needed it; that pragma is also what made the QML side cache this
-// file forever and ignore plugin hot-reloads, so losing it is no loss at all.
-//
-// Rendering lives in Draw.js; the panel chrome in Panel.qml. This file never
-// knows what anything looks like.
-//
+// Shared, dependency-free simulation. All mutable state belongs to the world.
 // Coordinates: terrain is a cell grid (COLS x ROWS). Agents carry *float*
-// cell coordinates so they move smoothly across a chunky grid — `ag.x` is the
-// horizontal center, `ag.y` is the FEET row, meaning the agent stands on
-// whatever is solid at (ag.x, ag.y + 1) and its body occupies rows ag.y-3..ag.y.
-
-// ---------------------------------------------------------------------------
-// Geometry and materials
-// ---------------------------------------------------------------------------
+// coordinates; ag.x is the center and ag.y is the feet row.
 
 var COLS = 100
 var ROWS = 62
@@ -39,15 +21,9 @@ var ORE = 4    // another visual tier, worked exactly like dirt and rock
 // it is STEEL. That is what makes the strata in fillEarth free — the board can
 // be given as much geology as it can carry without moving a single decision.
 
-// An agent is 4 cells (16px) tall and ~2 cells wide.
 var AGENT_H = 4
 
-// K, the constants Draw.js needs, is defined further down with the layout
-// numbers — it has to come after SKY, which is one of them.
-
-// ---------------------------------------------------------------------------
 // Tuning. Everything is per-tick at 30 ticks/second.
-// ---------------------------------------------------------------------------
 
 var WALK_SPEED = 0.28    // ~34 px/s — a stroll, not a sprint
 var FALL_SPEED = 0.55
@@ -85,11 +61,7 @@ var GUN_RELOAD = 80
 var ENEMY_JET_SPEED = 0.30
 var ENEMY_JET_SINK = 0.10
 
-// How long a level gets before the nuke goes off. Levels that are going to
-// work are usually done well inside this; the ones that trip it are stuck for
-// good, not slow — raising the limit to 140s or 170s nukes exactly the same
-// attempts and only makes you wait longer to watch it happen. So it is set to
-// the shortest value that does not cut short a level still making progress.
+// Longer limits delayed stuck runs without rescuing additional agents in sweeps.
 var LEVEL_LIMIT = 30 * 110
 var NUKE_STAGGER = 5     // ticks between arming one agent and the next
 
@@ -101,12 +73,8 @@ var SKILL_LABELS = {
   builder: "Build", basher: "Bash", miner: "Mine", digger: "Dig"
 }
 
-// Seven, cycling with the level number. Each one retints the earth, sky and
-// portal, furnishes its corridors with its own scenery, and draws from its own
-// set of dangers — a snake belongs in the jungle and nowhere else.
 var BIOMES = ["Cavern", "Ruins", "Frost", "Foundry", "Jungle", "Ice Cave", "Spaceship"]
 
-// ---------------------------------------------------------------------------
 // Personalities
 //
 // Every agent gets one for life. They don't change what an agent is capable
@@ -120,11 +88,6 @@ var BIOMES = ["Cavern", "Ruins", "Frost", "Foundry", "Jungle", "Ice Cave", "Spac
 // umbrella out EARLIER than the physical limit — bravery buys a longer walk,
 // not a longer fall, because the alternative is personality that kills them.
 //
-//   turnLimit   turnarounds before it stops pacing and starts digging
-//   fallMargin  cells below the lethal limit at which it wants an umbrella
-//   bridgeAt    drop depth at which it prefers building over stepping off
-//   bashFirst   reaches for the basher before the climber at a wall
-//   blockBias   extra willingness to stand in the way of a bottomless drop
 // bridgeAt      how deep a drop has to be before it lays bricks instead
 // fallMargin     how many cells early the umbrella comes out
 // turnLimit      how long it keeps working the same wall before giving up
@@ -143,31 +106,17 @@ var TRAITS = {
   stubborn: { label: "stubborn", turnLimit: 8, fallMargin: 0, bridgeAt: 9,  bashFirst: true,  blockBias: -1, buildCap: 2, noFloat: false, standDown: 0, digBias: -160 },
   tinkerer: { label: "tinkerer", turnLimit: 3, fallMargin: 2, bridgeAt: 7,  bashFirst: false, blockBias: 1, buildCap: 2, noFloat: false, standDown: 0, digBias: 150, mineFirst: true },
 
-  // Would rather build a way across than fall down one. Bridges almost any
-  // gap, lays twice as many as anyone else, and reaches for the umbrella only
-  // when there is nothing on the far side to reach. Watching one bridge a drop
-  // that three others have already stepped off is the clearest thing a
-  // personality does on this board.
   engineer: { label: "engineer", turnLimit: 3, fallMargin: 1, bridgeAt: 1,  bashFirst: false, blockBias: 0, buildCap: 5, noFloat: true,  standDown: 0, digBias: 0 },
 
-  // Stands. Blocks at the first excuse, and when it has been beaten by the
-  // same wall long enough it stops trying and plants itself where it stands —
-  // which is a problem for everyone behind it, and the reason somebody is
-  // about to have to dig.
   // standDown has to come in UNDER turnLimit: considerEscape zeroes `turns`
   // the moment it hits the limit, so a stand-down count above it can never be
   // reached and the sentinel blocked no more often than anybody else.
   sentinel: { label: "sentinel", turnLimit: 4, fallMargin: 1, bridgeAt: 7,  bashFirst: false, blockBias: 3, buildCap: 1, noFloat: false, standDown: 3, digBias: 0 },
 
-  // Decides the way on is down long before anybody else does.
   burrower: { label: "burrower", turnLimit: 2, fallMargin: 1, bridgeAt: 11, bashFirst: false, blockBias: 0, buildCap: 1, noFloat: false, standDown: 0, digBias: 340 }
 }
 
-// Weighted so most of the colony is unremarkable and the characters stand out.
-// An even split just reads as noise.
-// Weighted. Steady is still most of any colony — a board where everyone is a
-// character is a board with no characters on it — but the rarer ones are rare
-// enough to be worth spotting and common enough to turn up most levels.
+// Keep steady common so distinctive traits remain legible.
 var TRAIT_POOL = [
   "steady", "steady", "steady", "steady", "steady",
   "brave", "brave", "brave",
@@ -184,10 +133,6 @@ var TRAIT_ORDER = ["steady", "brave", "cautious", "curious", "stubborn", "tinker
 
 function traitOf(ag) { return TRAITS[ag.trait] || TRAITS.steady }
 
-// ---------------------------------------------------------------------------
-// Terrain access
-// ---------------------------------------------------------------------------
-
 // Out of bounds reads as STEEL to the sides and below, EMPTY above. That way
 // every "can I walk/dig here" test gets a sane answer at the edges without
 // each caller re-checking bounds, and nothing can tunnel off the board.
@@ -202,17 +147,8 @@ function solid(w, x, y) {
   return at(w, x, y) !== EMPTY
 }
 
-// Two counters, because two different things want to know about a change and
-// they do not want the same answer. `terrainVersion` drives the repaint and so
-// has to move whenever a stored cell moves, colour included. `carved` is the
-// director's evidence that anything is actually happening, and so must move
-// only when solid becomes empty or empty becomes solid.
-//
-// They used to be one counter, and with strata in the ground that quietly
-// stopped being harmless: laying a brick of dirt over a cell of rock changes
-// nothing about the shape of the level, but it changed the byte, which read to
-// the stall detector as earth being moved and bought a going-nowhere level
-// another twenty seconds before anyone stepped in.
+// terrainVersion tracks every cell change for rendering; carved tracks shape
+// changes only, because the stall detector must ignore material recoloring.
 function setCell(w, x, y, v) {
   if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return
   var i = y * COLS + x
@@ -308,11 +244,7 @@ function makeBuildRoom(w, cells, builder) {
   return true
 }
 
-// ---------------------------------------------------------------------------
-// Deterministic RNG. Level N always generates the same level, the same way
-// the Snake plugin's obstacle layouts are a pure function of the level number
-// — so "that one with the long drop" stays findable.
-// ---------------------------------------------------------------------------
+// Level geometry is a pure function of the level number.
 
 function makeRng(seed) {
   var s = ((seed + 1) * 2654435761) >>> 0
@@ -325,7 +257,6 @@ function makeRng(seed) {
 function pick(rng, arr) { return arr[Math.floor(rng() * arr.length) % arr.length] }
 function irand(rng, lo, hi) { return lo + Math.floor(rng() * (hi - lo + 1)) }
 
-// ---------------------------------------------------------------------------
 // Level generation
 //
 // The board starts as one solid mass of earth and the level is *carved* out of
@@ -340,7 +271,6 @@ function irand(rng, lo, hi) { return lo + Math.floor(rng() * (hi - lo + 1)) }
 // climber, a gap for the builder, a long drop for the floater). The agents
 // still work it out locally from what they can sense — they're never handed
 // the route — but the level can't pose a question they have no answer to.
-// ---------------------------------------------------------------------------
 
 var SKY = 7              // rows of open air above the earth
 var CORR_H = 6           // carved headroom above a corridor floor
@@ -362,40 +292,19 @@ function corridorPlan(rng) {
   return { n: n, gap: gap, top: top }
 }
 
-// Everything Draw.js needs to know about geometry and materials, stamped onto
-// every world by generate(). Draw.js used to reach for these through a QML
-// `.import`, which is the one line that stopped it loading in a browser — and
-// the dependency was never real, since it only ever wanted constants and not a
-// single function. Going through the world keeps one definition of each number:
-// change COLS above and the renderer follows, which a copy in Draw.js wouldn't.
+// Draw.js cannot import Sim.js; shared constants travel on the world instead.
 var K = {
   COLS: COLS, ROWS: ROWS, CELL: CELL, SKY: SKY,
   EMPTY: EMPTY, DIRT: DIRT, ROCK: ROCK, STEEL: STEEL, ORE: ORE,
   AGENT_H: AGENT_H
 }
 
-// `attempt` re-runs the SAME level with a different colony. The layout stays a
-// pure function of the level number — level 42 is always level 42 — but the
-// personalities and the skill budget come off the attempt as well, because a
-// retry that reproduces the run exactly is not a retry: everything here is
-// deterministic, so replaying a failed level unchanged fails it again, tick for
-// tick. Same problem, different agents, and a little more to work with each
-// time round.
+// `attempt` remains for deterministic tools and compatibility; hosts pass zero.
 function generate(level, attempt, colonySeed) {
   attempt = attempt || 0
   var rng = makeRng(level)
 
-  // The layout is the level's, the colony is this playthrough's.
-  //
-  // Everything below used to be a pure function of (level, attempt), the
-  // personalities included, so watching level 12 twice was watching the same
-  // recording twice: the same agent hesitated at the same ledge on the same
-  // tick. The ground should be the same — that is what makes a level a place
-  // you can come back to — but the fifteen who walk into it should not be.
-  //
-  // Callers that need a repeatable run pass the seed in; simcheck does, or its
-  // paired-run checks would compare two different colonies and blame the
-  // terrain for the difference.
+  // The layout belongs to the level; the colony is random unless tests pass a seed.
   if (colonySeed === undefined || colonySeed === null)
     colonySeed = Math.floor(Math.random() * 2147483647)
   var w = {
