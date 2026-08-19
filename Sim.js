@@ -249,6 +249,14 @@ function headroom(w, x, footY) {
   return true
 }
 
+// Sliding folds one cell out of the standing silhouette. Anything tighter is
+// a wall, not a passage an agent can plausibly squeeze through.
+function crouchroom(w, x, footY) {
+  for (var k = 1; k < AGENT_H - 1; k++)
+    if (solid(w, x, footY - k)) return false
+  return true
+}
+
 // Terrain that is being ADDED must not appear inside an agent. Destructive
 // skills are allowed to remove the ground under somebody; builders and slabs
 // have the opposite responsibility. Agents are about two cells wide, so test
@@ -2909,6 +2917,20 @@ function exitFloor(w) { return w.exit.y + w.exit.h }
 
 function exitBelow(w, ag) { return exitFloor(w) > ag.y + 2 }
 
+// Is there an actual corridor under this column, rather than merely an exit
+// somewhere lower in the level? This is the useful version of "down": a shaft
+// here will open onto traversable floor instead of making an arbitrary hole.
+function corridorBelow(w, ag) {
+  var x = Math.floor(ag.x)
+  var footY = Math.floor(ag.y)
+  for (var i = 0; i < w.corridors.length; i++) {
+    var c = w.corridors[i]
+    if (c.floorY <= footY + 2 || x < c.x0 || x > c.x1) continue
+    if (solid(w, x, c.floorY)) return c
+  }
+  return null
+}
+
 // How far this agent still is from home, with height weighted because a
 // corridor down is worth more than a corridor along. This is the ONLY thing
 // that counts as progress: both the frustration counter and the patience timer
@@ -3203,7 +3225,12 @@ function climbOut(w, ag, spend) {
 }
 
 function considerEscape(w, ag) {
-  if (ag.turns < traitOf(ag).turnLimit) return false
+  // A corridor immediately below is stronger evidence than ordinary pacing.
+  // Try down one turnaround sooner instead of asking every personality to walk
+  // the whole gallery quite as many times before considering its shovel.
+  var below = exitBelow(w, ag) && corridorBelow(w, ag)
+  var turnLimit = below ? Math.max(1, traitOf(ag).turnLimit - 1) : traitOf(ag).turnLimit
+  if (ag.turns < turnLimit) return false
   var footY = Math.floor(ag.y)
   ag.turns = 0
 
@@ -3277,6 +3304,14 @@ function startLadderDown(ag, ladder) {
 }
 
 function startBuild(w, ag, flat) {
+  // Below a raised exit, a build is a staircase home rather than a bridge over
+  // whatever happens to be in front. Every caller means the same thing here,
+  // so settle the direction once instead of letting wall, pacing and director
+  // paths disagree about it.
+  if (exitAbove(w, ag)) {
+    var exitMid = w.exit.x + w.exit.w / 2
+    if (Math.abs(exitMid - ag.x) > 1) ag.dir = exitMid > ag.x ? 1 : -1
+  }
   ag.state = "build"
   ag.bricks = 12
   ag.buildWait = 0
@@ -3469,6 +3504,30 @@ function stepWalk(w, ag) {
   // bought them, and that is as close to a plan as this colony gets.
   var crossPerceptive = hazardPerceptive(ag)
   var stepInto = hazardZoneAt(w, cx, footY, crossPerceptive)
+  if (stepInto && stepInto.known && !ag.special
+      && !hazardZoneAt(w, Math.floor(ag.x), footY, crossPerceptive)
+      && !shieldCovering(w, ag, nx)
+      && !canCrossHazard(w, stepInto, ag)) {
+    // Once the danger has proved itself, use the safe floor directly below
+    // when there is one. Previously the queue waited at the scarab on level
+    // 254 until HAZARD_WAIT expired, then deliberately repeated the first
+    // agent's mistake; some arrived as hops or umbrella falls, which made the
+    // shared knowledge look especially fake. A shaft is both safer and the
+    // shortest honest route onward through a descending level.
+    if (exitBelow(w, ag) && corridorBelow(w, ag)
+        && solid(w, Math.floor(ag.x), footY + 1)
+        && at(w, Math.floor(ag.x), footY + 1) !== STEEL
+        && take(w, "digger")) {
+      ag.state = "dig"
+      ag.timer = 0
+      ag.idle = 0
+      ag.still = 0
+      return
+    }
+    ag.waitFor = 12
+    turnAround(w, ag)
+    return
+  }
   if (stepInto && !ag.special && ag.idle < HAZARD_WAIT
       && !hazardZoneAt(w, Math.floor(ag.x), footY, crossPerceptive)
       && !shieldCovering(w, ag, nx)
@@ -3571,7 +3630,18 @@ function advanceWalk(w, ag, nx, cx, footY) {
     else { edgeAhead(w, ag, nx); return }
   }
 
-  if (!headroom(w, cx, targetY)) { hitWall(w, ag); return }
+  if (!headroom(w, cx, targetY)) {
+    // A low roof is different from a wall. If feet and shoulders fit, duck
+    // into it with a short forward skid and stand as soon as the roof opens.
+    if (targetY === footY && !solid(w, cx, footY) && crouchroom(w, cx, footY)) {
+      ag.state = "slide"
+      ag.timer = 0
+      ag.still = 0
+      return
+    }
+    hitWall(w, ag)
+    return
+  }
 
   ag.x = nx
   ag.y = targetY
@@ -3582,6 +3652,22 @@ function stepFall(w, ag) {
   var speed = ag.floater && ag.fall > 2 ? FLOAT_SPEED : FALL_SPEED
   var cx = Math.floor(ag.x)
   var ny = ag.y + speed
+
+  // Several agents can already be in the air when the first one lands in a
+  // trap and teaches the colony about it. An ordinary fall is committed, but
+  // an open umbrella is steerable: drift out of newly-known reach instead of
+  // serenely floating into the same place after the warning has arrived.
+  if (ag.floater) {
+    var airDanger = hazardZoneAt(w, cx, Math.floor(ny), false)
+    if (airDanger) {
+      var away = ag.x < hazardMid(airDanger).x ? -1 : 1
+      var driftX = ag.x + away * WALK_SPEED * 0.7
+      if (!solid(w, Math.floor(driftX), Math.floor(ag.y) - 1)) {
+        ag.x = driftX
+        cx = Math.floor(ag.x)
+      }
+    }
+  }
 
   // Into the water, the coolant or the slag. This changes nothing about who
   // survives — the shaft under the surface is cut through the bedrock, and an
@@ -4795,11 +4881,19 @@ function canJump(w, ag) {
   var fx = Math.floor(ag.x)
   var fy = Math.floor(ag.y)
   var d = ag.dir
+  var perceptive = hazardPerceptive(ag)
   for (var up = 1; up <= JUMP_UP; up++) {
     var ly = fy - up
     if (solid(w, fx + d, ly) || solid(w, fx + d * 2, ly)) continue
     if (!solid(w, fx + d * 2, ly + 1)) continue      // nothing to land on
     if (!headroom(w, fx + d * 2, ly)) continue
+    // A hop is an escape from a terrain pocket, not permission to override a
+    // danger the colony has already learned. Level 254's agents turned away
+    // from the scarab correctly, stood at its lip until JUMP_STILL, then hopped
+    // straight into the same known kill zone because this terrain-only test
+    // never asked what occupied the landing.
+    if (hazardZoneAt(w, fx + d, ly, perceptive)
+        || hazardZoneAt(w, fx + d * 2, ly, perceptive)) continue
     return true
   }
   return false
@@ -4839,6 +4933,38 @@ function stepJump(w, ag) {
   }
   ag.y = ny
   ag.anim++
+}
+
+function stepSlide(w, ag) {
+  ag.timer++
+  var footY = Math.floor(ag.y)
+  var nx = ag.x + ag.dir * WALK_SPEED * 1.35
+  var cx = Math.floor(nx)
+
+  // Sliding is movement, not immunity: do not squeeze into a learned trap or
+  // through another agent who is deliberately holding the line.
+  if (hazardZoneAt(w, cx, footY, hazardPerceptive(ag))
+      || anyBlockerNear(w, ag, nx)) {
+    ag.state = "walk"
+    turnAround(w, ag)
+    return
+  }
+
+  // Keep the move for flat, supported low passages. At a wall or an edge,
+  // reverse while still crouched; the normal walker takes over once clear.
+  if (solid(w, cx, footY) || !solid(w, cx, footY + 1)
+      || !crouchroom(w, cx, footY)) {
+    ag.dir = -ag.dir
+    ag.turns++
+    return
+  }
+
+  ag.x = nx
+  ag.anim++
+  if (headroom(w, cx, footY)) {
+    ag.state = "walk"
+    ag.timer = 0
+  }
 }
 
 function stepTrick(w, ag) {
@@ -5621,7 +5747,17 @@ function forceEscape(w, ag) {
     // wall and a climber left for it, build the staircase if there is not, and
     // in particular do NOT fall through to the horizontal rescues below.
     if (climbOut(w, ag, grant)) return
-    if (ag.state === "walk" && canStartBuild(w, ag) && grant(w, "builder")) { ag.idle = 0; startBuild(w, ag) }
+    if (ag.state === "walk" && canStartBuild(w, ag) && grant(w, "builder")) {
+      // A staircase gains height in whichever direction the agent is already
+      // facing. Pacing below a raised exit makes that direction arbitrary: on
+      // level 257 the rescue fired while agents faced left, so they spent their
+      // builders climbing away from the exit on the right. Once the decision
+      // is explicitly "up to home", its horizontal half must point home too.
+      var exitMid = w.exit.x + w.exit.w / 2
+      if (Math.abs(exitMid - ag.x) > 1) ag.dir = exitMid > ag.x ? 1 : -1
+      ag.idle = 0
+      startBuild(w, ag)
+    }
     return
   }
 
@@ -5728,6 +5864,9 @@ function runDirector(w) {
     // gallery along the bottom of the world while home sat directly overhead.
     // With the climb gone that bash was the only branch that ever matched, so
     // an agent under the exit tunnelled sideways until the clock ran out.
+    var exitMid = w.exit.x + w.exit.w / 2
+    if (Math.abs(exitMid - best.x) > 1) best.dir = exitMid > best.x ? 1 : -1
+    best.idle = 0
     startBuild(w, best)
   } else if (!wantUp && solid(w, ahead, footY) && at(w, ahead, footY) !== STEEL && grant(w, "basher")) {
     best.state = "bash"
@@ -6017,6 +6156,7 @@ function step(w) {
       case "limited": stepLimited(w, ag); break
       case "stunned": stepStunned(w, ag); break
       case "jump":  stepJump(w, ag); break
+      case "slide": stepSlide(w, ag); break
       case "camp":  stepCamp(w, ag); break
     }
 

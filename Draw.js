@@ -2406,7 +2406,7 @@ function drawAgent(ctx, w, pal, ag, opts) {
   // walks on ceilings reads as hanging rather than as floating.
   spriteFlip = (st === "ceil")
 
-  var bodyDrop = (st === "dig" || st === "camp") ? 2 : 0
+  var bodyDrop = st === "slide" ? 4 : ((st === "dig" || st === "camp") ? 2 : 0)
 
   // --- hair + head -------------------------------------------------------
   ctx.fillStyle = hair
@@ -2444,6 +2444,13 @@ function drawAgent(ctx, w, pal, ag, opts) {
     blit(ctx, ox, oy, dir, 3, 2, 2, 7)              // both hands on the web
     blit(ctx, ox, oy, dir, 0, 12, 3, 2)             // legs trailing in the swing
     blit(ctx, ox, oy, dir, 5, 14, 3, 2)
+
+  } else if (st === "slide") {
+    // Coat, tucked knees and one hand forward: a compact two-cell silhouette
+    // that straightens immediately when the roof clears.
+    blit(ctx, ox, oy, dir, 1, 8 + bodyDrop, 7, 4)
+    blit(ctx, ox, oy, dir, 7, 9 + bodyDrop, 3, 2)
+    blit(ctx, ox, oy, dir, 0, 12 + bodyDrop, 4, 2)
 
   } else if (st === "stunned") {
     blit(ctx, ox, oy, dir, 0, 9, 7, 4)
