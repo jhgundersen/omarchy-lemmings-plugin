@@ -590,6 +590,8 @@ function drawActors(ctx, w, pal, opts) {
   drawHatch(ctx, w, pal)
   drawEnemyHatch(ctx, w, pal, opts)
   drawExitGlow(ctx, w, pal)
+  drawExitGate(ctx, w, pal)
+  drawMission(ctx, w, pal)
 
   for (var dhi = 0; dhi < w.hazards.length; dhi++) drawHazard(ctx, w, pal, w.hazards[dhi], opts)
 
@@ -662,11 +664,159 @@ function drawActors(ctx, w, pal, opts) {
     var ag = w.agents[i]
     if (ag.gone) continue
     drawAgent(ctx, w, pal, ag, opts)
+    drawMissionGun(ctx, w, pal, ag)
   }
   for (var ei = 0; ei < w.enemies.length; ei++) {
     var enemy = w.enemies[ei]
     if (!enemy.gone) drawEnemy(ctx, w, pal, enemy, opts)
   }
+}
+
+function drawMission(ctx, w, pal) {
+  var m = w.mission
+  if (!m) return
+  var C = w.k.CELL
+
+  ctx.save()
+  // Share the special's title baseline: the mission is level chrome, not a
+  // label attached to whichever cage happened to be placed below it.
+  ctx.font = "bold 8px monospace"
+  ctx.textAlign = "center"
+  var titleAlpha = m.done ? Math.max(0, 1 - (w.ticks - m.openedAt) / 45) : 1
+  if (titleAlpha > 0) {
+    ctx.globalAlpha = titleAlpha
+    ctx.fillStyle = m.done ? pal.exitLight : pal.warn
+    ctx.fillText(m.done ? "MISSION COMPLETE — EXIT ONLINE" : "MISSION: " + m.verb,
+                 w.k.COLS * C / 2, 12)
+    ctx.globalAlpha = 1
+  }
+
+  for (var i = 0; i < m.targets.length; i++) {
+    var t = m.targets[i]
+    var x = Math.round(t.x * C), y = Math.round(t.y * C)
+
+    if (!t.freed && !t.dead) drawMissionContainer(ctx, m.kind, x, y, pal)
+    drawMissionSubject(ctx, m.kind, t, x, y, pal)
+
+    if (!t.freed && !t.dead && m.progress > 0) {
+      ctx.fillStyle = pal.rigDark
+      ctx.fillRect(x - 7, y - 19, 14, 2)
+      ctx.fillStyle = pal.exitLight
+      ctx.fillRect(x - 7, y - 19, Math.round(14 * Math.min(1, m.progress / 4)), 2)
+    }
+  }
+  ctx.restore()
+}
+
+function drawMissionContainer(ctx, kind, x, y, pal) {
+  if (kind === "alien") return // a hunt, not a prisoner exchange
+  if (kind === "animal") {
+    // A pegged rope net: organic and visibly different from a cell.
+    ctx.fillStyle = pal.decorDim
+    ctx.fillRect(x - 8, y - 14, 2, 14); ctx.fillRect(x + 6, y - 14, 2, 14)
+    ctx.fillStyle = pal.decorLit
+    for (var n = 0; n < 4; n++) {
+      ctx.fillRect(x - 6 + n * 4, y - 13, 1, 11)
+      ctx.fillRect(x - 6, y - 12 + n * 3, 12, 1)
+    }
+    return
+  }
+  if (kind === "explorer") {
+    // Ice slabs and a distress beacon, not prison bars.
+    ctx.fillStyle = pal.decor
+    ctx.fillRect(x - 7, y - 13, 3, 13); ctx.fillRect(x + 4, y - 11, 3, 11)
+    ctx.fillStyle = pal.decorLit
+    ctx.fillRect(x - 6, y - 15, 1, 4); ctx.fillRect(x + 5, y - 14, 1, 5)
+    ctx.fillStyle = pal.urgent
+    ctx.fillRect(x + 7, y - 16, 2, 2); ctx.fillRect(x + 7, y - 14, 1, 4)
+    return
+  }
+  // Civilians are held in a recognisable barred cell.
+  ctx.fillStyle = pal.rigDark
+  ctx.fillRect(x - 7, y - 15, 2, 15); ctx.fillRect(x + 5, y - 15, 2, 15)
+  ctx.fillRect(x - 7, y - 15, 14, 2); ctx.fillRect(x - 7, y - 2, 14, 2)
+  ctx.fillStyle = pal.steelEdge
+  ctx.fillRect(x - 3, y - 14, 1, 12); ctx.fillRect(x + 2, y - 14, 1, 12)
+}
+
+function drawMissionGun(ctx, w, pal, ag) {
+  var m = w.mission
+  if (!m || m.kind !== "alien" || m.done || ag.id !== m.scoutId) return
+  var C = w.k.CELL, dir = ag.dir || 1
+  var x = Math.round(ag.x * C), y = Math.round((ag.y - 2) * C)
+  ctx.fillStyle = pal.steelEdge
+  ctx.fillRect(x + dir * 3 - (dir < 0 ? 6 : 0), y - 1, 6, 2)
+  ctx.fillStyle = pal.rigDark
+  ctx.fillRect(x + dir * 1 - (dir < 0 ? 2 : 0), y + 1, 2, 3)
+  if (m.shotFor > 0) {
+    ctx.fillStyle = pal.fireHot
+    ctx.fillRect(x + dir * 9 - (dir < 0 ? 2 : 0), y - 2, 3, 3)
+  }
+}
+
+function drawMissionSubject(ctx, kind, t, x, y, pal) {
+  var v = t.variant || 0
+  var dir = t.dir || 1
+  var bob = t.freed && Math.floor(t.anim / 5) % 2 ? 1 : 0
+  y -= bob
+
+  if (kind === "animal") {
+    ctx.fillStyle = v === 0 ? pal.decorLit : (v === 1 ? pal.exitLight : pal.ore)
+    if (v === 0) { // boar: low, square and tusked
+      ctx.fillRect(x - 4, y - 7, 8, 4); ctx.fillRect(x + dir * 4 - (dir < 0 ? 2 : 0), y - 8, 3, 3)
+      ctx.fillRect(x - 3, y - 3, 2, 3); ctx.fillRect(x + 2, y - 3, 2, 3)
+      ctx.fillStyle = pal.exitLight; ctx.fillRect(x + dir * 6 - (dir < 0 ? 1 : 0), y - 6, 1, 1)
+    } else if (v === 1) { // bird: crest, wings and stick legs
+      ctx.fillRect(x - 3, y - 10, 6, 6); ctx.fillRect(x - 5, y - 8, 3, 3); ctx.fillRect(x + 3, y - 8, 3, 3)
+      ctx.fillRect(x - 2, y - 4, 1, 4); ctx.fillRect(x + 2, y - 4, 1, 4)
+      ctx.fillStyle = pal.urgent; ctx.fillRect(x + dir * 3, y - 9, 2, 1)
+    } else { // monkey: long arms and a curled pixel tail
+      ctx.fillRect(x - 2, y - 10, 5, 5); ctx.fillRect(x - 3, y - 5, 6, 4)
+      ctx.fillRect(x - 5, y - 7, 2, 6); ctx.fillRect(x + 3, y - 7, 2, 6)
+      ctx.fillRect(x - dir * 5, y - 6, 2, 1); ctx.fillRect(x - dir * 6, y - 8, 1, 3)
+      ctx.fillRect(x - 3, y - 2, 2, 2); ctx.fillRect(x + 2, y - 2, 2, 2)
+    }
+    return
+  }
+
+  if (kind === "alien") {
+    if (t.dead) {
+      ctx.fillStyle = pal.blood
+      ctx.fillRect(x - 6, y - 3, 12, 2)
+      ctx.fillStyle = pal.urgent
+      ctx.fillRect(x - 4, y - 5, 7, 3); ctx.fillRect(x + 3, y - 4, 4, 1)
+      return
+    }
+    ctx.fillStyle = v === 1 ? pal.decorLit : pal.urgent
+    if (v === 0) { // broad xeno
+      ctx.fillRect(x - 3, y - 11, 7, 7); ctx.fillRect(x - 5, y - 8, 2, 5); ctx.fillRect(x + 4, y - 8, 2, 5)
+    } else if (v === 1) { // tall visitor
+      ctx.fillRect(x - 2, y - 13, 5, 7); ctx.fillRect(x - 3, y - 6, 7, 5); ctx.fillRect(x - 4, y - 3, 2, 3); ctx.fillRect(x + 3, y - 3, 2, 3)
+    } else { // crab thing
+      ctx.fillRect(x - 4, y - 8, 9, 5); ctx.fillRect(x - 6, y - 6, 2, 2); ctx.fillRect(x + 5, y - 6, 2, 2)
+      ctx.fillRect(x - 4, y - 3, 2, 3); ctx.fillRect(x + 3, y - 3, 2, 3)
+    }
+    ctx.fillStyle = pal.exitLight; ctx.fillRect(x - 2, y - (v === 1 ? 11 : 7), 1, 1); ctx.fillRect(x + 2, y - (v === 1 ? 11 : 7), 1, 1)
+    return
+  }
+
+  // Civilians and explorers share anatomy, but variants change height, hair,
+  // coat and carried gear enough to read as a group instead of copied sprites.
+  var short = v === 1 ? 2 : 0
+  ctx.fillStyle = kind === "explorer" ? (v === 2 ? pal.ore : pal.decorLit) : (v === 2 ? pal.warn : pal.exitLight)
+  ctx.fillRect(x - 2, y - 11 + short, 5, 5)
+  ctx.fillRect(x - 3, y - 6 + short, 7, 5 - short)
+  if (t.freed) {
+    var stride = Math.floor(t.anim / 4) % 2
+    ctx.fillRect(x - 3 + stride, y - 2, 2, 2)
+    ctx.fillRect(x + 2 - stride, y - 2, 2, 2)
+  }
+  ctx.fillStyle = pal.rigDark
+  if (v === 0) ctx.fillRect(x - 3, y - 12, 7, 2)
+  else if (v === 1) ctx.fillRect(x - 2, y - 10, 5, 1)
+  else { ctx.fillRect(x - 3, y - 12, 6, 2); ctx.fillRect(x + 3, y - 9, 2, 5) }
+  ctx.fillRect(x - 1, y - 9 + short, 1, 1); ctx.fillRect(x + 2, y - 9 + short, 1, 1)
+  if (kind === "explorer") { ctx.fillStyle = pal.urgent; ctx.fillRect(x - dir * 5, y - 7, 3, 5) }
 }
 
 // ---------------------------------------------------------------------------
@@ -1299,7 +1449,8 @@ function drawExitGlow(ctx, w, pal) {
   var k = w.k
   var C = k.CELL
   var e = w.exit
-  var pulse = 0.45 + 0.3 * Math.sin(w.ticks * 0.06)
+  var missionOpening = w.mission && (!w.mission.done || w.ticks - w.mission.openedAt < 24)
+  var pulse = missionOpening ? 0 : 0.45 + 0.3 * Math.sin(w.ticks * 0.06)
   var x = e.x * C
   var y = e.y * C
   var ww = e.w * C
@@ -1310,6 +1461,42 @@ function drawExitGlow(ctx, w, pal) {
   ctx.fillRect(x + 2, y + hh - 6, ww - 4, 5)
   ctx.globalAlpha = pulse * 0.45
   ctx.fillRect(x - 3, y - 5, ww + 6, hh + 6)
+  ctx.globalAlpha = 1
+}
+
+function drawExitGate(ctx, w, pal) {
+  var m = w.mission
+  if (!m) return
+  var C = w.k.CELL
+  var e = w.exit
+  var x = e.x * C, y = e.y * C
+  var ww = e.w * C, hh = e.h * C
+  var opening = m.done ? Math.min(1, Math.max(0, (w.ticks - m.openedAt) / 24)) : 0
+  var panel = Math.ceil(ww * (1 - opening) / 2)
+
+  // Two heavy panels retract into the jambs. Drawing them on the actor layer
+  // keeps all 24 opening frames live while the terrain layer remains cached.
+  if (panel > 0) {
+    ctx.fillStyle = pal.steelShade
+    ctx.fillRect(x, y, panel, hh)
+    ctx.fillRect(x + ww - panel, y, panel, hh)
+    ctx.fillStyle = pal.steelEdge
+    ctx.fillRect(x + panel - 2, y, 2, hh)
+    ctx.fillRect(x + ww - panel, y, 2, hh)
+    ctx.fillStyle = pal.rigDark
+    for (var sy = y + 3; sy < y + hh; sy += 6) {
+      ctx.fillRect(x + 2, sy, Math.max(0, panel - 4), 1)
+      ctx.fillRect(x + ww - panel + 2, sy, Math.max(0, panel - 4), 1)
+    }
+  }
+
+  // Locked: a slow red warning. Opening: a quick amber chatter. Online: a
+  // bright green-ish pulse in the palette's exit colour.
+  var blink = m.done ? Math.floor(w.ticks / (opening < 1 ? 2 : 9)) % 2 === 0
+                     : Math.floor(w.ticks / 12) % 2 === 0
+  ctx.fillStyle = m.done && opening >= 1 ? pal.exitLight : pal.urgent
+  ctx.globalAlpha = blink ? 1 : 0.22
+  ctx.fillRect(x + ww - 4, y - 5, 4, 3)
   ctx.globalAlpha = 1
 }
 

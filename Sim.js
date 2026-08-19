@@ -94,6 +94,22 @@ var SKILL_LABELS = {
 // step — see the note over poolTint there.
 var BIOMES = ["Cavern", "Ruins", "Frost", "Foundry", "Jungle", "Ice Cave", "Spaceship", "Factory"]
 
+// A small job on the route gives each biome a premise beyond merely reaching
+// the door. These are deliberately one mechanism with different casts: an
+// agent stays beside a target briefly, and the exit comes online when every
+// target is dealt with. That keeps missions legible in an autonomous game and
+// avoids eight biome-specific rule systems quietly changing clear rates.
+var MISSION_SPECS = {
+  "Cavern":    { id: "miners",    verb: "FREE THE MINERS",       kind: "civilian", count: 2 },
+  "Ruins":     { id: "civilians", verb: "FREE ALL CIVILIANS",    kind: "civilian", count: 3 },
+  "Frost":     { id: "explorer",  verb: "RESCUE THE EXPLORER",   kind: "explorer", count: 1 },
+  "Foundry":   { id: "workers",   verb: "RELEASE THE WORKERS",   kind: "civilian", count: 2 },
+  "Jungle":    { id: "animal",    verb: "FREE THE ANIMAL",       kind: "animal", count: 1 },
+  "Ice Cave":  { id: "researcher",verb: "RESCUE THE RESEARCHER", kind: "explorer", count: 1 },
+  "Spaceship": { id: "alien",     verb: "NEUTRALIZE THE ALIEN",  kind: "alien", count: 1 },
+  "Factory":   { id: "interns",   verb: "FREE THE INTERNS",      kind: "civilian", count: 3 }
+}
+
 var TRAITS = {
   steady:   { label: "steady",   turnLimit: 3, fallMargin: 0, bridgeAt: 8,  bashFirst: false, blockBias: 0, buildCap: 2, noFloat: false, standDown: 0, digBias: 0, pace: 1 },
   brave:    { label: "brave",    turnLimit: 5, fallMargin: 0, bridgeAt: 15, bashFirst: true,  blockBias: -1, buildCap: 1, noFloat: false, standDown: 0, digBias: 0, pace: 1.08 },
@@ -413,6 +429,8 @@ function generate(level, attempt, colonySeed) {
     lastUsed: {},        // skill -> tick, so the toolbar can flash on use
     lastEvent: "",
 
+    mission: null,
+
     hatch: null,
     exit: null,
     done: false,
@@ -640,6 +658,8 @@ function generate(level, attempt, colonySeed) {
   }
   w.hazard = w.hazards.length ? w.hazards[0] : null
 
+  placeMission(w, corridors)
+
   // Place the booth only after terrain roughening, decoration and hazards are
   // final. Earlier placement could pass a clear-space test and then have a
   // grate, hanging prop or hazard drawn straight through its roof.
@@ -700,6 +720,93 @@ function generate(level, attempt, colonySeed) {
   }
 
   return w
+}
+
+function placeMission(w, corridors) {
+  // Optional, and rolled from its own stream so adding missions does not
+  // reshuffle terrain, hazards, specials or events on established levels.
+  var missionRng = makeRng(w.level * 104729 + 8191)
+  if (missionRng() >= 0.30) return
+  var spec = MISSION_SPECS[w.biome]
+  // Place it deep on the final corridor, but before the exit. It is visible to
+  // the audience from the start; "search" describes what the autonomous cast
+  // is doing, not a fog-of-war rule. Shortcuts may deliver
+  // an agent to either side of it, so missionSteer turns searchers toward this
+  // point once they reach the correct floor.
+  var c = corridors[corridors.length - 1]
+  var exitMid = w.exit.x + w.exit.w / 2
+  var desired = Math.round(c.startX + (exitMid - c.startX) * (0.32 + missionRng() * 0.22))
+  var lo = Math.min(c.startX, exitMid) + 7
+  var hi = Math.max(c.startX, exitMid) - 7
+  var site = null
+  // Search outward from the seeded preferred spot. This preserves variation,
+  // but terrain gets final say: a mission may sit between two obstacles, never
+  // inside one, hanging over a pit, or clipped into a low ceiling.
+  for (var radius = 0; radius <= hi - lo && !site; radius++) {
+    var choices = radius ? [desired - radius, desired + radius] : [desired]
+    for (var ci = 0; ci < choices.length && !site; ci++) {
+      var candidate = choices[ci]
+      if (candidate < lo || candidate > hi) continue
+      site = missionSite(w, c, candidate, spec.count)
+    }
+  }
+  // A cramped final corridor simply does not get a mission. Optional content
+  // is allowed to opt out; carving a display alcove would change gameplay.
+  if (!site) return
+  var base = site.x
+  var targets = site.targets
+  for (var vi = 0; vi < targets.length; vi++) {
+    targets[vi].variant = Math.floor(missionRng() * 3)
+    targets[vi].dir = missionRng() < 0.5 ? -1 : 1
+    targets[vi].anim = Math.floor(missionRng() * 30)
+    targets[vi].freed = false
+    targets[vi].roamMin = Math.max(c.x0 + 2, targets[vi].x - 10)
+    targets[vi].roamMax = Math.min(c.x1 - 2, targets[vi].x + 10)
+  }
+  w.decor = w.decor.filter(function(d) {
+    for (var j = 0; j < targets.length; j++)
+      if (Math.abs(d.x - targets[j].x) < 4 && Math.abs(d.y - targets[j].y) < 9) return false
+    return true
+  })
+  w.mission = {
+    id: spec.id, verb: spec.verb, kind: spec.kind,
+    x: base, y: site.y, targets: targets,
+    done: false, discovered: false, progress: 0,
+    completed: 0, need: targets.length
+  }
+  // Searching is real work, not time stolen from the ordinary escape.
+  w.timeLimit += 30 * 12
+}
+
+function missionSite(w, corridor, base, count) {
+  var targets = []
+  var yTotal = 0
+  for (var i = 0; i < count; i++) {
+    var spread = (i - (count - 1) / 2) * 3
+    var x = Math.round(base + spread)
+    var floorY = 0
+    // Roughening can move the visible surface either side of floorY. Find the
+    // actual topmost supported row at this cage rather than trusting the plan.
+    for (var y = corridor.floorY - 4; y <= corridor.floorY + 4; y++) {
+      if (solid(w, x, y) && !solid(w, x, y - 1)) { floorY = y; break }
+    }
+    if (!floorY) return null
+
+    // Four cells of clear headroom across the full cage footprint. Walls,
+    // obstacle shoulders and low roofs all fail this same physical test.
+    for (var px = x - 2; px <= x + 2; px++) {
+      if (!solid(w, px, floorY)) return null
+      for (var py = floorY - 5; py < floorY; py++) if (solid(w, px, py)) return null
+    }
+    for (var hi = 0; hi < w.hazards.length; hi++) {
+      var h = w.hazards[hi]
+      if (Math.abs(h.floorY - floorY) < 5 && x + 3 >= h.zx0 && x - 3 <= h.zx1) return null
+    }
+    if (pitAt(w, x)) return null
+    targets.push({ x: x, y: floorY, done: false, progress: 0, discovered: false })
+    yTotal += floorY
+  }
+  return { x: base, y: yTotal / count, targets: targets }
 }
 
 function fillEarth(w, rng) {
@@ -1453,6 +1560,25 @@ function specialShapeCut(w, ag, act, dry) {
       if (solid(w, rx2, fy - 2) || solid(w, rx2, fy - 1)) break
     }
     hitX = fx + d * Math.max(2, flew)
+
+    // Red-team actors are real rocket targets too. Pick the nearest visible
+    // one before the terrain impact; lineClear keeps the bazooka from shooting
+    // through the obstacle it was equally entitled to hit.
+    var rocketEnemy = null, rocketEnemyDist = Infinity
+    for (var re = 0; re < w.enemies.length; re++) {
+      var ren = w.enemies[re]
+      if (ren.gone || Math.abs(ren.y - ag.y) > (ren.kind === "drone" ? 5 : 3)) continue
+      var redAlong = (ren.x - ag.x) * d
+      if (redAlong < 2 || redAlong > Math.abs(hitX - fx) || redAlong >= rocketEnemyDist) continue
+      if (!lineClear(w, fx, fy - 2, Math.floor(ren.x), Math.floor(ren.y) - 2)) continue
+      rocketEnemy = ren; rocketEnemyDist = redAlong
+    }
+    if (rocketEnemy) {
+      if (dry) return true
+      hitX = Math.round(rocketEnemy.x)
+      hitY = Math.round(rocketEnemy.y) - 2
+      killEnemy(w, rocketEnemy)
+    }
 
     // A hazard in the flight path is what it hits, and a hazard it hits is
     // wrecked. Nothing else in the game can reach out and do that.
@@ -3295,11 +3421,21 @@ function stepWalk(w, ag) {
   var cx = Math.floor(nx)
   var footY = Math.floor(ag.y)
 
+  // Mission levels give the cast one extra piece of knowledge: which stretch
+  // of the final corridor still needs searching. This stops a shortcut or a turn
+  // at an obstacle from sending everybody straight past the assignment.
+  var search = missionTarget(w, ag)
+  if (search && Math.abs(search.x - ag.x) > 2) {
+    ag.dir = search.x > ag.x ? 1 : -1
+    nx = ag.x + ag.dir * walkStep(ag)
+    cx = Math.floor(nx)
+  }
+
   // Turn toward a door it can see. Only when it is walking away from one, so
   // this steers rather than drives: everything else about the crossing — walls,
   // drops, dangers, personality — is decided exactly as before.
   var seen = exitInSight(w, ag)
-  if (seen && seen !== ag.dir) {
+  if (!search && seen && seen !== ag.dir) {
     ag.dir = seen
     ag.turns = 0
     nx = ag.x + ag.dir * walkStep(ag)
@@ -3377,6 +3513,29 @@ function stepWalk(w, ag) {
   }
 
   advanceWalk(w, ag, nx, cx, footY)
+}
+
+function missionTarget(w, ag) {
+  var m = w.mission
+  if (!m || m.done || !m.targets.length) return null
+  if (Math.abs(ag.y - m.y) > 7) return null
+  // One scout carries the search instruction. Steering the whole colony at a
+  // concealed point made them bunch up and reverse each other on the final
+  // corridor. The lowest live id inherits the job if the previous scout dies.
+  var scout = missionScout(w)
+  if (scout) m.scoutId = scout.id
+  if (scout !== ag) return null
+  return m
+}
+
+function missionScout(w) {
+  var scout = null
+  for (var i = 0; i < w.agents.length; i++) {
+    var candidate = w.agents[i]
+    if (candidate.gone || candidate.state === "saved" || candidate.state === "bomb") continue
+    if (!scout || candidate.id < scout.id) scout = candidate
+  }
+  return scout
 }
 
 function advanceWalk(w, ag, nx, cx, footY) {
@@ -4959,6 +5118,30 @@ function visibleEnemyAhead(w, ag, reach) {
   return false
 }
 
+function rocketRangedTarget(w, ag) {
+  var fx = Math.floor(ag.x), fy = Math.floor(ag.y)
+  var bestDir = 0, bestDist = Infinity
+  for (var i = 0; i < w.enemies.length; i++) {
+    var en = w.enemies[i]
+    if (en.gone || Math.abs(en.y - ag.y) > (en.kind === "drone" ? 5 : 3)) continue
+    var dist = Math.abs(en.x - ag.x)
+    if (dist < 2 || dist > ROCKET_RANGE || dist >= bestDist) continue
+    if (!lineClear(w, fx, fy - 2, Math.floor(en.x), Math.floor(en.y) - 2)) continue
+    bestDir = en.x >= ag.x ? 1 : -1
+    bestDist = dist
+  }
+  if (bestDir) return bestDir
+
+  // Terrain acquisition stays directional: it fires down the corridor it is
+  // already traversing, at the first workable wall in bazooka range.
+  for (var r = 3; r <= ROCKET_RANGE; r++) {
+    var x = fx + ag.dir * r
+    if (at(w, x, fy - 2) === STEEL || at(w, x, fy - 1) === STEEL) break
+    if (workable(w, x, fy - 2) || workable(w, x, fy - 1)) return ag.dir
+  }
+  return 0
+}
+
 
 function shieldCovering(w, ag, fromX) {
   for (var i = 0; i < w.agents.length; i++) {
@@ -5045,6 +5228,16 @@ function killEnemy(w, en) {
   w.lastEvent = "red team down"
 }
 
+function sinkEnemy(w, en, pool) {
+  en.y = pool.surfaceY
+  en.gone = true
+  en.state = "dead"
+  w.enemiesKilled++
+  pool.ripple = w.ticks
+  addDust(w, en.x, pool.surfaceY, 12)
+  w.lastEvent = pool.liquid === "lava" ? "red team slag" : "red team splash"
+}
+
 function stepEnemyFall(w, en) {
   var ny = en.y + FALL_SPEED
   if (ny >= ROWS) {
@@ -5056,16 +5249,7 @@ function stepEnemyFall(w, en) {
   }
   var cx = Math.floor(en.x)
   var pool = liquidAt(w, cx, ny)
-  if (pool && ny >= pool.surfaceY) {
-    en.y = pool.surfaceY
-    en.gone = true
-    en.state = "dead"
-    w.enemiesKilled++
-    pool.ripple = w.ticks
-    addDust(w, en.x, pool.surfaceY, 12)
-    w.lastEvent = pool.liquid === "lava" ? "red team slag" : "red team splash"
-    return
-  }
+  if (pool && ny >= pool.surfaceY) { sinkEnemy(w, en, pool); return }
   var shaft = pitAt(w, cx)
   for (var yy = Math.floor(en.y) + 1; yy <= Math.floor(ny) + 1; yy++) {
     // A pit stays bottomless for hostiles too. They previously landed on the
@@ -5226,6 +5410,16 @@ function fireEnemyGun(w, en) {
 
 function stepEnemy(w, en) {
   if (en.gone) return
+
+  // Water is water however it was arrived at. Only stepEnemyFall drowned
+  // anything, so a hostile that jetted across a flooded pit and found footing
+  // below the surface simply carried on: level 282 had one patrolling the
+  // bottom of its cistern and taking aim from inside the water. Nothing that
+  // moves an enemy — jet, walk, the shove off a peer — was checking, and a
+  // check on each of them is a check somebody adds a sixth mover without.
+  var wet = liquidAt(w, Math.floor(en.x), en.y)
+  if (wet && en.y >= wet.surfaceY) { sinkEnemy(w, en, wet); return }
+
   if (en.shotFor > 0) en.shotFor--
   if (en.kind === "drone") { stepDrone(w, en); return }
   if (en.kind === "sniper" && en.state === "seekpost") { seekSniperPost(w, en); return }
@@ -5612,6 +5806,13 @@ function stepAgents(w) {
       if (sact === "camp" && (seesDanger || seesRed)) {
         ag.state = "camp"
         ag.cool = 0
+      } else if (sact === "rocket" && ag.cool <= 0) {
+        var rocketDir = rocketRangedTarget(w, ag)
+        if (rocketDir) {
+          ag.dir = rocketDir
+          ag.state = "trick"
+          ag.timer = 0
+        }
       } else if (sact === "spray" && ag.cool <= 0
                  && ((seesDanger && hazardIsAhead(w, ag, 30)) || seesRed)) {
         // It opens up the moment it has the thing in view. Waiting for a wall
@@ -5703,9 +5904,19 @@ function stepAgents(w) {
 
     if (ag.gone) continue
 
-    // Home. The exit's mouth is a rectangle; walking into it is all it takes.
+    // Home. The mouth stays shut until the biome's job is finished. Reversing
+    // at its threshold is preferable to letting early arrivals vanish while
+    // the rest of the cast does the thing the level asked of them.
     var e = w.exit
     if (ag.x > e.x && ag.x < e.x + e.w && ag.y > e.y && ag.y < e.y + e.h + 1) {
+      if (w.mission && (!w.mission.done || w.ticks - w.mission.openedAt < 24)) {
+        ag.x = ag.dir > 0 ? e.x - 0.1 : e.x + e.w + 0.1
+        turnAround(w, ag)
+        ag.waitFor = Math.max(ag.waitFor, 12)
+        active++
+        moving++
+        continue
+      }
       ag.state = "saved"
       ag.fade = 0
       w.saved++
@@ -5726,6 +5937,67 @@ function stepAgents(w) {
   }
   return { active: active, blockers: blockers, moving: moving }
 }
+
+function stepMission(w) {
+  var m = w.mission
+  if (!m) return
+  if (m.shotFor > 0) m.shotFor--
+  if (m.done) { stepFreedMission(w, m); return }
+  var scout = missionScout(w)
+  if (scout) m.scoutId = scout.id
+  var helping = 0
+  for (var ai = 0; ai < w.agents.length; ai++) {
+    var ag = w.agents[ai]
+    if (ag.gone || ag.state === "saved" || ag.state === "bomb") continue
+    if (Math.abs(ag.x - m.x) <= 8 && Math.abs(ag.y - m.y) <= 7) m.discovered = true
+    if (m.discovered && Math.abs(ag.x - m.x) <= 3 && Math.abs(ag.y - m.y) <= 7
+        && (m.kind !== "alien" || ag.id === m.scoutId)) helping++
+  }
+  if (m.discovered) for (var di = 0; di < m.targets.length; di++) m.targets[di].discovered = true
+  if (helping) {
+    m.progress += Math.min(2, helping)
+    if (m.kind === "alien") m.shotFor = 3
+  }
+  if (m.progress >= 4) {
+    for (var ti = 0; ti < m.targets.length; ti++) {
+      var t = m.targets[ti]
+      t.done = true; t.freed = m.kind !== "alien"; t.dead = m.kind === "alien"; t.progress = 4
+      for (var p = 0; p < 5; p++) w.particles.push({
+        x: t.x + (p % 3 - 1) * 0.45, y: t.y - 2,
+        vx: (p % 2 ? 0.04 : -0.04), vy: -0.12 - (p % 3) * 0.025,
+        life: 20 + p * 2, blood: m.kind === "alien"
+      })
+    }
+    m.completed = m.need
+    m.done = true
+    m.openedAt = w.ticks
+    w.lastEvent = "mission complete"
+  }
+}
+
+function stepFreedMission(w, m) {
+  for (var i = 0; i < m.targets.length; i++) {
+    var t = m.targets[i]
+    if (!t.freed) continue
+    t.anim++
+    var nx = t.x + t.dir * (m.kind === "animal" ? 0.09 : 0.065)
+    if (nx < t.roamMin || nx > t.roamMax) { t.dir = -t.dir; continue }
+    var cx = Math.floor(nx)
+    var oldFloor = Math.floor(t.y)
+    var nextFloor = 0
+    for (var y = oldFloor - 2; y <= oldFloor + 2; y++) {
+      if (solid(w, cx, y) && !solid(w, cx, y - 1)) { nextFloor = y; break }
+    }
+    // Freed actors are scenery, not fresh casualties: they turn at walls,
+    // drops and terrain edits instead of falling into the simulation.
+    if (!nextFloor || solid(w, cx, nextFloor - 2) || pitAt(w, cx)) {
+      t.dir = -t.dir
+      continue
+    }
+    t.x = nx
+    t.y = nextFloor
+  }
+}
 function finishWorldStep(w, active, blockers, moving) {
   for (var red = 0; red < w.enemies.length; red++) stepEnemy(w, w.enemies[red])
 
@@ -5740,6 +6012,7 @@ function finishWorldStep(w, active, blockers, moving) {
   }
 
   stepEvents(w)
+  stepMission(w)
   stepHazard(w)
   stepMines(w)
   stepLadders(w)
