@@ -65,6 +65,13 @@ var HULL = { r: 0.46, g: 0.52, b: 0.60 }
 // one is orange-brown. Steampunk lives in the warm half of the wheel.
 var BRASS = { r: 0.80, g: 0.46, b: 0.14 }
 
+// Tinted glass seen from inside at night. Indigo is the one corner of the
+// wheel nothing else on the board has claimed — Frost and Ice Cave are pale
+// blues, the Spaceship is grey-blue and the Factory is brass — and a tower is
+// the only biome that is a building rather than a place, so it should not look
+// like geology in any colour.
+var GLASS = { r: 0.30, g: 0.28, b: 0.54 }
+
 var WATER = { r: 0.13, g: 0.42, b: 0.52 }
 var LAVA = { r: 0.88, g: 0.26, b: 0.06 }
 var COOLANT = { r: 0.20, g: 0.80, b: 0.76 }
@@ -78,18 +85,20 @@ var VOID = { r: 0, g: 0, b: 0 }
 // number by the same rule, which is how every other per-biome difference in
 // this game stays in step across two files that cannot call each other.
 function poolTint(level) {
-  switch ((level - 1) % 8) {
+  switch ((level - 1) % 9) {
     case 1: return WATER      // Ruins: a flooded cistern
     case 3: return LAVA       // Foundry: what the place is for
     case 4: return WATER      // Jungle: the swamp, and what lives in it
     case 6: return COOLANT    // Spaceship: something leaking
     case 7: return OIL        // Factory: what has been draining out for years
+    // 8, the Skyscraper, is dry: its hole is the hoistway, and there is
+    // nothing at the bottom of one of those but the lobby floor.
     default: return WATER     // dry biomes; unused, but never undefined
   }
 }
 
 function biomeTint(theme, level) {
-  switch ((level - 1) % 8) {
+  switch ((level - 1) % 9) {
     case 0: return theme.accent                              // Cavern
     case 1: return theme.urgent                              // Ruins
     case 2: return lighter(theme.accent, 1.7)                // Frost
@@ -100,7 +109,8 @@ function biomeTint(theme, level) {
     // Factory has to sit apart from both of the other industrial biomes: the
     // Foundry is the theme's own muted grey and the Spaceship is pulled toward
     // hull, so this one goes warm. Brass and old machine paint, not heat.
-    default: return toward(theme.accent, BRASS, 0.88)        // Factory
+    case 7: return toward(theme.accent, BRASS, 0.88)         // Factory
+    default: return toward(theme.accent, GLASS, 0.80)        // Skyscraper
   }
 }
 
@@ -153,6 +163,16 @@ function build(theme, level) {
 
     rig: css(mix(bg, fg, 0.52)),
     rigDark: css(mix(bg, fg, 0.30)),
+
+    // A fire escape's windows. The pane is the same indigo the Skyscraper is
+    // tinted with, kept flat and a shade brighter than the wall it sits in so
+    // it reads as glazed rather than as another material; the highlight is the
+    // one thing that says it is glass at all at this size. Shards are what is
+    // left in a frame somebody has been through, and they are the board's only
+    // record of the colony's route out onto the ironwork.
+    glassPane: css(mix(bg, GLASS, 0.62)),
+    glassLit: css(mix(mix(bg, GLASS, 0.85), fg, 0.30)),
+    glassShard: css(mix(mix(bg, GLASS, 0.50), fg, 0.20)),
     warn: css(mix(bg, theme.urgent, 0.55)),
     fire: css(theme.urgent),
     fireHot: css(lighter(theme.urgent, 1.45)),

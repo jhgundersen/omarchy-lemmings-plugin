@@ -60,6 +60,32 @@ function drawTerrain(ctx, w, pal) {
     ctx.globalAlpha = 1
   }
 
+  // The city, seen from inside one of the buildings in it. Seeded from the
+  // level like the Spaceship's stars, so the skyline belongs to the level and
+  // is the same every time it is played.
+  if (w.biome === "Skyscraper") {
+    var horizon = k.SKY * C
+    var seedC = (w.level * 2654435761) % 100000
+    var nextC = function () { seedC = (seedC * 1103515245 + 12345) % 2147483648; return seedC >> 5 }
+    for (var bl2 = 0; bl2 < 22; bl2++) {
+      var bw3 = 7 + nextC() % 16
+      var bx3 = (nextC() % (cols * C + 40)) - 20
+      var bh3 = 6 + nextC() % (horizon - 4)
+      ctx.fillStyle = bl2 % 3 === 0 ? pal.rockShade : pal.steelShade
+      ctx.fillRect(bx3, horizon - bh3, bw3, bh3)
+      // Lit windows, a minority of them. An office block at night is mostly
+      // dark, and the few that are on are what make it read as occupied.
+      for (var wy3 = horizon - bh3 + 2; wy3 < horizon - 2; wy3 += 4) {
+        for (var wx3 = bx3 + 2; wx3 < bx3 + bw3 - 2; wx3 += 3) {
+          var r3 = nextC() % 7
+          if (r3 > 1) continue
+          ctx.fillStyle = r3 === 0 ? pal.decorLit : pal.warn
+          ctx.fillRect(wx3, wy3, 1, 2)
+        }
+      }
+    }
+  }
+
   // Batch horizontal material runs instead of drawing thousands of cells.
   for (var y = 0; y < rows; y++) {
     var x = 0
@@ -186,6 +212,26 @@ function drawDecor(ctx, w, pal) {
       continue
     }
 
+    // A workstation, and the one piece of decor on this board that somebody
+    // was sitting at this morning. The chair is pushed back because they left
+    // in a hurry, which is the level's premise.
+    if (d.kind === "desk") {
+      if (w.terrain[(d.y + 1) * k.COLS + d.x] === k.EMPTY) continue
+      ctx.fillStyle = pal.decorDim
+      ctx.fillRect(px - 1, py + C - 6, 12, 2)             // the desktop
+      ctx.fillRect(px, py + C - 4, 2, 4)                  // and its legs
+      ctx.fillRect(px + 8, py + C - 4, 2, 4)
+      ctx.fillStyle = pal.rigDark
+      ctx.fillRect(px + 5, py + C - 11, 6, 5)             // the monitor
+      ctx.fillStyle = d.seed % 3 === 0 ? pal.decorLit : pal.decorDim
+      ctx.fillRect(px + 6, py + C - 10, 4, 3)             // still logged in
+      ctx.fillStyle = pal.decor
+      ctx.fillRect(px - 5, py + C - 9, 4, 2)              // the chair back
+      ctx.fillRect(px - 4, py + C - 7, 2, 4)
+      ctx.fillRect(px - 6, py + C - 5, 5, 1)
+      continue
+    }
+
     if (d.kind === "hang") {
       if (w.terrain[(d.y - 1) * k.COLS + d.x] === k.EMPTY) continue
       if (w.terrain[d.y * k.COLS + d.x] !== k.EMPTY) continue
@@ -200,7 +246,8 @@ function drawDecor(ctx, w, pal) {
     // palette plus a detail or two does the rest.
     var ruins = w.biome === "Ruins"
     var frost = w.biome === "Frost" || w.biome === "Ice Cave"
-    var foundry = w.biome === "Foundry" || w.biome === "Spaceship" || w.biome === "Factory"
+    var foundry = w.biome === "Foundry" || w.biome === "Spaceship"
+               || w.biome === "Factory" || w.biome === "Skyscraper"
     var jungle = w.biome === "Jungle"
 
     if (d.kind === "spire") {
@@ -412,6 +459,24 @@ function drawExitBack(ctx, w, pal) {
     ctx.fillRect(x + ww + 1, y - 5, 3, 3)
     break
 
+  case "Skyscraper":
+    // A lobby door: a polished surround, a canopy over it, and the floor
+    // indicator above that with one segment lit — the only sign in the
+    // building that says which way is out rather than which way is up.
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(x - 6, y - 5, ww + 12, 3)                  // the canopy
+    ctx.fillRect(x - 3, y - 2, 3, hh + 2)                   // jambs
+    ctx.fillRect(x + ww, y - 2, 3, hh + 2)
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x - 6, y - 2, ww + 12, 1)                  // its underside
+    ctx.fillStyle = pal.exitFrame
+    ctx.fillRect(cx3 - 9, y - 11, 18, 5)                    // the indicator
+    ctx.fillStyle = pal.rigDark
+    for (var fl2 = 0; fl2 < 4; fl2++) ctx.fillRect(cx3 - 7 + fl2 * 4, y - 10, 3, 3)
+    ctx.fillStyle = pal.exitLight
+    ctx.fillRect(cx3 - 7, y - 10, 3, 3)                     // lobby
+    break
+
   default:
     // Cavern: the original stepped lintel, two courses, the upper one wider.
     ctx.fillRect(x - 4, y - 6, ww + 8, 3)
@@ -552,6 +617,233 @@ function drawMachines(ctx, w, pal) {
 // the level without saying so is indistinguishable from the sim misbehaving,
 // so the telegraph is not decoration: it is the difference between "the floor
 // went" and "the floor went, and it said Legacy Collapse first".
+// The other thing at the end of a floor. A fire escape is bolted to the
+// outside of the building rather than cut through it, so almost none of the
+// hoistway's vocabulary carries over: no rope, no rails, no car. What it has
+// instead is a switchback — land, cross the well as you descend, land again,
+// and turn — which is the shape the eye reads as New York before it reads any
+// of the detail, and the reason stairX alternates its direction per storey.
+//
+// The switchback rule is Sim.js's, written out a second time here because the
+// two files cannot call each other — and under a different name, because in a
+// browser these files land in one global scope and `npm run check` refuses a
+// name declared in two of them. Change one and change the other; the whole of
+// it is the landing share and the parity of the storey index.
+var ESC_LAND = 0.16
+
+function escapeRunX(L, i, end) {
+  var a = L.x0 + 0.9, b = L.x1 - 0.4
+  var from = (i % 2 === 0) ? a : b
+  return end ? (from === a ? b : a) : from
+}
+
+function drawFireEscape(ctx, w, pal, L, x0, wid, top, bot) {
+  var C = w.k.CELL
+  var iron = pal.rig
+  var dark = pal.rigDark
+
+  // The well is open air, not a shaft: this is the outside of the building and
+  // it should read as sky rather than as the dark the hoistway gets.
+  ctx.fillStyle = pal.skyLow
+  ctx.fillRect(x0, top, wid, bot - top)
+
+  // The panes, painted over whatever the terrain pass made of them. A window
+  // still in its frame is the flat indigo this biome is tinted with; one that
+  // has been bashed out is an empty opening with the frame left behind, which
+  // is the only readout the board gives of where the colony has been through.
+  for (var pi = 0; pi < L.panes.length; pi++) {
+    var pane = L.panes[pi]
+    var px = L.wallX * C
+    var py = pane.y0 * C
+    var ph = (pane.y1 - pane.y0 + 1) * C
+    var intact = false
+    for (var cy = pane.y0; cy <= pane.y1; cy++)
+      if (w.terrain[cy * w.k.COLS + L.wallX] !== w.k.EMPTY) intact = true
+    if (intact) {
+      ctx.fillStyle = pal.glassPane
+      ctx.fillRect(px, py, C, ph)
+      ctx.fillStyle = pal.glassLit
+      ctx.fillRect(px + 1, py + 2, 2, ph - 6)               // the light down one edge
+      ctx.fillRect(px + 1, py + 2, C - 3, 2)
+      ctx.fillStyle = dark
+      ctx.fillRect(px, py + Math.round(ph / 2), C, 1)       // the meeting rail
+    } else {
+      ctx.fillStyle = pal.glassShard
+      for (var sh = 0; sh < 5; sh++)
+        ctx.fillRect(px + (sh % 2 ? 1 : C - 3), py + 2 + sh * 3, 2, 2)
+    }
+    ctx.fillStyle = iron
+    ctx.fillRect(px - 1, py - 2, C + 2, 2)                  // lintel
+    ctx.fillRect(px - 1, py + ph, C + 2, 2)                 // sill
+  }
+
+  // A landing at every storey, and the flight that leaves it. Both are drawn
+  // as open grating — a line for the deck, a rail above it, and balusters
+  // between — because a fire escape you cannot see the street through is a
+  // balcony.
+  for (var si = 0; si < L.stops.length; si++) {
+    var fy = L.stops[si] * C
+    ctx.fillStyle = iron
+    ctx.fillRect(x0, fy - 2, wid, 2)                        // the deck
+    ctx.fillStyle = dark
+    for (var gx = x0 + 1; gx < x0 + wid; gx += 3) ctx.fillRect(gx, fy - 2, 1, 2)
+
+    // Waist high, and open. A rail drawn head-high with a baluster every
+    // fourth pixel is a cage, and a stack of cages down the side of a building
+    // is the one thing this is not supposed to look like.
+    var rail = fy - 2 - 2 * C
+    ctx.fillStyle = iron
+    ctx.fillRect(x0, rail, wid, 2)                          // top rail
+    ctx.fillStyle = dark
+    for (var bx = x0 + 3; bx < x0 + wid - 2; bx += 7)
+      ctx.fillRect(bx, rail + 2, 1, 2 * C - 2)              // balusters
+    ctx.fillStyle = iron
+    ctx.fillRect(x0, rail, 2, 2 * C)                        // the outer post
+    ctx.fillRect(x0 + wid - 2, rail, 2, 2 * C)
+
+    // Brackets back to the wall. Nothing here is holding itself up.
+    ctx.fillStyle = dark
+    var bWall = L.out > 0 ? x0 + wid : x0
+    for (var b = 1; b <= 2; b++) {
+      ctx.fillRect(bWall - L.out * b * 5 - (L.out > 0 ? 2 : 0), fy, 2, 2 + b * 2)
+    }
+
+    if (si >= L.stops.length - 1) continue
+
+    // The flight. Drawn as treads on the diagonal the walker is actually
+    // following, so an agent on it stands on its steps rather than beside
+    // them, and with a handrail on the same slope above.
+    var span = L.stops[si + 1] - L.stops[si]
+    var yA = L.stops[si] + span * ESC_LAND
+    var yB = L.stops[si + 1] - span * ESC_LAND
+    var xA = escapeRunX(L, si, false), xB = escapeRunX(L, si, true)
+    var steps = Math.max(4, Math.round(yB - yA))
+    for (var st = 0; st <= steps; st++) {
+      var t = st / steps
+      var sx = (xA + (xB - xA) * t) * C
+      var sy = (yA + (yB - yA) * t) * C
+      ctx.fillStyle = iron
+      ctx.fillRect(Math.round(sx) - 3, Math.round(sy) - 1, 7, 2)      // tread
+      ctx.fillStyle = dark
+      ctx.fillRect(Math.round(sx) - 3, Math.round(sy) + 1, 7, 1)      // its shadow
+      // Handrail on the same slope, with a stanchion every third tread. Every
+      // other one filled the flight in solid and it stopped reading as stairs.
+      ctx.fillStyle = iron
+      ctx.fillRect(Math.round(sx) - 1, Math.round(sy) - 2 * C, 2, 2)
+      if (st % 3 === 0) {
+        ctx.fillStyle = dark
+        ctx.fillRect(Math.round(sx), Math.round(sy) - 2 * C + 2, 1, 2 * C - 3)
+      }
+    }
+  }
+
+  // The drop ladder at the bottom, counterweighted and swung up out of reach
+  // of the street, which is the one piece of a fire escape everybody can draw
+  // from memory and the one piece nobody in this game will ever use.
+  var lx = escapeRunX(L, L.stops.length - 1, false) * C
+  var ly = L.stops[L.stops.length - 1] * C
+  ctx.fillStyle = dark
+  ctx.fillRect(Math.round(lx) - 3, ly, 2, 5 * C)
+  ctx.fillRect(Math.round(lx) + 3, ly, 2, 5 * C)
+  ctx.fillStyle = iron
+  for (var rg = 0; rg < 5; rg++) ctx.fillRect(Math.round(lx) - 3, ly + 4 + rg * 5, 8, 1)
+}
+
+// The Skyscraper's two hoistways and the cars in them. On the per-tick layer
+// for the same reason the Factory's cogs are: a lift painted with the terrain
+// only repaints when the terrain changes, which is a shaft with a lift stuck
+// in it, and that is the one thing this biome cannot afford to look like.
+//
+// Drawn before the agents so a car is the box they are standing in rather than
+// a box drawn over them, and with no front panel at all — the cabin is a back
+// wall, a roof and a floor plate, and the passengers are the rest of it.
+function drawLifts(ctx, w, pal) {
+  if (!w.lifts || !w.lifts.length) return
+  var C = w.k.CELL
+  for (var i = 0; i < w.lifts.length; i++) {
+    var L = w.lifts[i]
+    var x0 = L.x0 * C
+    var wid = (L.x1 - L.x0 + 1) * C
+    var top = L.headY * C
+    var bot = L.bottom * C
+
+    if (L.stairs) { drawFireEscape(ctx, w, pal, L, x0, wid, top, bot); continue }
+
+    // The void. Darker than any corridor on the board, because a hoistway is
+    // the one place in the building with no floor under it for fifty rows.
+    ctx.fillStyle = pal.pitDeep
+    ctx.fillRect(x0, top, wid, bot - top)
+
+    // Guide rails down both faces, and the ladder of service rungs that every
+    // shaft has and nobody in this game is ever going to use.
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0 + 1, top, 2, bot - top)
+    ctx.fillRect(x0 + wid - 3, top, 2, bot - top)
+    ctx.fillStyle = pal.steelShade
+    for (var rg = top + 4; rg < bot; rg += 7) ctx.fillRect(x0 + wid - 8, rg, 5, 1)
+
+    var carTop = Math.round(L.car * C) - 4 * C
+    // The hoist rope, from the head of the shaft down to the car.
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(Math.round(L.mid * C) - 1, top, 2, Math.max(0, carTop - top))
+
+    // The doors, one set per floor. A frame on the wall face, and leaves that
+    // are shut everywhere the car is not — which is what makes the one open
+    // set worth walking to.
+    for (var s = 0; s < L.stops.length; s++) {
+      var fy = L.stops[s] * C
+      var dx = L.wallX * C
+      // Open exactly while the car is available, which now includes a parked
+      // one: a lift that waits to be called spends most of a level standing
+      // still, and a standing car with its doors shut is indistinguishable
+      // from a shaft with no car in it at all.
+      var open = Math.abs(L.car - L.stops[s]) < 0.6 && (L.hold > 0 || L.parked)
+      var dh = 5 * C                                      // the opening
+      var dy0 = fy - dh - 2
+      ctx.fillStyle = pal.rig
+      ctx.fillRect(dx - 2, dy0 - 3, C + 4, 3)             // lintel
+      ctx.fillRect(dx - 2, fy - 3, C + 4, 3)              // sill
+      ctx.fillRect(dx - 2, dy0, 2, dh + 2)                // jambs
+      ctx.fillRect(dx + C, dy0, 2, dh + 2)
+      // Leaves. Shut everywhere the car is not, which is what makes the one
+      // open set worth crossing a floor for.
+      ctx.fillStyle = pal.steelShade
+      if (open) {
+        ctx.fillRect(dx, dy0, 1, dh)
+        ctx.fillRect(dx + C - 1, dy0, 1, dh)
+      } else {
+        ctx.fillRect(dx, dy0, C, dh)
+        ctx.fillStyle = pal.rigDark
+        ctx.fillRect(dx + C / 2, dy0, 1, dh)              // the seam
+      }
+      // The lamp over the door. Lit at the floor the car is standing at, and
+      // otherwise showing which way it went.
+      var lx2 = dx + (L.out > 0 ? C + 3 : -5)
+      ctx.fillStyle = pal.rigDark
+      ctx.fillRect(lx2, dy0 - 8, 4, 5)
+      ctx.fillStyle = open ? pal.exitLight : pal.decorDim
+      ctx.fillRect(lx2 + 1, dy0 - 7 + (open ? 0 : (L.dir > 0 ? 2 : 0)), 2, open ? 3 : 1)
+    }
+
+    // The car: a back wall, a roof, a floor plate and a light. No front panel
+    // at all — the passengers are the front of it, and they are drawn after.
+    var ch2 = 4 * C
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0 + 3, carTop, wid - 6, ch2)
+    ctx.fillStyle = pal.steel
+    ctx.fillRect(x0 + 2, carTop, wid - 4, 3)                    // roof
+    ctx.fillRect(x0 + 2, carTop + ch2 - 3, wid - 4, 3)          // floor plate
+    ctx.fillStyle = pal.steelShade
+    ctx.fillRect(x0 + 3, carTop + 3, 2, ch2 - 6)                // corner posts
+    ctx.fillRect(x0 + wid - 5, carTop + 3, 2, ch2 - 6)
+    ctx.fillStyle = pal.decorLit
+    ctx.fillRect(x0 + 6, carTop + 4, wid - 12, 2)               // the ceiling light
+    ctx.globalAlpha = 0.25                                      // and what it throws
+    ctx.fillRect(x0 + 5, carTop + 6, wid - 10, ch2 - 10)
+    ctx.globalAlpha = 1
+  }
+}
+
 function drawEventBanner(ctx, w, pal) {
   var warn = w.eventWarnFor > 0
   var flash = w.eventFlash > 0
@@ -585,6 +877,7 @@ function drawActors(ctx, w, pal, opts) {
   var k = w.k
   clearLayer(ctx, w)
   drawMachines(ctx, w, pal)
+  drawLifts(ctx, w, pal)
   drawPits(ctx, w, pal)
   drawSpecialCard(ctx, w, pal)
   drawHatch(ctx, w, pal)
@@ -1412,6 +1705,7 @@ function drawEnemyHatch(ctx, w, pal, opts) {
   else if (biome === "Jungle") { wall = pal.decor; roof = pal.decorDim; edge = pal.decorLit; sign = "BRANCH OFFICE" }
   else if (biome === "Ice Cave") { wall = pal.ore; roof = pal.rockShade; edge = pal.oreEdge; sign = "COLD STORAGE" }
   else if (biome === "Spaceship") { wall = pal.steel; roof = pal.rigDark; edge = pal.steelEdge; sign = "REMOTE OFFICE" }
+  else if (biome === "Skyscraper") { wall = pal.dirt; roof = pal.rig; edge = pal.dirtEdge; sign = "MIDDLE MANAGEMENT" }
 
   // Barely larger than an agent: a sentry booth, not a second landmark. Its
   // materials come from the current theme; biome identity is in the roofline.
@@ -2135,6 +2429,71 @@ function drawHazardKind(ctx, w, pal, h) {
                      y1 - 7 - jv, wj, 2)
       }
       ctx.globalAlpha = 1
+    }
+    break
+
+  case "sprinkler":
+    // A pipe run with heads on it. Between times it is plumbing; live, it is
+    // the reason nobody keeps paper on their desk any more.
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0, y0 + 1, wide, 3)                       // the main
+    ctx.fillStyle = pal.rig
+    for (var sk = 0; sk < 4; sk++) {
+      var skx = x0 + 4 + Math.round(sk * (wide - 8) / 3)
+      ctx.fillRect(skx - 1, y0 + 4, 3, 3)                   // and its heads
+    }
+    if (show) {
+      ctx.fillStyle = live ? pal.poolLip : pal.decorLit
+      for (var sw2 = 0; sw2 < 4; sw2++) {
+        var swx = x0 + 4 + Math.round(sw2 * (wide - 8) / 3)
+        var reach = live ? tall - 8 : 6
+        for (var sd = 0; sd < reach; sd += 3) {
+          var spread = Math.round(sd * 0.35)
+          ctx.globalAlpha = live ? 0.8 - sd / (tall * 1.6) : 0.4
+          ctx.fillRect(swx - spread + ((t + sd * 3) % 5) - 2, y0 + 7 + sd, 1, 2)
+          ctx.fillRect(swx + spread - ((t + sd * 5) % 5) + 1, y0 + 7 + sd, 1, 2)
+        }
+      }
+      ctx.globalAlpha = 1
+    }
+    break
+
+  case "polisher":
+    // A floor buffer nobody switched off, running its beat up and down the
+    // same six cells for as long as the building stands.
+    var run = (Math.sin(t * 0.035 + seed) * 0.5 + 0.5)
+    var pcx = Math.round(x0 + 6 + run * (wide - 12))
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(pcx - 5, y1 - 4, 10, 4)                    // the deck
+    ctx.fillStyle = pal.rig
+    ctx.fillRect(pcx + 3, y1 - 12, 2, 9)                    // the handle
+    ctx.fillRect(pcx + 3, y1 - 13, 5, 2)
+    ctx.fillStyle = live ? hot : pal.steelShade
+    for (var pb = 0; pb < 5; pb++)                          // the pad, spinning
+      ctx.fillRect(pcx - 5 + ((pb * 3 + t) % 10), y1 - 1, 2, 1)
+    if (show) {
+      ctx.globalAlpha = 0.5
+      ctx.fillStyle = pal.decorLit
+      for (var pf = 0; pf < 4; pf++)
+        ctx.fillRect(pcx - 7 + pf * 4, y1 - 6 - ((t + pf * 7) % 5), 2, 1)
+      ctx.globalAlpha = 1
+    }
+    break
+
+  case "shredder":
+    // A slot in the floor with a very good appetite. Dormant it is furniture;
+    // armed, the rollers turn and you can see how far down it goes.
+    ctx.fillStyle = pal.rigDark
+    ctx.fillRect(x0 + 1, y1 - 5, wide - 2, 5)               // the hopper
+    ctx.fillStyle = pal.hatchMouth
+    ctx.fillRect(x0 + 3, y1 - 4, wide - 6, 3)               // the slot
+    if (show) {
+      ctx.fillStyle = hot
+      for (var sr = 0; sr < 6; sr++)
+        ctx.fillRect(x0 + 4 + ((sr * 4 + Math.floor(t * (live ? 0.8 : 0.3))) % (wide - 8)),
+                     y1 - 4, 2, 3)                          // the rollers
+      if (live) for (var st5 = 0; st5 < wide - 6; st5 += 4)
+        hzTri(ctx, x0 + 4 + st5, y1 - 5, 2, 3, -1)          // and the teeth
     }
     break
 

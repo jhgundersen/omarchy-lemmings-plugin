@@ -39,6 +39,14 @@ var BUILD_REACH = 24     // cells a full 12-brick bridge spans
 var BASH_REACH = 10      // cells of wall a basher will commit to
 
 var BUILD_INTERVAL = 6   // ticks per brick
+// Ticks of getting nowhere before a blocked builder starts cutting its steps
+// narrow instead of giving the build up. It is a gate rather than the default
+// because steepening at an ordinary wall is a bad trade: measured, a builder
+// that always narrowed spent twelve bricks going straight up walls the colony
+// had no reason to be over, and took levels that cleared to nothing at all.
+// An agent that has been getting nowhere this long has already had the walk,
+// the turn and the climb fail, and a hole is what that usually means.
+var NARROW_IDLE = 180
 var BASH_INTERVAL = 6
 var DIG_INTERVAL = 7
 var BOMB_FUSE = 150      // 5 seconds, same as the original
@@ -92,7 +100,7 @@ var SKILL_LABELS = {
 // putting a new one anywhere but the end would re-skin every level above it.
 // Palette.js derives the same index with the same rule and must be kept in
 // step — see the note over poolTint there.
-var BIOMES = ["Cavern", "Ruins", "Frost", "Foundry", "Jungle", "Ice Cave", "Spaceship", "Factory"]
+var BIOMES = ["Cavern", "Ruins", "Frost", "Foundry", "Jungle", "Ice Cave", "Spaceship", "Factory", "Skyscraper"]
 
 // A small job on the route gives each biome a premise beyond merely reaching
 // the door. These are deliberately one mechanism with different casts: an
@@ -107,7 +115,8 @@ var MISSION_SPECS = {
   "Jungle":    { id: "animal",    verb: "FREE THE ANIMAL",       kind: "animal", count: 1 },
   "Ice Cave":  { id: "researcher",verb: "RESCUE THE RESEARCHER", kind: "explorer", count: 1 },
   "Spaceship": { id: "alien",     verb: "NEUTRALIZE THE ALIEN",  kind: "alien", count: 1 },
-  "Factory":   { id: "interns",   verb: "FREE THE INTERNS",      kind: "civilian", count: 3 }
+  "Factory":   { id: "interns",   verb: "FREE THE INTERNS",      kind: "civilian", count: 3 },
+  "Skyscraper":{ id: "csuite",    verb: "EVACUATE THE C-SUITE",  kind: "civilian", count: 2 }
 }
 
 var TRAITS = {
@@ -347,6 +356,186 @@ function corridorPlan(rng) {
   return { n: n, gap: gap, top: top }
 }
 
+// ---------------------------------------------------------------------------
+// The Skyscraper's hoistways
+// ---------------------------------------------------------------------------
+// Every other biome hands one corridor off to the next with a hole: the floor
+// stops, the agent falls, gravity does the work. A building does not work like
+// that, and this one does not either. Two hoistways run the full height of the
+// board, one at each end, with a door onto every floor and a car in each — and
+// because the corridors alternate their walking direction, the shaft an agent
+// walks *toward* is always the far one from the shaft it arrived by. That is
+// the whole level design: cross the floor, ring for the lift, ride one storey,
+// cross the next floor the other way.
+//
+// It is also what makes this the one biome that can be played upside down. A
+// drop is one-way and an agent cannot fall upward, which is why every other
+// level in this game ends below where it started; a car goes both ways, so
+// half of these levels put the hatch in the lobby ceiling and the door on the
+// top floor and ask the colony to climb the building instead.
+var LIFT_W = 5           // interior width of a shaft, in cells
+var TOWER_X0 = 10        // walkable floor between the two hoistway walls
+var TOWER_X1 = 89
+// A car answers from rest now rather than sweeping the building (see
+// liftDispatch), so it has to answer briskly: at the old patrolling speed the
+// wait at a door was long enough that a third of the queue gave up on the lift
+// and went looking for a wall to climb, and the tower lost four points of home
+// to it. Faster and stationary still adds up to a quarter of the car movement
+// the patrol used to draw.
+var LIFT_SPEED = 0.60    // rows per tick; one storey in about two thirds of a second
+var LIFT_DWELL = 34      // ticks the doors stand open at a floor it serves
+var LIFT_PASS = 4        // and how long it hesitates at one nobody rang for
+var LIFT_CAP = 5         // agents in a car; the sixth waits for the next one
+var LIFT_PATIENCE = 480  // ticks at a door before an agent gives up on the lift
+var LIFT_RIDE_MAX = 900  // and the longest anybody stays aboard, whatever happens
+var STAIR_SPEED = 0.30   // rows per tick under your own legs; a storey is ~1.3s
+var ESCAPE_CHANCE = 0.45 // towers where one of the two shafts is a fire escape
+
+// The fire escape's switchback, as a function of height. Both files need it —
+// Sim to walk an agent down it, Draw to paint it — and they cannot call each
+// other, so the rule is written twice and has to be changed twice. It is kept
+// deliberately small for that reason: land at one end of the well, cross it as
+// you descend, land at the other, and alternate per storey, which is the whole
+// of what makes a run of them read as a fire escape rather than a slide.
+var STAIR_LAND = 0.16    // share of a storey spent on the landing at each end
+
+function stairSpan(L, y) {
+  for (var i = 0; i < L.stops.length - 1; i++) {
+    if (y >= L.stops[i] - 1 && y <= L.stops[i + 1]) return i
+  }
+  return y < L.stops[0] ? 0 : L.stops.length - 2
+}
+
+function stairX(L, y) {
+  var i = stairSpan(L, y)
+  var top = L.stops[i], span = L.stops[i + 1] - top
+  var p = span > 0 ? (y - top) / span : 0
+  var a = L.x0 + 0.9, b = L.x1 - 0.4
+  var from = (i % 2 === 0) ? a : b
+  var to = (i % 2 === 0) ? b : a
+  var t = (p - STAIR_LAND) / (1 - 2 * STAIR_LAND)
+  if (t < 0) t = 0
+  if (t > 1) t = 1
+  return from + (to - from) * t
+}
+
+// Is this column inside a hoistway (interior or wall)? Terrain edits — events,
+// bottom pits, obstacles — have to keep out of both: a shaft with its wall
+// knocked out is a hole in every floor of the building at once.
+function liftColumn(w, x) {
+  for (var i = 0; i < w.lifts.length; i++) {
+    var L = w.lifts[i]
+    if (x >= L.x0 - 1 && x <= L.x1 + 1) return L
+  }
+  return null
+}
+
+// The shaft an agent standing on `footY` would step into by entering cell `x`.
+// A door is only a door on a floor the car actually serves.
+function liftDoorAt(w, x, footY) {
+  for (var i = 0; i < w.lifts.length; i++) {
+    var L = w.lifts[i]
+    if (x < L.x0 || x > L.x1) continue
+    for (var s = 0; s < L.stops.length; s++)
+      if (footY === L.stops[s] - 1) return L
+  }
+  return null
+}
+
+function liftStopIndex(L, floorY) {
+  for (var i = 0; i < L.stops.length; i++) if (L.stops[i] === floorY) return i
+  return -1
+}
+
+function liftDocked(L) {
+  return (L.hold > 0 || L.parked) ? L.stops[L.at] : -1
+}
+
+// Cut one hoistway: the void, the wall that separates it from the floors, and
+// a doorway in that wall at every storey. The void is cleared with setCell
+// rather than clearCell on purpose — the wall is STEEL and so is the map edge,
+// and a shaft that stops where the bedrock starts is not a shaft.
+function cutHoistway(w, corridors, x0, wallX, out, stairs) {
+  var x, y
+  var topY = corridors[0].floorY
+  var botY = corridors[corridors.length - 1].floorY
+  var x1 = x0 + LIFT_W - 1
+
+  for (x = x0; x <= x1; x++)
+    for (y = topY - CORR_H; y < botY; y++) setCell(w, x, y, EMPTY)
+
+  // Both faces of the shaft are steel for its whole height, so nothing digs
+  // sideways into it and nobody arrives in the middle of a drop.
+  var faces = [wallX, out > 0 ? x0 - 1 : x1 + 1]
+  for (var f = 0; f < faces.length; f++) {
+    for (y = SKY; y < ROWS - 2; y++) setCell(w, faces[f], y, STEEL)
+  }
+  // The doors. Only the inner face gets one; the outer is the outside of the
+  // building. The floor row itself stays steel, which is the sill an agent
+  // stands on while it waits.
+  //
+  // A fire escape gets windows instead. ROCK, not a material of its own: this
+  // file's whole strata and biome-skin scheme rests on dirt, rock and ore
+  // being one thing to every rule, and a pane that behaved differently would
+  // be the exception that ends that (see `simcheck inert`). What makes it a
+  // window is that it is one cell thick and not steel, which is precisely the
+  // wall a basher goes through — so getting out onto the escape costs the
+  // toolbar something, and the way home is visible through it the whole time.
+  var panes = []
+  for (var ci = 0; ci < corridors.length; ci++) {
+    var c = corridors[ci]
+    for (y = c.floorY - CORR_H; y < c.floorY; y++)
+      setCell(w, wallX, y, stairs ? ROCK : EMPTY)
+    if (stairs) panes.push({ y0: c.floorY - CORR_H, y1: c.floorY - 1 })
+  }
+
+  var stops = []
+  for (var si = 0; si < corridors.length; si++) stops.push(corridors[si].floorY)
+
+  var lift = {
+    x0: x0, x1: x1,
+    wallX: wallX,
+    // The top of the void, so Draw.js can paint the shaft without a copy of
+    // CORR_H. Geometry travels on the object, the same way w.k does.
+    headY: topY - CORR_H,
+    out: out,                       // which way an alighting agent walks
+    mid: (x0 + x1) / 2 + 0.5,
+    top: topY, bottom: botY,
+    stops: stops,
+    at: out > 0 ? 0 : stops.length - 1,
+    to: out > 0 ? 1 : stops.length - 2,
+    dir: out > 0 ? 1 : -1,          // the two cars start at opposite ends
+    car: out > 0 ? topY : botY,
+    hold: LIFT_DWELL,
+    parked: false,                  // standing at L.at with nowhere to be
+    riders: 0,
+    doorFor: 0,
+    // A fire escape is a shaft with no car in it. Everything that routes an
+    // agent to a hoistway — the doors, goalDist, the ban on terrain edits, the
+    // rule that stands the climbers down — works on it unchanged, because it
+    // is the same kind of thing: a way between storeys at the end of a floor.
+    // Only the last step differs, and it differs by there being nothing to
+    // wait for; see stepStairs.
+    stairs: !!stairs,
+    panes: panes,
+    ix: w.lifts.length
+  }
+  w.lifts.push(lift)
+  return lift
+}
+
+function cutHoistways(w, corridors) {
+  // Which side, if either, is a fire escape. Its own stream, keyed on the
+  // level: adding this leaves every existing tower's terrain, hazards,
+  // specials and mission exactly where they were, and only the side it
+  // replaces changes. Never both — a building with no lift at all is a
+  // building the whole colony has to bash its way down, and the clock says no.
+  var escRng = makeRng(w.level * 15485863 + 6151)
+  var side = escRng() < ESCAPE_CHANCE ? (escRng() < 0.5 ? 0 : 1) : -1
+  cutHoistway(w, corridors, 4, TOWER_X0 - 1, 1, side === 0)
+  cutHoistway(w, corridors, TOWER_X1 + 2, TOWER_X1 + 1, -1, side === 1)
+}
+
 // Draw.js cannot import Sim.js; shared constants travel on the world instead.
 var K = {
   COLS: COLS, ROWS: ROWS, CELL: CELL, SKY: SKY,
@@ -407,6 +596,11 @@ function generate(level, attempt, colonySeed) {
     nextEnemyId: 1,
     mines: [],
     ladders: [],
+    // The Skyscraper's two cars, and which way this tower is played. Empty and
+    // false everywhere else; see the block above cutHoistway.
+    lifts: [],
+    ascending: false,
+    exitCorridor: 0,
     // The hole in the bottom of the world, and whatever is at the bottom of
     // it. A list because the shape is rolled per level and one roll cuts two;
     // `pit` is the first, kept for the same reason `hazard` is.
@@ -479,8 +673,19 @@ function generate(level, attempt, colonySeed) {
 
   fillEarth(w, rng)
 
+  // A tower is played in one of two directions, and the roll is the level's
+  // own — level 9 is always the one you climb. Nothing else consumes from the
+  // stream here, so the other eight biomes keep the layouts they always had.
+  var tower = w.biome === "Skyscraper"
+  if (tower) w.ascending = rng() < 0.5
+
   var flip = rng() < 0.5 ? 1 : -1
   var plan = corridorPlan(rng)
+  // A storey of a tower costs the walk across it twice over — out to the far
+  // doors, and back along the floor below in the other direction — plus the
+  // wait at each end. Five of them is a level that runs out of clock with the
+  // colony still doing everything right.
+  if (tower && plan.n > 4) plan.n = 4
   w.corrGap = plan.gap
   var corridors = []
   for (var k = 0; k < plan.n; k++) {
@@ -488,8 +693,11 @@ function generate(level, attempt, colonySeed) {
     corridors.push({
       floorY: SKY + plan.top + k * plan.gap,
       dir: dir,
-      x0: 4,
-      x1: COLS - 5,
+      // A tower's floors stop at the hoistway walls rather than at the map
+      // edge, so everything that reads x0/x1 — decor, events, the bottom pit,
+      // the guard booth — stays out of the shafts without knowing they exist.
+      x0: tower ? TOWER_X0 : 4,
+      x1: tower ? TOWER_X1 : COLS - 5,
       obstacles: []
     })
   }
@@ -504,8 +712,22 @@ function generate(level, attempt, colonySeed) {
     // and the obstacles along them aren't all at the same three positions.
     var hj = irand(rng, 0, 7)
     c.handoffX = c.dir > 0 ? c.x1 - 10 - hj : c.x0 + 10 + hj
+    if (tower) {
+      // A floor runs door to door. The handoff is pulled back off the far
+      // shaft so the stretch in front of the lift stays clear of obstacles —
+      // it is where the queue forms, and it is where a danger belongs.
+      c.startX = c.dir > 0 ? c.x0 : c.x1
+      c.handoffX = c.dir > 0 ? c.x1 - 4 - hj : c.x0 + 4 + hj
+    }
     carveCorridor(w, c)
   }
+
+  if (tower) cutHoistways(w, corridors)
+
+  // Which corridor the door is on. Every other biome runs the colony downward
+  // and it is the last one; a tower played upward puts it on the roof floor,
+  // and obstacle density, the mission and the bottom pit all follow it there.
+  w.exitCorridor = (tower && w.ascending) ? 0 : corridors.length - 1
 
   // Zero to three dangers, weighted toward one. Corridors are unique so even
   // the busiest roll distributes them through the level instead of stacking
@@ -523,19 +745,50 @@ function generate(level, attempt, colonySeed) {
   for (var j = 0; j < corridors.length; j++) {
     var cur = corridors[j]
     placeObstacles(w, rng, cur, j, corridors)
-    if (j < corridors.length - 1) {
+    // A tower has no chutes between its floors. The cars are the handoff, and
+    // cutting the usual descent beside them would make them decoration.
+    if (!tower && j < corridors.length - 1) {
       carveDescent(w, rng, cur, corridors[j + 1])
     }
   }
 
+  // A building's floors are slabs. Everywhere else the ground between two
+  // corridors is earth, and a digger is a second way down that costs one
+  // skill; here the second way down would be the whole of the twist. It goes
+  // on after the obstacles are cut so that anything meant to be a hole in a
+  // floor still is one.
+  if (tower) {
+    for (var ts = 0; ts < corridors.length; ts++) {
+      var tc = corridors[ts]
+      for (var tx = tc.x0; tx <= tc.x1; tx++)
+        if (solid(w, tx, tc.floorY)) setCell(w, tx, tc.floorY, STEEL)
+    }
+  }
+
+
   // The hatch sits in the open sky and drops into the first corridor through
   // a short shaft — 12 cells, comfortably inside SAFE_FALL, so the opening
   // moments are never a scramble.
-  var first = corridors[0]
-  var hx = first.dir > 0 ? first.startX + irand(rng, 0, 6) : first.startX - irand(rng, 0, 6)
-  for (var sy = SKY - 2; sy < first.floorY; sy++)
-    for (var sx = hx - 2; sx <= hx + 2; sx++) clearCell(w, sx, sy)
-  w.hatch = { x: hx, y: 3 }
+  //
+  // A tower played upward cannot have that: a shaft from the sky to the lobby
+  // would be a way down through the whole building and the level would be over
+  // before the lifts were rung for. It gets a service hatch in the lobby
+  // ceiling instead, four cells clear of the near shaft's door, facing the long
+  // walk across the ground floor.
+  var first = corridors[w.ascending ? corridors.length - 1 : 0]
+  var hx
+  if (w.ascending) {
+    hx = first.dir > 0 ? first.x0 + 4 : first.x1 - 4
+    for (var ay2 = first.floorY - CORR_H; ay2 < first.floorY; ay2++)
+      for (var ax2 = hx - 2; ax2 <= hx + 2; ax2++) clearCell(w, ax2, ay2)
+    w.hatch = { x: hx, y: first.floorY - CORR_H }
+  } else {
+    var hoff = irand(rng, 0, 6) + (tower ? 5 : 0)   // clear of the roof shaft's door
+    hx = first.dir > 0 ? first.startX + hoff : first.startX - hoff
+    for (var sy = SKY - 2; sy < first.floorY; sy++)
+      for (var sx = hx - 2; sx <= hx + 2; sx++) clearCell(w, sx, sy)
+    w.hatch = { x: hx, y: 3 }
+  }
   w.startDir = first.dir
 
   // A separate deterministic stream keeps the red team optional without
@@ -580,9 +833,18 @@ function generate(level, attempt, colonySeed) {
   for (var py = first.floorY; py < first.floorY + 2; py++)
     for (var px = hx - 2; px <= hx + 2; px++) setCell(w, px, py, STEEL)
 
-  // The exit closes out the last corridor, at the end the route arrives from.
-  var last = corridors[corridors.length - 1]
-  var ex = last.dir > 0 ? Math.min(COLS - 10, last.handoffX + 4) : Math.max(6, last.handoffX - 8)
+  // The exit closes out the corridor the route ends on, at the end it arrives
+  // from — the bottom floor everywhere, and the top floor of a tower being
+  // climbed. Its clearance is kept inside the floor's own bounds, which on a
+  // tower means short of the hoistway wall rather than short of the map edge.
+  var last = corridors[w.exitCorridor]
+  // A tower's door is pulled well back from the hoistway. Everywhere else the
+  // corridor runs on past the exit and an agent that overshoots has somewhere
+  // to be; against a shaft wall three cells away it has a two-cell pocket, and
+  // a shut door at one end of it makes that pocket a trap.
+  var ex = last.dir > 0
+    ? (tower ? Math.max(last.x0 + 8, last.handoffX - 14) : Math.min(last.x1 - 5, last.handoffX + 4))
+    : (tower ? Math.min(last.x1 - 14, last.handoffX + 8) : Math.max(last.x0 + 2, last.handoffX - 8))
   w.exit = { x: ex, y: last.floorY - 5, w: 6, h: 5 }
   // setCell rather than clearCell: the mouth of the exit is cleared
   // unconditionally, steel included. Nothing that ran before this gets to make
@@ -591,9 +853,15 @@ function generate(level, attempt, colonySeed) {
     for (var exx = w.exit.x - 2; exx < w.exit.x + w.exit.w + 2; exx++) setCell(w, exx, ey, EMPTY)
 
   var sealFrom = last.dir > 0 ? w.exit.x - 8 : w.exit.x + w.exit.w + 3
-  for (var sx2 = sealFrom; sx2 < sealFrom + 3; sx2++)
-    for (var sy2 = last.floorY - CORR_H + 2; sy2 < last.floorY; sy2++)
-      setCell(w, sx2, sy2, DIRT)
+  // Not in a tower. Everywhere else the colony arrives on the last corridor
+  // from one known end and the seal is the level's closing argument; here it
+  // can arrive from either shaft, so half of them meet it and half of them do
+  // not — and the half that do have no lift to fall back on, because on the
+  // floor the door is on the car will not take anybody anywhere.
+  if (!tower)
+    for (var sx2 = sealFrom; sx2 < sealFrom + 3; sx2++)
+      for (var sy2 = last.floorY - CORR_H + 2; sy2 < last.floorY; sy2++)
+        setCell(w, sx2, sy2, DIRT)
 
   w.corridors = corridors
   // Fewer and quicker out of the hatch than before. Denser levels take longer
@@ -617,6 +885,22 @@ function generate(level, attempt, colonySeed) {
     miner: irand(rng, 4, 8) + attempt * 2,
     digger: irand(rng, 6, 10) + attempt * 2
   }
+  // The digger and the miner are the two skills a tower cannot use at all: its
+  // floors are slabs, so canDescendHere never says yes and neither of them can
+  // be reached. Leaving them in the toolbar would be a lie and leaving the
+  // allowance unspent would be worse — everywhere else a chasm lets a good
+  // half of the colony past an obstacle for nothing, and in a building every
+  // partition on every storey has to be paid for out of the same three skills.
+  // So the ground allowance becomes a building allowance.
+  if (tower) {
+    var spare = w.skills.digger + w.skills.miner
+    w.skills.digger = 0
+    w.skills.miner = 0
+    w.skills.basher += Math.round(spare * 0.55)
+    w.skills.climber += Math.round(spare * 0.30)
+    w.skills.builder += Math.round(spare * 0.15)
+  }
+
   // At most one special, on a bit over half of levels, and a fixed place in the
   // release order — so level 42 always sends the same one out in the same slot.
   // Never first: the colony should be under way before the odd one turns up.
@@ -639,7 +923,8 @@ function generate(level, attempt, colonySeed) {
   // The hole in the bottom of the world. It goes in here, after the exit and
   // the wall in front of it are settled — a crossing has to be placed relative
   // to both — and before the floors are roughened.
-  placeBottomPit(w, rng, last, corridors.length > 1 ? corridors[corridors.length - 2] : null, sealFrom)
+  if (tower) placeTowerPit(w, rng, corridors, hx, sealFrom)
+  else placeBottomPit(w, rng, last, corridors.length > 1 ? corridors[corridors.length - 2] : null, sealFrom)
   w.pit = w.pits.length ? w.pits[0] : null
 
   // A hole the whole colony has to get over is a bridge the whole colony
@@ -659,6 +944,12 @@ function generate(level, attempt, colonySeed) {
   w.hazard = w.hazards.length ? w.hazards[0] : null
 
   placeMission(w, corridors)
+
+  // Waiting for a car is not the same kind of time as walking, and the clock
+  // was set for a game where every handoff was a fall. Two shafts, four or
+  // five stops and a colony of fifteen is most of a minute of standing at
+  // doors that nobody chose to spend.
+  if (tower) w.timeLimit += 30 * (8 + 10 * corridors.length)
 
   // Place the booth only after terrain roughening, decoration and hazards are
   // final. Earlier placement could pass a clear-space test and then have a
@@ -733,7 +1024,7 @@ function placeMission(w, corridors) {
   // is doing, not a fog-of-war rule. Shortcuts may deliver
   // an agent to either side of it, so missionSteer turns searchers toward this
   // point once they reach the correct floor.
-  var c = corridors[corridors.length - 1]
+  var c = corridors[w.exitCorridor]
   var exitMid = w.exit.x + w.exit.w / 2
   var desired = Math.round(c.startX + (exitMid - c.startX) * (0.32 + missionRng() * 0.22))
   var lo = Math.min(c.startX, exitMid) + 7
@@ -1029,6 +1320,44 @@ function biomeSkin(w, rng) {
       }
     }
 
+  } else if (w.biome === "Skyscraper") {
+    // A building is a frame with floors hung on it. Nothing in here formed;
+    // it was erected, so the regularity is total — and it is *vertical*, which
+    // is what keeps it clear of the other two manufactured biomes. The
+    // Spaceship is a flat grid of panels and the Factory is a few big lumps in
+    // concrete; this one is a colonnade with slabs across it.
+    //
+    // DIRT is the material Palette tints, so the glass is DIRT, the frame is
+    // ORE and the service cores are ROCK — which comes out the same cold grey
+    // in every biome and is exactly right for a concrete riser.
+    for (y = SKY; y < ROWS - 2; y++)
+      for (x = 3; x < COLS - 3; x++)
+        if (at(w, x, y) !== STEEL) setCell(w, x, y, DIRT)
+
+    var bay = irand(rng, 9, 12)
+    for (x = 3 + irand(rng, 0, bay - 1); x < COLS - 3; x += bay)
+      for (y = SKY; y < ROWS - 2; y++) {
+        if (at(w, x, y) === STEEL) continue
+        setCell(w, x, y, ORE)
+        if (at(w, x + 1, y) !== STEEL) setCell(w, x + 1, y, ORE)
+      }
+
+    var storey = irand(rng, 6, 8)
+    for (y = SKY + irand(rng, 1, 4); y < ROWS - 3; y += storey)
+      for (x = 3; x < COLS - 3; x++)
+        if (at(w, x, y) !== STEEL) setCell(w, x, y, ORE)
+
+    // Two or three service cores: tall, narrow, and the only thing on the
+    // board this side of the frame that is allowed to interrupt the bay.
+    var cores = irand(rng, 2, 3)
+    for (var co = 0; co < cores; co++) {
+      var cwx = irand(rng, 8, COLS - 16), cwy = irand(rng, SKY + 2, ROWS - 24)
+      var cww = irand(rng, 4, 7), cwh = irand(rng, 12, 20)
+      for (y = cwy; y < cwy + cwh && y < ROWS - 2; y++)
+        for (x = cwx; x < cwx + cww; x++)
+          if (at(w, x, y) !== STEEL) setCell(w, x, y, ROCK)
+    }
+
   } else if (w.biome === "Jungle") {
     for (var bl = 0; bl < 26; bl++) {
       var mx = irand(rng, 5, COLS - 6), my = irand(rng, SKY + 1, ROWS - 5)
@@ -1072,6 +1401,11 @@ function placeDecor(w, rng, corridors) {
     // character on their own, and the general scatter was competing with them.
     floorRate = 0.07; ceilRate = 0.05; gap = 7
     floorKinds = ["spire", "spire", "clump"]
+  } else if (w.biome === "Skyscraper") {
+    // Nothing grows in an office. What is on the floor was put there, so the
+    // general scatter is turned right down and the fittings below do the work.
+    floorRate = 0.06; ceilRate = 0.04; gap = 8
+    floorKinds = ["spire", "clump"]
   }
 
   if (w.biome === "Spaceship") {
@@ -1128,6 +1462,26 @@ function placeDecor(w, rng, corridors) {
         // dark and goes back to looking like a sticker on the level.
         if (solid(w, gx3, gy3) && solid(w, gx3 + 1, gy3) && solid(w, gx3, gy3 - 1))
           w.decor.push({ x: gx3, y: gy3, kind: "gauge", size: 2, seed: Math.floor(rng() * 1000) })
+      }
+    }
+  }
+
+  if (w.biome === "Skyscraper") {
+    for (var oi = 0; oi < corridors.length; oi++) {
+      var oc = corridors[oi]
+      // Strip lights on a fixed pitch. The ceiling is the one surface an
+      // office never leaves alone, and a regular row of them going away down
+      // the floor is most of what says "storey" rather than "corridor".
+      for (var olx = oc.x0 + 3; olx < oc.x1 - 3; olx += 9) {
+        var oceil = oc.floorY - CORR_H - 1
+        if (solid(w, olx, oceil)) w.decor.push({ x: olx, y: oceil + 1, kind: "strip", size: 2, seed: 0 })
+      }
+      // Workstations, spaced far enough apart that they read as furniture in
+      // a room rather than as texture on a floor.
+      for (var odx = oc.x0 + 6; odx < oc.x1 - 6; odx += irand(rng, 12, 22)) {
+        if (solid(w, odx, oc.floorY) && !solid(w, odx, oc.floorY - 1)
+            && !solid(w, odx + 1, oc.floorY - 1))
+          w.decor.push({ x: odx, y: oc.floorY - 1, kind: "desk", size: 2, seed: Math.floor(rng() * 1000) })
       }
     }
   }
@@ -1191,20 +1545,52 @@ function placeObstacles(w, rng, c, index, corridors) {
   var span = hi - lo
   if (span < 24) return
 
-  var lastOne = index === corridors.length - 1
+  var lastOne = index === w.exitCorridor
+  // A tower's floors are sealed, and it costs two rules rather than one.
+  // Nothing that removes ground may go on one: downward that would be a way
+  // between storeys that is not the lift, which is the whole of the twist, and
+  // upward it is worse than that, it is a circle — the agent drops to the
+  // floor below, walks it, rings for the car, rides back up and arrives in
+  // front of the same hole facing the same way.
+  //
+  // The second rule is the ceiling, and it is the one that is easy to miss: a
+  // `step` lifts the roof by as much as it lifts the floor, and with a rise of
+  // seven the raised roof of one corridor comes out a row *above* the floor of
+  // the corridor over it. Everywhere else that is a shortcut. Here it was a
+  // twenty-one cell hole in the second storey that the whole colony walked
+  // into, and no amount of lift ever got used again.
+  var sealed = w.lifts.length > 0
+  var roofLimit = index > 0 ? corridors[index - 1].floorY + 1 : SKY
   var kinds = lastOne
-    ? ["wall", "collapse", "pillars", "towers", "step"]
-    : ["wall", "collapse", "collapse", "pillars", "towers", "towers",
-       "chasm", "chasm", "gap", "gap", "pit", "pit", "step"]
+    // On the floor the door is on, one obstacle means one obstacle. A row of
+    // pillars is four of them, each wanting its own bash, and it is the last
+    // place on a tower where that can be afforded — there is no car to fall
+    // back on once you are on the storey the exit is on.
+    ? (sealed ? ["wall", "collapse", "step"] : ["wall", "collapse", "pillars", "towers", "step"])
+    : (sealed
+      // A step is the one obstacle that has to be paid for by *everybody*: a
+      // bash leaves a tunnel and a bridge stays where it was put, but a climb
+      // is spent per agent and the next one along still has six cells of floor
+      // in its face. That is affordable where a chasm further down the
+      // corridor lets half the colony skip the thing entirely, and it is not
+      // affordable in a building. One in nine here rather than two.
+      ? ["wall", "wall", "collapse", "collapse", "collapse", "pillars", "towers", "towers", "step"]
+      : ["wall", "collapse", "collapse", "pillars", "towers", "towers",
+         "chasm", "chasm", "gap", "gap", "pit", "pit", "step"])
   // The floater needs a drop taller than SAFE_FALL, and the only landing far
   // enough down to be one is the corridor TWO floors below — see the cliff
   // case for why it has to be a real corridor and not just a deep hole.
-  if (index < corridors.length - 2 && !lastOne) kinds.push("cliff")
+  if (!sealed && index < corridors.length - 2 && !lastOne) kinds.push("cliff")
 
-  var count = lastOne ? irand(rng, 0, 1) : irand(rng, 2, 3)
+  // Fewer on a storey. Everywhere else a corridor's obstacles are optional in
+  // practice — a chasm or a cliff two thirds of the way along is a way down
+  // that costs nothing, and plenty of the colony takes it. A tower has none of
+  // those and no floor to dig through either, so every barricade on every
+  // floor has to be paid for out of the toolbar by somebody.
+  var count = lastOne ? irand(rng, 0, 1) : (sealed ? irand(rng, 1, 2) : irand(rng, 2, 3))
   if (count === 0) return
 
-  var forced = (lastOne || index > 1) ? -1 : 1
+  var forced = (lastOne || index > 1 || sealed) ? -1 : 1
   var slot = span / (count + 1)
 
   for (var n = 1; n <= count; n++) {
@@ -1225,8 +1611,10 @@ function placeObstacles(w, rng, c, index, corridors) {
       // The floor rises by more than a stride, with the ceiling lifted to
       // match so there IS a way over: a climber's obstacle.
       var rise = irand(rng, 4, 7)
+      if (sealed) rise = Math.min(rise, 5)   // low enough that a bridge also tops it
       var len = irand(rng, 12, 20)
       var topCeil = c.floorY - rise - CORR_H
+      if (sealed) topCeil = Math.max(topCeil, roofLimit)
 
       for (var apx = x - 3; apx < x; apx++)
         for (var apy = topCeil; apy < c.floorY; apy++) clearCell(w, apx, apy)
@@ -1874,15 +2262,22 @@ var HAZARDS = [
   // press that never stops, a wheel that reacts, and a vent that vents.
   { id: "stamper",  name: "Batch Process", mech: "cycle", mount: "ceiling", reach: 0, charge: 30, fire: 22, rest: 54, w: 5, h: 7, only: ["Factory"] },
   { id: "flywheel", name: "Spin Up", mech: "watch", mount: "wall", reach: 11, charge: 26, fire: 22, rest: 60, w: 4, h: 5, only: ["Factory"] },
-  { id: "steamvent",name: "Memory Dump", mech: "cycle", mount: "floor", reach: 0, charge: 26, fire: 28, rest: 58, w: 4, h: 6, only: ["Factory"] }
+  { id: "steamvent",name: "Memory Dump", mech: "cycle", mount: "floor", reach: 0, charge: 26, fire: 28, rest: 58, w: 4, h: 6, only: ["Skyscraper", "Factory"] },
+
+  // Skyscraper. Everything that can go wrong in an office and nothing that
+  // could not: the ceiling puts out a fire nobody reported, the floor polisher
+  // is on a route of its own, and the shredder is where it always is.
+  { id: "sprinkler", name: "Rate Limiter", mech: "beam", mount: "ceiling", reach: 7, charge: 26, fire: 30, rest: 56, w: 7, h: 6, only: ["Skyscraper"] },
+  { id: "polisher",  name: "Buffer Cleaner", mech: "cycle", mount: "floor", reach: 0, charge: 22, fire: 30, rest: 50, w: 6, h: 3, only: ["Skyscraper"] },
+  { id: "shredder",  name: "Garbage In", mech: "plate", mount: "floor", reach: 3, charge: 16, fire: 24, rest: 48, w: 5, h: 3, only: ["Skyscraper"] }
 ]
 
 // Open flame and steam have no business in an ice cave, and the industrial
 // machinery reads wrong in a jungle.
 var HAZARD_NOT = {
-  brazier: ["Ice Cave"],
+  brazier: ["Ice Cave", "Skyscraper"],
   flame: ["Ice Cave"],
-  geyser: ["Ice Cave", "Spaceship"],
+  geyser: ["Ice Cave", "Spaceship", "Skyscraper"],
   grinder: ["Jungle"],
   piston: ["Jungle"],
   crusher: ["Jungle"],
@@ -1942,6 +2337,14 @@ function placeHazard(w, rng, corridors, ci) {
     var cand = spots[tryN]
     if (cand + spec.w >= hi || cand <= lo) continue
     var ok = true
+    // Not at a lift door. Everywhere else a danger catches whoever walks into
+    // it; at the doors it catches a queue that has chosen to stand still, and
+    // there is no reading and no timing that gets a colony out of that.
+    for (var lz = 0; lz < w.lifts.length && ok; lz++) {
+      var LZ = w.lifts[lz]
+      if (cand + spec.w + 9 >= LZ.x0 && cand - 9 <= LZ.x1) ok = false
+    }
+    if (!ok) continue
     for (var q = 0; q < spec.w; q++) {
       var qx = cand + q
       if (solid(w, qx, c.floorY - 1) || solid(w, qx, c.floorY - 2)) { ok = false; break }
@@ -2428,6 +2831,30 @@ function placeBottomPit(w, rng, c, prev, sealFrom) {
   if (!crossing || rng() < 0.4) cutShaft(w, rng, c, landing)
 }
 
+// A tower's hole. The usual shaft-behind-the-colony cannot be used here: it is
+// cut from the floor's outer edge inward, and on this biome that edge is a lift
+// door — the colony would step out of the car into it. What the ground floor
+// gets instead is the crossing, between where the level puts them down and
+// where it expects them to leave from, which on a tower climbed upward is the
+// hatch at one end and the far shaft at the other.
+//
+// The building is not short of holes regardless. Two hoistways run past every
+// storey with nothing at the bottom of them but the lobby floor, fifty rows
+// down from the roof.
+function placeTowerPit(w, rng, corridors, hatchX, sealFrom) {
+  var c = corridors[corridors.length - 1]
+  if (rng() < 0.65) return
+  var landing, seal
+  if (w.ascending) {
+    landing = hatchX
+    seal = c.dir > 0 ? c.x1 + 6 : c.x0 - 6
+  } else {
+    landing = c.dir > 0 ? c.x0 + 2 : c.x1 - 2
+    seal = sealFrom
+  }
+  cutCrossing(w, rng, c, landing, seal)
+}
+
 function cutShaft(w, rng, c, landing) {
   // Stop well short of where the colony comes down. The descent from the
   // corridor above lands them near here, and a hole under the landing is not a
@@ -2547,6 +2974,17 @@ function wallHeight(w, x, footY) {
   return 99
 }
 
+// wallHeight looks up the wall. The agent goes up beside it, and that column
+// has a roof of its own — which on a sealed biome can stop it a long way below
+// the ledge it was promised. Every head-bumped climber in the catalogue was
+// this: a standable course eight up, a slab four up, and a climber spent on
+// reaching neither. The bump test is `solid(x, footY - AGENT_H)`, one row above
+// the head, so the run that has to be clear starts four above the feet.
+function climbShaftClear(w, x, footY, h) {
+  for (var k = 4; k <= h + 3; k++) if (solid(w, x, footY - k)) return false
+  return true
+}
+
 function wallThickness(w, x, footY, dir) {
   var t = 0
   for (var i = 0; i < BASH_REACH + 4; i++) {
@@ -2661,6 +3099,19 @@ function exitFloor(w) { return w.exit.y + w.exit.h }
 
 function exitBelow(w, ag) { return exitFloor(w) > ag.y + 2 }
 
+// Where this agent is actually walking to, horizontally. Usually the door —
+// but a mission shuts the door, and stepWalk answers that by steering the ones
+// who have been sent to look toward the search point instead. Every other rule
+// that asks "is this the way home?" asked w.exit directly, so on a mission
+// level they were answering about a place the agent was deliberately not going
+// to, and vetoing the route stepWalk was steering along. One question, asked
+// in one place: the same beacon for the crossing, the bricks and the clock.
+function goalX(w, ag) {
+  var search = missionTarget(w, ag)
+  if (search) return search.x
+  return w.exit.x + w.exit.w / 2
+}
+
 // Is there an actual corridor under this column, rather than merely an exit
 // somewhere lower in the level? This is the useful version of "down": a shaft
 // here will open onto traversable floor instead of making an arbitrary hole.
@@ -2712,12 +3163,35 @@ function startDescent(w, ag, pay, allowMine, traitPreference, fallback, requireW
   return false
 }
 
-function goalDist(w, ag) {
+function goalDist(w, ag, goal) {
   var dy = Math.abs(ag.y - exitFloor(w))
-  if (dy <= 3) return Math.abs(ag.x - (w.exit.x + w.exit.w / 2))
+  if (dy <= 3) return Math.abs(ag.x - goal)
+  // On a tower the next thing between here and the door is a lift door, and
+  // reaching one is the only horizontal progress a storey has to offer. Left
+  // out, the whole crossing of a floor — three hundred ticks of exactly the
+  // right behaviour — reads to every stall detector in this file as an agent
+  // that has got nowhere, and the colony gets bombed one at a time for
+  // walking to the lift.
+  if (w.lifts.length) {
+    var near = 1e9
+    for (var i = 0; i < w.lifts.length; i++) {
+      var d = Math.abs(ag.x - w.lifts[i].mid)
+      if (d < near) near = d
+    }
+    return 1000 + dy * 4 + near
+  }
   return 1000 + dy * 4
 }
 function exitAbove(w, ag) { return exitFloor(w) < ag.y - 2 }
+
+// Is the vertical answer on this level a machine rather than a wall? Every
+// rule that reacts to "the way home is above me" — climb it, build a staircase
+// up to it, hand the stalled one a climber — assumes the ceiling is the
+// problem. In a tower it is not: the ceiling is a slab, the way up is a car at
+// the end of the floor, and an agent that spends a climber on the partition in
+// front of it has spent it on nothing. Those rules stand down here and leave
+// the agent doing the one thing that does work, which is walking to the doors.
+function liftRouted(w) { return w.lifts.length > 0 }
 
 function hitWall(w, ag) {
   var footY = Math.floor(ag.y)
@@ -2739,9 +3213,18 @@ function hitWall(w, ag) {
   var t = wallThickness(w, ax, footY, ag.dir)
   var trait = traitOf(ag)
   var bashFirst = ag.contrary ? !trait.bashFirst : trait.bashFirst
-  var wantUp = exitAbove(w, ag)
+  var wantUp = exitAbove(w, ag) && !liftRouted(w)
   var reach = wantUp ? RESCUE_CLIMB : MAX_CLIMB
-  var climbable = h <= reach && footY - h >= SKY
+  // h > 0 matters. advanceWalk sends a low roof here as well as a wall, and it
+  // does not always agree with this function about which cell is "ahead" — the
+  // stride is fractional, so floor(x)+dir can be one past the cell that
+  // stopped the walk. Where that cell is open, wallHeight answers zero, which
+  // used to read as "a wall of no height, easily climbed": the agent bought a
+  // climber, started up a wall that was not there and dropped off it on the
+  // same tick. Seven of those in a row is a colony's entire climb allowance,
+  // and a tower's queue at the lift doors found the case reliably.
+  var climbable = h > 0 && h <= reach && footY - h >= SKY
+    && climbShaftClear(w, Math.floor(ag.x), footY, h)
 
   if (wantUp) bashFirst = false
 
@@ -2782,6 +3265,17 @@ function edgeAhead(w, ag, nx) {
   // before personality, special moves or the usual judgement about the fall.
   var ladder = ladderDownAt(w, Math.floor(ag.x), ag.dir, footY)
   if (ladder) { startLadderDown(ag, ladder); return }
+
+  // Same for a lift door, and for the same reason: it is a route everybody
+  // takes on the same terms, and the drop behind it is fifty rows of hoistway
+  // that no personality should be allowed to have an opinion about.
+  if (w.lifts.length) {
+    var shaftDoor = liftDoorAt(w, ax, footY)
+    if (shaftDoor) { useLift(w, ag, shaftDoor, footY); return }
+    // Off a storey — up a ramp somebody built, say — the shaft is open but
+    // there is no door and no landing. Nobody steps into a hoistway.
+    if (liftColumn(w, ax)) { turnAround(w, ag); return }
+  }
 
   // Nothing down there at all. This case has to come first: an umbrella is no
   // help over a shaft with no floor, and checking the floater branch ahead of
@@ -2884,13 +3378,15 @@ function countComing(w, ag) {
 var RESCUE_CLIMB = 16    // as far up as wallHeight looks; past that there is no top
 
 function climbOut(w, ag, pay) {
-  if (!exitAbove(w, ag)) return false
+  if (!exitAbove(w, ag) || liftRouted(w)) return false
   var footY = Math.floor(ag.y)
   for (var side = 0; side < 2; side++) {
     var dir = side === 0 ? ag.dir : -ag.dir
     var ax = Math.floor(ag.x) + dir
     if (!solid(w, ax, footY)) continue
-    if (wallHeight(w, ax, footY) > RESCUE_CLIMB) continue
+    var rise = wallHeight(w, ax, footY)
+    if (rise > RESCUE_CLIMB) continue
+    if (!climbShaftClear(w, Math.floor(ag.x), footY, rise)) continue
     if (!pay(w, "climber")) return false
     ag.dir = dir
     ag.idle = 0
@@ -2969,9 +3465,9 @@ function crossingHelps(w, ag) {
   // Vertical business overrides horizontal: if the door is above or below,
   // which side of the shaft it is on tells you nothing useful.
   if (exitBelow(w, ag) || exitAbove(w, ag)) return true
-  var exitMid = w.exit.x + w.exit.w / 2
-  if (Math.abs(exitMid - ag.x) <= 2) return true
-  return (exitMid > ag.x ? 1 : -1) === ag.dir
+  var goal = goalX(w, ag)
+  if (Math.abs(goal - ag.x) <= 2) return true
+  return (goal > ag.x ? 1 : -1) === ag.dir
 }
 
 function buildDirection(w, ag) {
@@ -2993,8 +3489,8 @@ function buildDirection(w, ag) {
   if (!solid(w, Math.floor(ag.x) + ag.dir, Math.floor(ag.y) + 1)) return ag.dir
 
   if (!exitBelow(w, ag)) {
-    var exitMid = w.exit.x + w.exit.w / 2
-    if (Math.abs(exitMid - ag.x) > 1) return exitMid > ag.x ? 1 : -1
+    var goal = goalX(w, ag)
+    if (Math.abs(goal - ag.x) > 1) return goal > ag.x ? 1 : -1
   }
   return ag.dir
 }
@@ -3006,8 +3502,27 @@ function startBuild(w, ag, flat) {
   ag.buildWait = 0
   ag.timer = 0
   ag.buildFlat = !!flat
+  // Is this bridge answering a hole, or is it a staircase up a wall? The
+  // difference is underfoot at the moment it starts — a lip has nothing beside
+  // it — and it is what tells stepBuild when the job is done. A staircase is
+  // never finished by finding ground under it; a bridge always is.
+  ag.buildSpan = !solid(w, Math.floor(ag.x) + ag.dir, Math.floor(ag.y) + 1)
+  ag.buildY = Math.floor(ag.y)
   ag.built++
   w.buildSites.push({ x: ag.x, y: ag.y, tick: w.ticks })
+}
+
+// Has the bridge reached the far side? Not "is the drop ahead small" — over a
+// chasm it never is — but "has the ground come back up to the floor I set out
+// from". A staircase gains height as it goes, so the deck ends up above the
+// far side and a fixed depth would never match; measuring against the starting
+// floor carries the rise with it and needs no number of its own — and no
+// slack, either. Stopping while the ground ahead was still a stride or two
+// below the floor it set out from finished the bridge in a dip, and the
+// forty-odd agents a run that cost were more than the bricks were worth.
+function bridgeLanded(w, ag, nx, ny) {
+  var climbed = ag.buildY - Math.floor(ny)
+  return dropDepth(w, Math.floor(nx), Math.floor(ny)) <= climbed
 }
 
 function willBuild(ag, wantUp) {
@@ -3015,7 +3530,7 @@ function willBuild(ag, wantUp) {
 }
 
 function canStartBuild(w, ag, urgent) {
-  if (!willBuild(ag, exitAbove(w, ag))) return false
+  if (!willBuild(ag, exitAbove(w, ag) && !liftRouted(w))) return false
   var footY = Math.floor(ag.y)
   var fx = Math.floor(ag.x)
   var dir = buildDirection(w, ag)
@@ -3027,6 +3542,21 @@ function canStartBuild(w, ag, urgent) {
     var bx = fx + dir * stride
     if (solid(w, bx, footY) || !headroom(w, bx, footY)) return false
   }
+  // A ramp that runs out over a hole is a diving board. Bridges answer holes
+  // from the lip, where the far side is inside their reach; one that starts on
+  // solid ground twenty cells short and lays its last brick in mid-air over a
+  // bottomless shaft has not built a way across, it has built a way in — and
+  // the queue behind it walks up the ramp and off the end without ever seeing
+  // an edge to have an opinion about. Level 36 of the tower lost twelve of
+  // fourteen to one of these.
+  var end = fx + dir * BUILD_REACH
+  var over = pitAt(w, end)
+  if (over && !pitAt(w, fx)) {
+    var farLip = over.x1 + 1
+    if (dir < 0) farLip = over.x0 - 1
+    if ((farLip - end) * dir > 0) return false
+  }
+
   if (urgent) return !someoneBuildingNear(w, ag)
   for (var i = w.buildSites.length - 1; i >= 0; i--) {
     var site = w.buildSites[i]
@@ -3123,6 +3653,7 @@ function spawn(w) {
     escapeTunnels: {}, // and one body-height rescue tunnel per corridor
     rescueCool: 0,     // do not reconsider the same escape every simulation tick
     markD: Infinity,   // closest it has ever been; see goalDist()
+    goalMark: 0,       // which beacon markD was measured against
     fuse: 0,
     waitFor: 0,       // holding at a danger for its reload, rather than pacing
     mineCool: 0,      // one charge at a time, and not again until it has gone off
@@ -3131,6 +3662,15 @@ function spawn(w) {
     blockFor: 0,      // ticks of the spark from the last thing it stopped
     coveredFor: 0,    // ticks since it was last inside somebody's cover
     blocked: 0,
+    sawShut: false,    // has met the exit with the mission still open
+    // Which car it is queuing for or riding in, and where it got on. Only the
+    // Skyscraper ever sets them; see the block above liftQueue.
+    liftIx: -1,
+    liftFloor: 0,
+    liftFrom: 0,
+    liftWant: 0,
+    waitTicks: 0,
+    rideTicks: 0,
     anim: Math.floor(Math.random() * 8),
     gone: false,
     fade: 0
@@ -3198,7 +3738,15 @@ var EVENTS = [
   // --- Factory ---
   { id: "scaleup",  name: "Scale Up",         biome: "Factory", mech: "blackout", mult: 2, ticks: 380 },
   { id: "oilspill", name: "Technical Debt",   biome: "Factory", mech: "spill",   rise: 3 },
-  { id: "hardfault",name: "Hard Fault",       biome: "Factory", mech: "collapse", at: "ceiling", span: 7, deep: 4 }
+  { id: "hardfault",name: "Hard Fault",       biome: "Factory", mech: "collapse", at: "ceiling", span: 7, deep: 4 },
+
+  // --- Skyscraper ---
+  // Collapse has to come out of the ceiling here: the floors of this biome
+  // are slabs and clearCell will not touch steel, so a floor event would have
+  // been an event that fired and did nothing.
+  { id: "openplan", name: "Open Plan",        biome: "Skyscraper", mech: "collapse", at: "ceiling", span: 9, deep: 3 },
+  { id: "firedrill",name: "Fire Drill",       biome: "Skyscraper", mech: "blackout", mult: 2, ticks: 400 },
+  { id: "refurb",   name: "Refactor",         biome: "Skyscraper", mech: "growth",   span: 13, high: 2 }
 ]
 
 function eventsFor(biome) {
@@ -3239,6 +3787,9 @@ function rollEvents(w, rng, trng) {
 function eventSafeX(w, x) {
   if (w.exit && x >= w.exit.x - 6 && x <= w.exit.x + w.exit.w + 6) return false
   if (w.hatch && x >= w.hatch.x - 5 && x <= w.hatch.x + 5) return false
+  // A hoistway is the way home on every floor at once. Filling one with debris
+  // or growth is not a change of premise, it is a level with no route left.
+  if (w.lifts.length && liftColumn(w, x)) return false
   return x > 3 && x < COLS - 4
 }
 
@@ -3444,6 +3995,15 @@ function stepWalk(w, ag) {
 
   if (anyBlockerNear(w, ag, nx)) { turnAround(w, ag); return }
 
+  // The doors. On every floor but the lowest this is also an edge, so
+  // edgeAhead carries the same call for the routes that reach it instead —
+  // but on the ground floor the shaft has a floor and there is no edge to
+  // catch, and an agent would stroll into the hoistway and turn round in it.
+  if (w.lifts.length) {
+    var door = liftDoorAt(w, cx, footY)
+    if (door && !liftDoorAt(w, Math.floor(ag.x), footY)) { useLift(w, ag, door, footY); return }
+  }
+
   var crossPerceptive = hazardPerceptive(ag)
   var stepInto = hazardZoneAt(w, cx, footY, crossPerceptive)
   if (stepInto && stepInto.known && !ag.special
@@ -3519,6 +4079,7 @@ function missionTarget(w, ag) {
   var m = w.mission
   if (!m || m.done || !m.targets.length) return null
   if (Math.abs(ag.y - m.y) > 7) return null
+  if (ag.sawShut) return m
   // One scout carries the search instruction. Steering the whole colony at a
   // concealed point made them bunch up and reverse each other on the final
   // corridor. The lowest live id inherits the job if the previous scout dies.
@@ -3628,6 +4189,17 @@ function stepFall(w, ag) {
   var pool = liquidAt(w, cx, ny)
   if (pool && ny >= pool.surfaceY) { sink(w, ag, pool); return }
 
+  // Onto the roof of a car. Somebody who went into a hoistway by accident —
+  // a bomb under the queue, an event, a floor that gave way — gets the one
+  // break the shaft has to offer, provided the car is under them and has room.
+  var deck = liftDeckUnder(w, cx, ag.y, ny)
+  if (deck) {
+    if (ag.fall > SAFE_FALL && !ag.floater) { ag.y = deck.car - 1; splat(w, ag); return }
+    ag.liftWant = exitAbove(w, ag) ? -1 : 1
+    boardLift(w, ag, deck, deck.stops[deck.at])
+    return
+  }
+
   var shaft = pitAt(w, cx)
 
   // Out through the bottom of the world. Has to be caught before the landing
@@ -3688,23 +4260,39 @@ function stepClimb(w, ag) {
     return
   }
 
-  if (!ladder && solid(w, Math.floor(ag.x), footY - AGENT_H)) {
-    ag.dir = -ag.dir
-    ag.turns++
-    beginUncontrolledFall(w, ag)
-    return
-  }
-
+  // Feet clear the wall's top course — haul over onto it. This is asked before
+  // the ceiling check below, not after, and the order is the whole of it. That
+  // check is about whether there is room to climb another course and it fails
+  // one row before the body actually stops fitting, so on a sealed biome —
+  // where the roof is a slab exactly CORR_H above the floor — it fails on the
+  // very tick the feet reach the top of a two-course obstacle. The agent had
+  // somewhere to stand and let go anyway: up the obstacle in the hallway and
+  // straight back down, over half of every climb on a tower.
   if (!solid(w, wallX, footY)) {
-    // Feet clear the wall's top course — haul over onto it.
     if (headroom(w, wallX, footY)) {
       ag.x = wallX + 0.5
       ag.state = "walk"
       ag.turns = 0
-    } else {
+      return
+    }
+    // No room to stand here, which is not the same thing as the top of the
+    // wall. wallHeight — the function that bought this climber — answers "the
+    // first course with room to stand on"; this used to answer "the first
+    // course that is not wall", and let go wherever the two disagreed. Every
+    // no-room drop in the catalogue had more wall above it: they were all
+    // notches in the face, not tops. Only a face with no top within reach is
+    // worth letting go of.
+    if (wallHeight(w, wallX, footY) > MAX_CLIMB) {
       ag.dir = -ag.dir
       beginUncontrolledFall(w, ag)
+      return
     }
+  }
+
+  if (!ladder && solid(w, Math.floor(ag.x), footY - AGENT_H)) {
+    ag.dir = -ag.dir
+    ag.turns++
+    beginUncontrolledFall(w, ag)
     return
   }
 
@@ -3746,14 +4334,59 @@ function stepBuild(w, ag) {
   if (!ag.buildFlat && (ag.bricks % rise) === 0
       && headroom(w, Math.floor(nx), Math.floor(ag.y) - 1)) ny = ag.y - 1
 
-  if (solid(w, Math.floor(nx), Math.floor(ny))
-      || !headroom(w, Math.floor(nx), Math.floor(ny))) {
-    // Even level is blocked. Check this BEFORE laying anything: the old order
-    // left a three-cell stub from a step the builder could never occupy, and a
-    // queue of agents repeated it into the little brick heaps seen on level 19.
+  // The far side. A bridge is finished when what is left ahead is a drop this
+  // agent would have walked into rather than answered with bricks, which is
+  // the question edgeAhead asked to start it — so whoever arrives at the end
+  // of it, builder included, meets an edge they are already known to accept.
+  // Without this a bridge ran its full twelve regardless, and because a
+  // staircase rises as it goes, the second half of one was a raised causeway
+  // laid over ground the colony could have walked along — 47% of every brick
+  // spent on bridges, and a ramp for the queue behind to climb for nothing.
+  if (ag.buildSpan && ag.bricks < 12 && !liftColumn(w, Math.floor(nx))
+      && bridgeLanded(w, ag, nx, ny)) {
+    ag.state = "walk"
+    ag.turns = 0
+    return
+  }
+
+  // A brick laid across a shaft is a floor in the one place on the board that
+  // has to stay a hole — and the car goes straight through it. Stop the bridge
+  // at the wall rather than refusing the build outright: a builder that meets
+  // the hoistway has usually laid something useful getting there.
+  if (w.lifts.length && liftColumn(w, bx + ag.dir * 2)) {
     ag.dir = -ag.dir
     ag.state = "walk"
     return
+  }
+
+  if (solid(w, Math.floor(nx), Math.floor(ny))
+      || !headroom(w, Math.floor(nx), Math.floor(ny))) {
+    // Blocked at a full stride. Before giving the build up, try a narrower
+    // one. A step is two cells across and gains a row every third brick, so a
+    // staircase needs eighteen cells of floor to climb a single corridor — and
+    // an agent wedged in a slot between a wall and a shaft has three. Cut the
+    // same brick to one cell across and a row up, and the twelve that used to
+    // buy less than a row of height buy twelve. It costs no decision and no
+    // threshold: the wide step is tried first every time and the narrow one is
+    // only reached where the wide one has nowhere to go, so a builder steepens
+    // exactly as far into a pocket as the pocket is tight, and goes back to
+    // ordinary stairs the moment the room opens out.
+    var sx = ag.x + ag.dir
+    var sy = ag.y - 1
+    if (!ag.buildFlat && ag.idle > NARROW_IDLE
+        && !solid(w, Math.floor(sx), Math.floor(sy))
+        && headroom(w, Math.floor(sx), Math.floor(sy))) {
+      nx = sx
+      ny = sy
+    } else {
+      // Even a narrow one is blocked. Check this BEFORE laying anything: the
+      // old order left a three-cell stub from a step the builder could never
+      // occupy, and a queue of agents repeated it into the little brick heaps
+      // seen on level 19.
+      ag.dir = -ag.dir
+      ag.state = "walk"
+      return
+    }
   }
 
   // A brick is three cells laid at foot level; the agent then steps along it.
@@ -3793,6 +4426,23 @@ function stepBash(w, ag) {
       if (clearCell(w, ax + ag.dir * dx, footY + dy)) removed++
 
   addDust(w, ax, footY - 2, 3)
+
+  // Through the pane and out onto the landing. A basher walks one cell into
+  // what it has just opened, and what a fire escape's window opens onto is a
+  // well that runs past every floor of the building — so the agent that made
+  // the hole went straight down it, and the queue that followed went after it.
+  // Hand over to the doors instead, which is exactly what a walker arriving at
+  // the same cell does; there is no second rule here, only the same one
+  // reached from the other state.
+  if (w.lifts.length) {
+    var door = liftDoorAt(w, ax, footY)
+    if (door) {
+      ag.state = "walk"
+      useLift(w, ag, door, footY)
+      return
+    }
+  }
+
   ag.x += ag.dir
   ag.anim++
 
@@ -3854,6 +4504,283 @@ function ladderDownAt(w, x, dir, footY) {
     if (l.x === x && dir === -l.side && footY === l.top) return l
   }
   return null
+}
+
+// ---------------------------------------------------------------------------
+// Riding
+// ---------------------------------------------------------------------------
+// Two states nothing else in the game has: an agent standing at a door that
+// is not a wall, and an agent standing on ground that is not terrain. Both are
+// deliberately kept off the "walk" state, because every stuck detector in this
+// file is written around walking — an agent that has correctly decided to
+// stand still for eight seconds is indistinguishable from one pacing a ledge,
+// and the colony learned that lesson at a sentry already (see stepWalk).
+
+// How many are already queued at this door, so the fifth one to arrive stands
+// behind the fourth instead of inside it.
+function liftQueue(w, L, floorY) {
+  var n = 0
+  for (var i = 0; i < w.agents.length; i++) {
+    var ag = w.agents[i]
+    if (ag.gone || ag.state !== "wait") continue
+    if (ag.liftIx === L.ix && ag.liftFloor === floorY) n++
+  }
+  return n
+}
+
+// Is there anybody this car should stop for? A lift that docks at every floor
+// regardless spends most of a level with its doors open in an empty corridor,
+// and the colony spends most of a level watching it.
+function liftWanted(w, L, floorY) {
+  for (var i = 0; i < w.agents.length; i++) {
+    var ag = w.agents[i]
+    if (ag.gone || ag.liftIx !== L.ix) continue
+    if (ag.state === "wait" && ag.liftFloor === floorY) return true
+    if (ag.state === "ride" && (floorY - ag.liftFrom) * ag.liftWant > 0) return true
+  }
+  return false
+}
+
+// Which stop this car has been rung to, or -1 if nobody anywhere wants it.
+// Onward in the direction it was already travelling first, then back the other
+// way — a car that answered the nearest call instead would reverse over
+// somebody who rang behind it a tick after it set off.
+function liftCall(w, L) {
+  var s
+  for (s = L.at + L.dir; s >= 0 && s < L.stops.length; s += L.dir)
+    if (liftWanted(w, L, L.stops[s])) return s
+  for (s = L.at - L.dir; s >= 0 && s < L.stops.length; s -= L.dir)
+    if (liftWanted(w, L, L.stops[s])) return s
+  return -1
+}
+
+// Doors shut, and the question a car asks itself: is anybody ringing? A car
+// that answers "no" by carrying on to the next floor anyway is a car that
+// never stops moving, and with two of them running the full height of the
+// board that is most of what the eye sees on this biome — two boxes sweeping
+// past every storey for the whole level, drawing attention away from the one
+// thing on the floor that matters. It waits where it last stopped instead,
+// which is also where the colony last needed it.
+function liftDispatch(w, L) {
+  var call = liftCall(w, L)
+  if (call < 0) { L.parked = true; return }
+  L.dir = call > L.at ? 1 : -1
+  L.parked = false
+  L.to = L.at + L.dir
+}
+
+function boardLift(w, ag, L, floorY) {
+  var slot = Math.min(LIFT_CAP - 1, L.riders)
+  ag.state = "ride"
+  ag.liftIx = L.ix
+  ag.liftFrom = floorY
+  ag.rideTicks = 0
+  if (L.stairs) {
+    ag.y = floorY - 1
+    ag.x = stairX(L, ag.y)
+    ag.dir = stairX(L, ag.y + 1) > ag.x ? 1 : -1
+  } else {
+    ag.x = L.mid + (slot - (LIFT_CAP - 1) / 2) * 0.85
+    ag.y = L.car - 1
+    ag.dir = -L.out
+  }
+  ag.floater = false
+  ag.fall = 0
+  ag.still = 0
+  ag.cell = ""
+  L.riders++
+  L.doorFor = Math.max(L.doorFor, 10)
+  // Getting on is the thing the floor was for. Everything the loop and
+  // patience counters know is about the stretch since an agent last got
+  // anywhere, and it just did.
+  ag.idle = 0
+  ag.turns = 0
+  ag.passes = {}
+  ag.bucket = ""
+  ag.markD = Infinity
+  w.lastEvent = "boarded"
+}
+
+// Walking into a shaft. Everything about this decision is vertical, which is
+// the one direction the simulation is willing to give an agent a beacon for —
+// see the note above exitFloor. Which end of the building it is standing at,
+// and therefore which car, it worked out for itself by walking there.
+function useLift(w, ag, L, footY) {
+  var floorY = footY + 1
+  var want = exitAbove(w, ag) ? -1 : (exitBelow(w, ag) ? 1 : 0)
+  // The door is on this floor, so ordinarily there is nothing up there for it
+  // and the shaft is a wall. Ordinarily — but a tower's exit floor is the one
+  // stretch of the level with no car to fall back on, and an agent that cannot
+  // get past whatever is between it and the mouth has nowhere at all to go. So
+  // one that has been getting nowhere is allowed a round trip: down a storey,
+  // across it, and back up in the other shaft, which puts it on the far side
+  // of the thing it could not pass. It is also the most office thing in the
+  // building.
+  if (want === 0) {
+    if (ag.turns < 3 && ag.idle < 240) { turnAround(w, ag); return }
+    want = floorY === L.stops[0] ? 1 : -1
+  }
+  var reach = want < 0 ? L.stops[0] : L.stops[L.stops.length - 1]
+  if ((reach - floorY) * want <= 0) { turnAround(w, ag); return }
+
+  ag.liftIx = L.ix
+  ag.liftFloor = floorY
+  ag.liftWant = want
+  // Stairs are always at your floor. No call, no queue, and no sixth person
+  // left on the landing — which is most of what you are buying with the
+  // basher it took to get out here.
+  if (L.stairs) { boardLift(w, ag, L, floorY); return }
+  if (liftDocked(L) === floorY && L.riders < LIFT_CAP) { boardLift(w, ag, L, floorY); return }
+
+  // Queue, facing the doors. Backing off is skipped where the floor behind is
+  // not floor — a queue must never be the thing that puts somebody in a hole.
+  var back = L.wallX + L.out * (1 + Math.min(4, liftQueue(w, L, floorY)) * 1.6) + 0.5
+  var bc = Math.floor(back)
+  if (!solid(w, bc, footY) && solid(w, bc, footY + 1) && headroom(w, bc, footY)) ag.x = back
+  ag.state = "wait"
+  ag.dir = -L.out
+  ag.waitTicks = 0
+  ag.turns = 0
+}
+
+function stepLiftWait(w, ag) {
+  var L = w.lifts[ag.liftIx]
+  if (!L) { ag.state = "walk"; return }
+  ag.anim++
+  ag.waitTicks++
+  if (!solid(w, Math.floor(ag.x), Math.floor(ag.y) + 1)) { beginUncontrolledFall(w, ag); return }
+  if (liftDocked(L) === ag.liftFloor && L.riders < LIFT_CAP) {
+    boardLift(w, ag, L, ag.liftFloor)
+    return
+  }
+  // A car that never comes is a level that never ends. Past its patience the
+  // agent goes back to the floor it is standing on and the usual rules — a
+  // climb, a shaft of its own, a wall to bash — get their turn.
+  if (ag.waitTicks > LIFT_PATIENCE) {
+    ag.state = "walk"
+    ag.idle = 0
+    turnAround(w, ag)
+  }
+}
+
+function stepLiftRide(w, ag) {
+  var L = w.lifts[ag.liftIx]
+  if (!L) { beginUncontrolledFall(w, ag); return }
+  if (L.stairs) { stepStairs(w, ag, L); return }
+  ag.rideTicks++
+  ag.y = L.car - 1
+  ag.anim++
+  var docked = liftDocked(L)
+  if (docked < 0) return
+  // Off at the first stop that is on the right side of where it got on. A car
+  // heading the other way when it was boarded takes it to the far end and
+  // brings it back; that is slower than the stairs and funnier than them.
+  if ((docked - ag.liftFrom) * ag.liftWant <= 0 && ag.rideTicks < LIFT_RIDE_MAX) return
+  ag.state = "walk"
+  ag.x = L.wallX + L.out + 0.5
+  ag.y = docked - 1
+  ag.dir = L.out
+  ag.turns = 0
+  ag.still = 0
+  ag.cell = ""
+  ag.fall = 0
+  ag.floater = false
+  ag.idle = 0
+  ag.passes = {}
+  ag.bucket = ""
+  ag.markD = Infinity
+  L.doorFor = Math.max(L.doorFor, 10)
+  w.lastEvent = "arrived"
+}
+
+// A storey of fire escape, under the agent's own legs. It is the ride state
+// rather than the walk state for the same reason a car is: an agent on a
+// switchback outside the building is not on terrain, and every stuck detector
+// in this file is written around walking.
+function stepStairs(w, ag, L) {
+  ag.rideTicks++
+  ag.anim++
+  var target = L.stops[liftStopIndex(L, ag.liftFrom) + ag.liftWant]
+  if (target === undefined) { alightStairs(w, ag, L, ag.liftFrom); return }
+
+  ag.y += ag.liftWant * STAIR_SPEED
+  var nx = stairX(L, ag.y)
+  ag.dir = nx > ag.x ? 1 : (nx < ag.x ? -1 : ag.dir)
+  ag.x = nx
+
+  if ((ag.y - (target - 1)) * ag.liftWant >= 0 || ag.rideTicks > LIFT_RIDE_MAX)
+    alightStairs(w, ag, L, target)
+}
+
+function alightStairs(w, ag, L, floorY) {
+  // In through the window, which it kicks out of the frame on the way. Coming
+  // the other way costs a basher because a pane is a wall from the inside;
+  // from the landing it is a thing to step through, and charging for it twice
+  // would only be a toll on the same route.
+  for (var i = 0; i < L.panes.length; i++) {
+    var pane = L.panes[i]
+    if (floorY - 1 < pane.y0 || floorY - 1 > pane.y1) continue
+    for (var y = pane.y0; y <= pane.y1; y++) clearCell(w, L.wallX, y)
+  }
+  ag.state = "walk"
+  ag.x = L.wallX + L.out + 0.5
+  ag.y = floorY - 1
+  ag.dir = L.out
+  ag.turns = 0
+  ag.still = 0
+  ag.cell = ""
+  ag.fall = 0
+  ag.floater = false
+  ag.idle = 0
+  ag.passes = {}
+  ag.bucket = ""
+  ag.markD = Infinity
+  w.lastEvent = "fire escape"
+}
+
+// The car's roof is the one piece of solid ground on this board that terrain
+// does not know about, so a fall has to ask for it separately.
+function liftDeckUnder(w, cx, y0, ny) {
+  for (var i = 0; i < w.lifts.length; i++) {
+    var L = w.lifts[i]
+    if (L.stairs || cx < L.x0 || cx > L.x1) continue
+    var deck = L.car - 1
+    if (y0 <= deck && ny >= deck && L.riders < LIFT_CAP) return L
+  }
+  return null
+}
+
+function stepLifts(w) {
+  for (var i = 0; i < w.lifts.length; i++) {
+    var L = w.lifts[i]
+    if (L.stairs) continue          // nothing to move, and nobody waiting
+    L.riders = 0
+    for (var a = 0; a < w.agents.length; a++) {
+      var ag = w.agents[a]
+      if (!ag.gone && ag.state === "ride" && ag.liftIx === i) L.riders++
+    }
+    if (L.doorFor > 0) L.doorFor--
+
+    if (L.hold > 0) {
+      L.hold--
+      if (L.hold === 0) liftDispatch(w, L)
+      continue
+    }
+
+    // Standing at a floor with nothing to do. The only thing that moves it
+    // from here is somebody at a door, which liftWanted is the whole of.
+    if (L.parked) { liftDispatch(w, L); continue }
+
+    L.car += L.dir * LIFT_SPEED
+    var target = L.stops[L.to]
+    if ((L.dir > 0 && L.car >= target) || (L.dir < 0 && L.car <= target)) {
+      L.car = target
+      L.at = L.to
+      var serving = liftWanted(w, L, target)
+      L.hold = serving ? LIFT_DWELL : LIFT_PASS
+      if (serving) L.doorFor = LIFT_DWELL
+    }
+  }
 }
 
 function stepLadders(w) {
@@ -4644,7 +5571,7 @@ function specialEscape(w, ag) {
   var fy = Math.floor(ag.y)
   var floor = Math.floor((fy + 1) / (w.corrGap || CORR_GAP))
   if (specOf(ag).act === "ceiling" && startWebEscape(w, ag)) return
-  if (exitAbove(w, ag) && startSpecialAscent(w, ag)) return
+  if (exitAbove(w, ag) && !liftRouted(w) && startSpecialAscent(w, ag)) return
   if (canDescendHere(w, ag, true) && !ag.escapeFloors[floor]) {
     ag.escapeFloors[floor] = true
     ag.state = "dig"
@@ -5615,7 +6542,7 @@ function forceEscape(w, ag) {
   var footY = Math.floor(ag.y)
   var ahead = Math.floor(ag.x) + ag.dir
 
-  if (exitAbove(w, ag)) {
+  if (exitAbove(w, ag) && !liftRouted(w)) {
     // Below the exit: the only useful direction is up. Climb if there is a
     // wall and a climber left for it, build the staircase if there is not, and
     // in particular do NOT fall through to the horizontal rescues below.
@@ -5688,7 +6615,7 @@ function runDirector(w) {
 
   var footY = Math.floor(best.y)
   var ahead = Math.floor(best.x) + best.dir
-  var wantUp = exitAbove(w, best)
+  var wantUp = exitAbove(w, best) && !liftRouted(w)
 
   // Below the exit and pacing: nothing horizontal helps, and digging only
   // makes it worse. Hand them a climb.
@@ -5839,7 +6766,15 @@ function stepAgents(w) {
       if (!ag.special && ag.state === "walk") condemn(w, ag)
     }
 
-    var dist = goalDist(w, ag)
+    // The beacon moves when a mission opens or closes under an agent, and
+    // markD is the closest it has ever been to whichever beacon it was
+    // watching. Carried across, the old number makes the first step toward the
+    // new one read as standing still — and standing still is what ends in a
+    // bomb. A change of destination is a fresh start, like arriving anywhere.
+    var goalNow = goalX(w, ag)
+    if (goalNow !== ag.goalMark) { ag.goalMark = goalNow; ag.markD = Infinity }
+
+    var dist = goalDist(w, ag, goalNow)
     if (dist < ag.markD - 2) {
       ag.markD = dist
       ag.idle = 0
@@ -5886,6 +6821,8 @@ function stepAgents(w) {
       case "jump":  stepJump(w, ag); break
       case "slide": stepSlide(w, ag); break
       case "camp":  stepCamp(w, ag); break
+      case "wait":  stepLiftWait(w, ag); break
+      case "ride":  stepLiftRide(w, ag); break
     }
 
     // A one-cell trap can evade both stuck detectors: the agent technically
@@ -5910,9 +6847,31 @@ function stepAgents(w) {
     var e = w.exit
     if (ag.x > e.x && ag.x < e.x + e.w && ag.y > e.y && ag.y < e.y + e.h + 1) {
       if (w.mission && (!w.mission.done || w.ticks - w.mission.openedAt < 24)) {
-        ag.x = ag.dir > 0 ? e.x - 0.1 : e.x + e.w + 0.1
-        turnAround(w, ag)
-        ag.waitFor = Math.max(ag.waitFor, 12)
+        // Finding the door shut is how an agent learns there is a job on.
+        // Without this the colony piles up on the threshold and only the
+        // scout ever goes looking, which is fine where the door sits in the
+        // middle of a long corridor and fatal where it does not: a tower puts
+        // the last car down a few cells from the mouth, and fifteen agents
+        // bounce between the shut door and the lift doors until the clock
+        // runs out. It steers the ones that have actually been there, so they
+        // set off in ones and twos rather than as a crowd.
+        ag.sawShut = true
+        // Shut is a door, not a wall, and the job is not always on the side of
+        // it the agent came from. A tower's cars can put the colony down on
+        // the far side of its own exit, and then the only way to the search
+        // point is through the doorway: the rebound threw them back west, the
+        // search steer turned them east again, and level 369 spent four
+        // thousand ticks with twelve agents in a one-cell tug of war that
+        // neither rule would ever lose — and which the loop detector could not
+        // see, because the rebound renews waitFor. Somebody on their way past
+        // is let past; only somebody who came to go home is turned around.
+        var beyond = goalX(w, ag)
+        var passing = ag.dir > 0 ? beyond > e.x + e.w : beyond < e.x
+        if (!passing) {
+          ag.x = ag.dir > 0 ? e.x - 1.2 : e.x + e.w + 1.2
+          turnAround(w, ag)
+          ag.waitFor = Math.max(ag.waitFor, 12)
+        }
         active++
         moving++
         continue
@@ -6016,6 +6975,7 @@ function finishWorldStep(w, active, blockers, moving) {
   stepHazard(w)
   stepMines(w)
   stepLadders(w)
+  stepLifts(w)
   stepParticles(w)
   if (!w.done) runDirector(w)
 

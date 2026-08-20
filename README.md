@@ -225,8 +225,9 @@ crumbled scatter along every boundary so no two layers meet on a clean line.
 All of it is free, because those three materials are one material to everything
 that makes a decision.
 
-Eight biomes cycle with the level number — **Cavern**, **Ruins**, **Frost**,
-**Foundry**, **Jungle**, **Ice Cave**, **Spaceship** and **Factory** — each pulling the
+Nine biomes cycle with the level number — **Cavern**, **Ruins**, **Frost**,
+**Foundry**, **Jungle**, **Ice Cave**, **Spaceship**, **Factory** and
+**Skyscraper** — each pulling the
 earth, sky and portal toward a different tone of the active Omarchy theme, and
 each furnishing its corridors with its own scenery: stalagmites and grass,
 fallen columns, ice needles, pipes and sparks, trees with canopies. The first
@@ -235,14 +236,27 @@ cave has to be blue whatever your theme is, so those pull part of the way
 toward a fixed hue and keep the rest. Change your theme and the board changes
 with it.
 
-The three new ones are built differently as well as coloured differently, since
-a recolour on its own still reads as the same cave:
+Some are built differently as well as coloured differently, since a recolour on
+its own still reads as the same cave:
 
 | | |
 | --- | --- |
 | **Jungle** | Overgrown rather than layered — root runners and blobs of moss through the soil instead of strata, vines hanging into the corridors, trees, and an uneven floor that rises and falls under your feet |
 | **Ice Cave** | One mass rather than layers, because strata read as sedimentary rock and a glacier is the opposite of that. Cracks run through it, the bottom is compressed harder, and the ceilings are thick with icicles |
 | **Spaceship** | Not geology at all: a grid of hull panels with seams, structural ribs running floor to ceiling, and a few plates missing. Fitted rather than furnished — strip lights along the ceilings, grating underfoot, and viewports looking out at a starfield. Its floors stay machined flat, which is the point of it |
+| **Skyscraper** | The one with a mechanism rather than a skin. Its floors are steel slabs that nothing digs through, so the only way between them is at the ends — and because the corridors alternate their walking direction, the one an agent walks toward is always the far one from the one it arrived by. That is the whole level: cross the floor, ring, ride a storey, cross the next one the other way. It is also the only level shape that can be played upside down, because a drop is one-way and a lift is not: half of them put the hatch in the lobby ceiling and the door on the top floor |
+
+A car is called; it does not patrol. It waits on the floor it last served, with
+its doors open, until somebody rings — two cars sweeping the full height of the
+board all level was most of what the eye saw on this biome.
+
+And about half of towers have a **fire escape** bolted to one end instead of a
+second lift: iron switchback stairs down the outside of the building, with no
+call and no queue, but glazed windows between the colony and the landing. A
+pane is one cell thick and it is not steel, which makes it exactly the wall a
+basher goes through — so getting out onto the ironwork costs the toolbar
+something, and the frames left broken behind them are the only record on the
+board of the way they went. Coming back in from the landing is free.
 
 ### The bottom of the world
 
@@ -265,9 +279,9 @@ another:
 A crossing level may get a shaft behind them as well, so the colony has both the
 hole it has to get over and the hole it has to be stopped from walking into.
 
-Five of the eight biomes flood theirs: **water** in the Ruins and the Jungle,
+Five of the nine biomes flood theirs: **water** in the Ruins and the Jungle,
 **lava** in the Foundry, **coolant** on the ship, **oil** in the Factory. The
-other three stay a black hole in the rock, which is the right answer for a crevasse. Nothing about the
+other four stay a black hole in the rock, which is the right answer for a crevasse. Nothing about the
 fall changes — the shaft under the surface goes through the bedrock either way
 and an agent that goes in is gone either way. The liquid gives it a surface to
 be gone at, which is the difference between an event and a sprite sliding
