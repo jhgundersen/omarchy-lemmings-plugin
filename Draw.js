@@ -647,9 +647,9 @@ function drawFireEscape(ctx, w, pal, L, x0, wid, top, bot) {
   ctx.fillStyle = pal.skyLow
   ctx.fillRect(x0, top, wid, bot - top)
 
-  // The panes, painted over whatever the terrain pass made of them. A window
+  // The panes, painted over whatever the terrain pass made of them. A glazed door
   // still in its frame is the flat indigo this biome is tinted with; one that
-  // has been bashed out is an empty opening with the frame left behind, which
+  // has been opened is an empty opening with the frame left behind, which
   // is the only readout the board gives of where the colony has been through.
   for (var pi = 0; pi < L.panes.length; pi++) {
     var pane = L.panes[pi]
@@ -782,7 +782,7 @@ function drawLifts(ctx, w, pal) {
     ctx.fillStyle = pal.steelShade
     for (var rg = top + 4; rg < bot; rg += 7) ctx.fillRect(x0 + wid - 8, rg, 5, 1)
 
-    var carTop = Math.round(L.car * C) - 4 * C
+    var carTop = Math.round(L.car * C) - 5 * C
     // The hoist rope, from the head of the shaft down to the car.
     ctx.fillStyle = pal.rig
     ctx.fillRect(Math.round(L.mid * C) - 1, top, 2, Math.max(0, carTop - top))
@@ -827,12 +827,34 @@ function drawLifts(ctx, w, pal) {
 
     // The car: a back wall, a roof, a floor plate and a light. No front panel
     // at all — the passengers are the front of it, and they are drawn after.
-    var ch2 = 4 * C
-    ctx.fillStyle = pal.rigDark
+    // Six cells tall: a clear course over an agent's head, and — the point —
+    // the floor plate lands just under the riders' foot line instead of
+    // behind their shoes, so they read as standing on it rather than sunk
+    // through the bottom of the box.
+    //
+    // The back wall is `rig`, two steps brighter than the shaft it hangs in.
+    // At `rigDark` it vanished into the void the moment riders filled the
+    // cabin, and a moving car read as a box chasing agents who floated above
+    // it. Seams break the panel up so it stays scenery behind the sprites.
+    var ch2 = 6 * C
+    ctx.fillStyle = pal.rig
     ctx.fillRect(x0 + 3, carTop, wid - 6, ch2)
+    ctx.fillStyle = pal.rigDark
+    for (var seam = x0 + 9; seam < x0 + wid - 6; seam += 7)
+      ctx.fillRect(seam, carTop + 4, 1, ch2 - 8)
     ctx.fillStyle = pal.steel
     ctx.fillRect(x0 + 2, carTop, wid - 4, 3)                    // roof
-    ctx.fillRect(x0 + 2, carTop + ch2 - 3, wid - 4, 3)          // floor plate
+    // The plate's top row is the riders' foot line exactly — the same join a
+    // walker makes with a floor, one pixel lower and their boots hang over an
+    // empty row of shaft.
+    ctx.fillRect(x0 + 2, carTop + ch2 - 4, wid - 4, 3)          // floor plate
+    // A bright jamb down each side. A full load of riders covers the wall
+    // between them, and without this outline the only cues left are strips
+    // above their heads and under their feet — the cabin stops reading as a
+    // thing they are inside of.
+    ctx.fillStyle = pal.steelEdge
+    ctx.fillRect(x0 + 2, carTop, 2, ch2)
+    ctx.fillRect(x0 + wid - 4, carTop, 2, ch2)
     ctx.fillStyle = pal.steelShade
     ctx.fillRect(x0 + 3, carTop + 3, 2, ch2 - 6)                // corner posts
     ctx.fillRect(x0 + wid - 5, carTop + 3, 2, ch2 - 6)
@@ -957,7 +979,7 @@ function drawActors(ctx, w, pal, opts) {
     var ag = w.agents[i]
     if (ag.gone) continue
     drawAgent(ctx, w, pal, ag, opts)
-    drawMissionGun(ctx, w, pal, ag)
+    drawAgentSidearm(ctx, w, pal, ag)
   }
   for (var ei = 0; ei < w.enemies.length; ei++) {
     var enemy = w.enemies[ei]
@@ -1032,18 +1054,38 @@ function drawMissionContainer(ctx, kind, x, y, pal) {
   ctx.fillRect(x - 3, y - 14, 1, 12); ctx.fillRect(x + 2, y - 14, 1, 12)
 }
 
-function drawMissionGun(ctx, w, pal, ag) {
+function drawAgentSidearm(ctx, w, pal, ag) {
   var m = w.mission
-  if (!m || m.kind !== "alien" || m.done || ag.id !== m.scoutId) return
+  var hunting = m && m.kind === "alien" && !m.done && ag.id === m.scoutId
+  if (!hunting && (ag.special || ag.shotFor <= 0)) return
   var C = w.k.CELL, dir = ag.dir || 1
-  var x = Math.round(ag.x * C), y = Math.round((ag.y - 2) * C)
+  var ox = Math.round(ag.x * C) - SPRITE_W / 2
+  var oy = Math.round((ag.y + 1) * C) - SPRITE_PX
+  var handX = dir > 0 ? ox + 7 : ox + 1
+  var handY = oy + 9
+  // A compact sidearm held from the forward hand. The old six-pixel barrel
+  // began at cell centre and crossed the face; this one sits below the head,
+  // with the skin pixel making the grip visibly belong to the agent.
+  ctx.fillStyle = pal.skin
+  ctx.fillRect(handX, handY, 2, 2)
   ctx.fillStyle = pal.steelEdge
-  ctx.fillRect(x + dir * 3 - (dir < 0 ? 6 : 0), y - 1, 6, 2)
+  ctx.fillRect(dir > 0 ? handX + 1 : handX - 4, handY - 1, 5, 2)
   ctx.fillStyle = pal.rigDark
-  ctx.fillRect(x + dir * 1 - (dir < 0 ? 2 : 0), y + 1, 2, 3)
-  if (m.shotFor > 0) {
+  ctx.fillRect(dir > 0 ? handX + 1 : handX, handY + 1, 2, 2)
+  var firing = hunting ? m.shotFor > 0 : ag.shotFor > 0
+  if (firing) {
     ctx.fillStyle = pal.fireHot
-    ctx.fillRect(x + dir * 9 - (dir < 0 ? 2 : 0), y - 2, 3, 3)
+    ctx.fillRect(dir > 0 ? handX + 7 : handX - 7, handY - 2, 2, 3)
+    if (!hunting && ag.shotTo) {
+      ctx.globalAlpha = Math.min(0.8, ag.shotFor / 5)
+      var ex = ag.shotTo * C, ey = ag.shotY * C
+      var sx = handX + dir * 7, sy = handY
+      var steps = Math.max(1, Math.round(Math.abs(ex - sx) / 5))
+      for (var q = 1; q <= steps; q += 2)
+        ctx.fillRect(Math.round(sx + (ex - sx) * q / steps),
+                     Math.round(sy + (ey - sy) * q / steps), 1, 1)
+      ctx.globalAlpha = 1
+    }
   }
 }
 
@@ -3164,9 +3206,18 @@ function drawAgent(ctx, w, pal, ag, opts) {
   var k = w.k
   var C = k.CELL
   var ox = Math.round(ag.x * C) - SPRITE_W / 2
-  var oy = Math.round((ag.y + 1) * C) - SPRITE_PX
   var dir = ag.dir
   var st = ag.state
+  // A rider hangs off the car's own position, not its stale one: agents step
+  // before lifts within a tick, so ag.y trails a descending car by a whole
+  // LIFT_SPEED and the sprite floats above the floor plate. Stair riders walk
+  // themselves, so they keep their own coordinates. (`st` is read here, which
+  // is why it is assigned above: with the assignment below it, the var was
+  // hoisted-but-undefined and a rider never took this branch at all.)
+  var rideCar = st === "ride" && w.lifts && w.lifts[ag.liftIx] && !w.lifts[ag.liftIx].stairs
+  var oy = rideCar
+    ? Math.round(w.lifts[ag.liftIx].car * C) - SPRITE_PX
+    : Math.round((ag.y + 1) * C) - SPRITE_PX
 
   if (st === "saved") {
     // A short rise and fade into the portal, so getting home reads as an

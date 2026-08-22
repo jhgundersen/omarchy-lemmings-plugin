@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "jhgundersen.oh-no-more-agents",
   "name": "Oh No! More Agents",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "author": "Jon Håvard Gundersen",
   "description": "Autonomous agents with no supervisor, no plan, and one umbrella each. A level carves itself, a dozen-odd of them work out how to get through it, and you watch.",
   "kinds": [

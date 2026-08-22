@@ -61,6 +61,10 @@ var ENEMY_WALK_SPEED = 0.24
 var GUN_AIM = 8           // regular shooter: a short visible tell, about a quarter-second
 var SNIPER_AIM = 36       // the planted sniper keeps its deliberate long sight picture
 var GUN_RELOAD = 80
+var SIDEARM_RELOAD = 600  // ordinary agents get one hurried shot, not a firing stance
+var SIDEARM_RANGE = 20
+var SIDEARM_ENEMY_HIT = 1
+var SIDEARM_HAZARD_HIT = 1
 var ENEMY_JET_SPEED = 0.30
 var ENEMY_JET_SINK = 0.10
 
@@ -442,6 +446,24 @@ function liftDoorAt(w, x, footY) {
   return null
 }
 
+function stairDoorAt(w, x, footY) {
+  for (var i = 0; i < w.lifts.length; i++) {
+    var L = w.lifts[i]
+    if (!L.stairs || x !== L.wallX) continue
+    for (var s = 0; s < L.stops.length; s++)
+      if (footY === L.stops[s] - 1) return L
+  }
+  return null
+}
+
+function openStairDoor(w, L, footY) {
+  for (var i = 0; i < L.panes.length; i++) {
+    var pane = L.panes[i]
+    if (footY < pane.y0 || footY > pane.y1) continue
+    for (var y = pane.y0; y <= pane.y1; y++) clearCell(w, L.wallX, y)
+  }
+}
+
 function liftStopIndex(L, floorY) {
   for (var i = 0; i < L.stops.length; i++) if (L.stops[i] === floorY) return i
   return -1
@@ -474,13 +496,12 @@ function cutHoistway(w, corridors, x0, wallX, out, stairs) {
   // building. The floor row itself stays steel, which is the sill an agent
   // stands on while it waits.
   //
-  // A fire escape gets windows instead. ROCK, not a material of its own: this
+  // A fire escape gets glazed doors instead. ROCK, not a material of its own: this
   // file's whole strata and biome-skin scheme rests on dirt, rock and ore
   // being one thing to every rule, and a pane that behaved differently would
   // be the exception that ends that (see `simcheck inert`). What makes it a
-  // window is that it is one cell thick and not steel, which is precisely the
-  // wall a basher goes through — so getting out onto the escape costs the
-  // toolbar something, and the way home is visible through it the whole time.
+  // door is that it is one cell thick and not steel. Walkers open it when they
+  // arrive, and the way home is visible through it the whole time.
   var panes = []
   for (var ci = 0; ci < corridors.length; ci++) {
     var c = corridors[ci]
@@ -3197,6 +3218,13 @@ function hitWall(w, ag) {
   var footY = Math.floor(ag.y)
   var ax = Math.floor(ag.x) + ag.dir
 
+  var stairs = stairDoorAt(w, ax, footY)
+  if (stairs) {
+    openStairDoor(w, stairs, footY)
+    useLift(w, ag, stairs, footY)
+    return
+  }
+
   // A ladder is the one thing on the board that every agent treats identically
   // — special or not, cautious or brave, climbers left or none. It is also the
   // only way up a wall taller than MAX_CLIMB, and it costs the toolbar
@@ -3502,11 +3530,12 @@ function startBuild(w, ag, flat) {
   ag.buildWait = 0
   ag.timer = 0
   ag.buildFlat = !!flat
-  // Is this bridge answering a hole, or is it a staircase up a wall? The
-  // difference is underfoot at the moment it starts — a lip has nothing beside
-  // it — and it is what tells stepBuild when the job is done. A staircase is
-  // never finished by finding ground under it; a bridge always is.
-  ag.buildSpan = !solid(w, Math.floor(ag.x) + ag.dir, Math.floor(ag.y) + 1)
+  // Is this bridge answering a hole, or is it a staircase up a wall? Most
+  // bridges start at the lip; the director may start a flat crossing a couple
+  // of cells early, so it waits until it has actually passed over open ground
+  // before treating the next floor as the far side.
+  ag.buildGap = !solid(w, Math.floor(ag.x) + ag.dir, Math.floor(ag.y) + 1)
+  ag.buildSpan = !!flat || ag.buildGap
   ag.buildY = Math.floor(ag.y)
   ag.built++
   w.buildSites.push({ x: ag.x, y: ag.y, tick: w.ticks })
@@ -3649,6 +3678,7 @@ function spawn(w) {
     shotTo: 0,        // where a camped sniper's last shot went, for the tracer
     shotY: 0,
     shotFor: 0,
+    gunCool: 20 + (w.released % 5) * 11,
     escapeFloors: {},  // a special may cut one rescue shaft per corridor
     escapeTunnels: {}, // and one body-height rescue tunnel per corridor
     rescueCool: 0,     // do not reconsider the same escape every simulation tick
@@ -4342,7 +4372,9 @@ function stepBuild(w, ag) {
   // staircase rises as it goes, the second half of one was a raised causeway
   // laid over ground the colony could have walked along — 47% of every brick
   // spent on bridges, and a ramp for the queue behind to climb for nothing.
-  if (ag.buildSpan && ag.bricks < 12 && !liftColumn(w, Math.floor(nx))
+  if (ag.buildSpan && !ag.buildGap
+      && !solid(w, Math.floor(nx), Math.floor(ny) + 1)) ag.buildGap = true
+  if (ag.buildSpan && ag.buildGap && ag.bricks < 12 && !liftColumn(w, Math.floor(nx))
       && bridgeLanded(w, ag, nx, ny)) {
     ag.state = "walk"
     ag.turns = 0
@@ -4427,8 +4459,8 @@ function stepBash(w, ag) {
 
   addDust(w, ax, footY - 2, 3)
 
-  // Through the pane and out onto the landing. A basher walks one cell into
-  // what it has just opened, and what a fire escape's window opens onto is a
+  // Through the door and out onto the landing. A basher walks one cell into
+  // what it has just opened, and what a fire escape's door opens onto is a
   // well that runs past every floor of the building — so the agent that made
   // the hole went straight down it, and the queue that followed went after it.
   // Hand over to the doors instead, which is exactly what a walker arriving at
@@ -4713,15 +4745,8 @@ function stepStairs(w, ag, L) {
 }
 
 function alightStairs(w, ag, L, floorY) {
-  // In through the window, which it kicks out of the frame on the way. Coming
-  // the other way costs a basher because a pane is a wall from the inside;
-  // from the landing it is a thing to step through, and charging for it twice
-  // would only be a toll on the same route.
-  for (var i = 0; i < L.panes.length; i++) {
-    var pane = L.panes[i]
-    if (floorY - 1 < pane.y0 || floorY - 1 > pane.y1) continue
-    for (var y = pane.y0; y <= pane.y1; y++) clearCell(w, L.wallX, y)
-  }
+  // The same door opens from the landing if this is its first use on a floor.
+  openStairDoor(w, L, floorY - 1)
   ag.state = "walk"
   ag.x = L.wallX + L.out + 0.5
   ag.y = floorY - 1
@@ -5001,6 +5026,49 @@ function sightsHazard(w, ag) {
         && lineClear(w, Math.floor(ag.x), fy - 2, Math.round(hm.x), Math.round(hm.y))) return true
   }
   return false
+}
+
+// Everybody carries the little mission sidearm, but only the specialists know
+// what to do with a serious weapon. An ordinary agent fires opportunistically
+// at a visible danger in front of it, then spends long enough fumbling with the
+// reload that the specialist's deliberate, guaranteed shot remains valuable.
+// The roll is derived from stable state instead of consuming either level or
+// colony RNG, so adding the gun does not reshuffle maps or personalities.
+function regularSidearm(w, ag) {
+  if (ag.special || ag.state !== "walk" || ag.gunCool > 0 || ag.shotFor > 0) return
+  var fx = Math.floor(ag.x), fy = Math.floor(ag.y)
+  var target = null, targetKind = "", targetDist = Infinity, tx = 0, ty = 0
+
+  for (var ei = 0; ei < w.enemies.length; ei++) {
+    var en = w.enemies[ei]
+    if (en.gone || Math.abs(en.y - ag.y) > (en.kind === "drone" ? 14 : 3)) continue
+    var ea = (en.x - ag.x) * ag.dir
+    if (ea <= 0 || ea > SIDEARM_RANGE || ea >= targetDist
+        || !lineClear(w, fx, fy - 2, Math.floor(en.x), Math.floor(en.y) - 2)) continue
+    target = en; targetKind = "enemy"; targetDist = ea; tx = en.x; ty = en.y - 2
+  }
+  for (var hi = 0; hi < w.hazards.length; hi++) {
+    var h = w.hazards[hi]
+    if (h.wrecked) continue
+    var hm = hazardMid(h)
+    var ha = (hm.x - ag.x) * ag.dir
+    if (ha <= 0 || ha > SIDEARM_RANGE || ha >= targetDist
+        || Math.abs(hm.y - ag.y) > CORR_H + 2
+        || !lineClear(w, fx, fy - 2, Math.round(hm.x), Math.round(hm.y))) continue
+    target = h; targetKind = "hazard"; targetDist = ha; tx = hm.x; ty = hm.y
+  }
+  if (!target) return
+
+  var roll = (w.ticks * 37 + ag.id * 61 + Math.floor(tx) * 17 + Math.floor(ty) * 29) % 100
+  var hit = roll < (targetKind === "enemy" ? SIDEARM_ENEMY_HIT : SIDEARM_HAZARD_HIT)
+  ag.shotTo = hit ? tx : tx + ag.dir * (2 + roll % 4)
+  ag.shotY = hit ? ty : ty - 4 + roll % 9
+  ag.shotFor = 8
+  ag.gunCool = SIDEARM_RELOAD + (ag.id % 5) * 7
+  if (hit) {
+    if (targetKind === "enemy") killEnemy(w, target)
+    else wreckHazard(w, target)
+  }
 }
 
 // Is the danger in front of it, within range?
@@ -6629,7 +6697,16 @@ function runDirector(w) {
     best.timer = 0
   } else if (startDescent(w, best, grant, true, false, false, true)) {
   } else if (best.state === "walk" && canStartBuild(w, best) && grant(w, "builder")) {
-    startBuild(w, best)
+    var buildDir = buildDirection(w, best)
+    var crossing = false
+    for (var step = 1; step <= BUILD_REACH; step++) {
+      var pit = pitAt(w, Math.floor(best.x) + buildDir * step)
+      if (!pit) continue
+      var farLip = buildDir > 0 ? pit.x1 + 1 : pit.x0 - 1
+      crossing = Math.abs(farLip - best.x) <= BUILD_REACH
+      break
+    }
+    startBuild(w, best, crossing)
   } else if (w.bombsUsed < 1 && w.rescues > 6 && boxedIn(w, best) && grant(w, "bomber")) {
     w.bombsUsed++
     best.state = "bomb"
@@ -6653,7 +6730,11 @@ function countPass(w, ag) {
   if (key === ag.bucket) return
   ag.bucket = key
   ag.passes[key] = (ag.passes[key] || 0) + 1
-  if (ag.passes[key] !== LOOP_PASSES) return
+  if (ag.passes[key] < LOOP_PASSES) return
+  // A short pocket can complete five laps long before patience gives recovery
+  // a turn. Keep recognising the loop, but do not turn it into a bomb until
+  // forceEscape has had the same chance it gets on a longer route.
+  if (ag.idle <= PATIENCE - traitOf(ag).digBias) return
   condemn(w, ag)
 }
 
@@ -6713,6 +6794,7 @@ function stepAgents(w) {
       }
     }
     if (ag.shotFor > 0) ag.shotFor--
+    if (ag.gunCool > 0) ag.gunCool--
     if (ag.shoveCool > 0) ag.shoveCool--
     if (ag.hazardGrace > 0) ag.hazardGrace--
     if (ag.chilledFor > 0) ag.chilledFor--
@@ -6803,6 +6885,7 @@ function stepAgents(w) {
     if (ag.state === "walk" && ag.idle > STUCK_LIMIT) condemn(w, ag)
 
     var dirBeforeStep = ag.dir
+    regularSidearm(w, ag)
     switch (ag.state) {
       case "walk": stepWalk(w, ag); break
       case "fall": stepFall(w, ag); break
