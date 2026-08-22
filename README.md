@@ -30,12 +30,9 @@ one bar icon, one popup panel.
 omarchy plugin add https://github.com/jhgundersen/omarchy-oh-no-more-agents-plugin.git --enable
 ```
 
-Or clone it straight into your plugins directory to hack on it:
-
-```sh
-git clone https://github.com/jhgundersen/omarchy-oh-no-more-agents-plugin.git ~/.config/omarchy/plugins/jhgundersen.oh-no-more-agents
-omarchy plugin enable jhgundersen.oh-no-more-agents
-```
+For local development, install it with the command above and edit the checkout
+at `~/.config/omarchy/plugins/jhgundersen.oh-no-more-agents`. Omarchy reloads
+plugin changes automatically.
 
 Remove it with `omarchy plugin remove jhgundersen.oh-no-more-agents`, or keep
 the files and just `disable` it.
